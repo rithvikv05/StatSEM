@@ -1,0 +1,14 @@
+{
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  },
+  "name": "statsem-desktop",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "prepare:backend": "node tools/prepare-sidecar.mjs",
+    "build:frontend": "npm --prefix frontend run build",
+    "test:backend": "cargo test --locked --manifest-path backend-rust/Cargo.toml"
+  }
+}

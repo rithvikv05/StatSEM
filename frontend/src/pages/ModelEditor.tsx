@@ -11,6 +11,7 @@ import { DiagramExportModal } from '../components/DiagramExportModal';
 import type { ParsedDataset } from '../utils/dataset-parser';
 import { parseDatasetFile, processData } from '../utils/dataset-parser';
 import { api, type ValidationResponse } from '../utils/api';
+import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 
 import {
   Upload, Trash2, RotateCcw, AlertTriangle, History, Check,
@@ -1352,10 +1353,14 @@ const ModelEditor = () => {
     alert('Model comparison: Snapshots and current runs can be viewed side-by-side by opening snapshots from the study workspace.');
   };
 
-  const fmt = (val: any, decimals: number = 4): string => {
-    if (val === undefined || val === null || isNaN(Number(val))) return '—';
-    return Number(val).toFixed(decimals);
-  };
+  const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
+  const decimalSystem = settings.decimalSystem;
+
+  const fmt = (val: any, decimals: number = decimalDigits): string =>
+    formatNumber(val, decimals, decimalSystem);
+
+  const fmtP = (val: any, decimals: number = decimalDigits): string =>
+    formatPValue(val, decimals, decimalSystem);
 
   const { constructNameMap, indicatorNameMap, legacyConstructNames } = useMemo(() => {
     const cMap: Record<string, string> = {};
@@ -4324,7 +4329,7 @@ const ModelEditor = () => {
                           if (val !== undefined && val !== null) {
                             return (
                               <td key={targetC} className="cell-sig">
-                                <div className="cell-value">{fmt(val, 4)}</div>
+                                <div className="cell-value">{fmt(val)}</div>
                               </td>
                             );
                           }
@@ -4365,10 +4370,10 @@ const ModelEditor = () => {
                               {renderConstructLabel(target)}
                             </td>
                             <td className="cell-sig">
-                              <div className="cell-value">{fmt(val, 4)}</div>
+                              <div className="cell-value">{fmt(val)}</div>
                             </td>
-                            <td>{f2 !== undefined ? fmt(f2, 4) : '—'}</td>
-                            <td>{vif !== undefined ? fmt(vif, 4) : '1.0000'}</td>
+                            <td>{f2 !== undefined ? fmt(f2) : '—'}</td>
+                            <td>{vif !== undefined ? fmt(vif) : fmt(1)}</td>
                           </tr>
                         );
                       })
@@ -4405,7 +4410,7 @@ const ModelEditor = () => {
                           if (eff && eff.indirect !== undefined && eff.indirect !== null) {
                             return (
                               <td key={targetC} className="cell-sig">
-                                <div className="cell-value">{fmt(eff.indirect, 4)}</div>
+                                <div className="cell-value">{fmt(eff.indirect)}</div>
                               </td>
                             );
                           }
@@ -4440,7 +4445,7 @@ const ModelEditor = () => {
                           {renderConstructLabel(eff.to)}
                         </td>
                         <td className="cell-sig">
-                          <div className="cell-value">{fmt(eff.indirect, 4)}</div>
+                          <div className="cell-value">{fmt(eff.indirect)}</div>
                         </td>
                       </tr>
                     ))}
@@ -4476,7 +4481,7 @@ const ModelEditor = () => {
                           if (eff && eff.total !== undefined && eff.total !== null) {
                             return (
                               <td key={targetC} className="cell-sig">
-                                <div className="cell-value">{fmt(eff.total, 4)}</div>
+                                <div className="cell-value">{fmt(eff.total)}</div>
                               </td>
                             );
                           }
@@ -4512,10 +4517,10 @@ const ModelEditor = () => {
                         <td>
                           {renderConstructLabel(eff.to)}
                         </td>
-                        <td>{fmt(eff.direct, 4)}</td>
-                        <td>{fmt(eff.indirect, 4)}</td>
+                        <td>{fmt(eff.direct)}</td>
+                        <td>{fmt(eff.indirect)}</td>
                         <td className="cell-sig">
-                          <div className="cell-value">{fmt(eff.total, 4)}</div>
+                          <div className="cell-value">{fmt(eff.total)}</div>
                         </td>
                       </tr>
                     ))}
@@ -4550,7 +4555,7 @@ const ModelEditor = () => {
                             const isHigh = num >= 0.708;
                             return (
                               <td key={cid} className={isHigh ? 'cell-sig' : 'cell-ns'}>
-                                <div className="cell-value">{fmt(num, 4)}</div>
+                                <div className="cell-value">{fmt(num)}</div>
                               </td>
                             );
                           }
@@ -4593,9 +4598,9 @@ const ModelEditor = () => {
                             </td>
                             <td><strong>{getIndicatorName(iid)}</strong></td>
                             <td className={isHigh ? 'cell-sig' : 'cell-ns'}>
-                              <div className="cell-value">{fmt(loadNum, 4)}</div>
+                              <div className="cell-value">{fmt(loadNum)}</div>
                             </td>
-                            <td>{fmt(rel, 4)}</td>
+                            <td>{fmt(rel)}</td>
                             <td>
                               <span style={{
                                 padding: '2px 8px',
@@ -4641,7 +4646,7 @@ const ModelEditor = () => {
                           if (val !== undefined && val !== null) {
                             return (
                               <td key={cid} className="cell-sig">
-                                <div className="cell-value">{fmt(val, 4)}</div>
+                                <div className="cell-value">{fmt(val)}</div>
                               </td>
                             );
                           }
@@ -4681,9 +4686,9 @@ const ModelEditor = () => {
                             </td>
                             <td><strong>{getIndicatorName(iid)}</strong></td>
                             <td className="cell-sig">
-                              <div className="cell-value">{fmt(val, 4)}</div>
+                              <div className="cell-value">{fmt(val)}</div>
                             </td>
-                            <td>{vif !== undefined ? fmt(vif, 4) : '1.0000'}</td>
+                            <td>{vif !== undefined ? fmt(vif) : fmt(1)}</td>
                           </tr>
                         );
                       })
@@ -4716,10 +4721,10 @@ const ModelEditor = () => {
                           </div>
                         </td>
                         <td className="cell-sig">
-                          <div className="cell-value">{fmt(r2, 4)}</div>
+                          <div className="cell-value">{fmt(r2)}</div>
                         </td>
-                        <td>{fmt(r2Adj, 4)}</td>
-                        <td>{(r2 * 100).toFixed(2)}%</td>
+                        <td>{fmt(r2Adj)}</td>
+                        <td>{fmt(r2 * 100)}%</td>
                         <td>
                           <span style={{
                             padding: '2px 8px',
@@ -4767,7 +4772,7 @@ const ModelEditor = () => {
                             const isHigh = f2 >= 0.15;
                             return (
                               <td key={tgt} className={isHigh ? 'cell-sig' : ''}>
-                                <div className="cell-value">{fmt(f2, 4)}</div>
+                                <div className="cell-value">{fmt(f2)}</div>
                               </td>
                             );
                           }
@@ -4807,7 +4812,7 @@ const ModelEditor = () => {
                               {renderConstructLabel(target)}
                             </td>
                             <td className="cell-sig">
-                              <div className="cell-value">{fmt(f2, 4)}</div>
+                              <div className="cell-value">{fmt(f2)}</div>
                             </td>
                             <td>
                               <span style={{
@@ -4855,10 +4860,10 @@ const ModelEditor = () => {
                             <span className="construct-name">{getConstructName(cid)}</span>
                           </div>
                         </td>
-                        <td className={alpha >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(alpha, 4)}</td>
-                        <td className={cr >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(cr, 4)}</td>
-                        <td>{fmt(rhoA, 4)}</td>
-                        <td className={ave >= 0.5 ? 'cell-sig' : 'cell-ns'}>{fmt(ave, 4)}</td>
+                        <td className={alpha >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(alpha)}</td>
+                        <td className={cr >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(cr)}</td>
+                        <td>{fmt(rhoA)}</td>
+                        <td className={ave >= 0.5 ? 'cell-sig' : 'cell-ns'}>{fmt(ave)}</td>
                         <td>
                           <span style={{
                             padding: '2px 8px',
@@ -4914,7 +4919,7 @@ const ModelEditor = () => {
                                 const ok = num < 0.85;
                                 return (
                                   <td key={c2} className={ok ? 'cell-sig' : 'cell-ns'}>
-                                    <div className="cell-value">{fmt(num, 4)}</div>
+                                    <div className="cell-value">{fmt(num)}</div>
                                   </td>
                                 );
                               }
@@ -4964,7 +4969,7 @@ const ModelEditor = () => {
                                   </div>
                                 </td>
                                 <td className={isOk ? 'cell-sig' : 'cell-ns'}>
-                                  <div className="cell-value">{fmt(num, 4)}</div>
+                                  <div className="cell-value">{fmt(num)}</div>
                                 </td>
                                 <td>
                                   <span style={{
@@ -5014,7 +5019,7 @@ const ModelEditor = () => {
                               const isDiag = c1 === c2;
                               return (
                                 <td key={c2} style={isDiag ? { backgroundColor: '#f1f5f9', fontWeight: 700 } : {}}>
-                                  <div>{fmt(flVal, 4)}</div>
+                                  <div>{fmt(flVal)}</div>
                                 </td>
                               );
                             }
@@ -5048,7 +5053,7 @@ const ModelEditor = () => {
                             <tr key={`${pred}->${target}`}>
                               <td>{renderConstructLabel(target)}</td>
                               <td>{renderConstructLabel(pred)}</td>
-                              <td className={ok ? 'cell-sig' : 'cell-ns'}>{fmt(vif, 4)}</td>
+                              <td className={ok ? 'cell-sig' : 'cell-ns'}>{fmt(vif)}</td>
                               <td>
                                 <span style={{
                                   padding: '2px 8px',
@@ -5085,7 +5090,7 @@ const ModelEditor = () => {
                           <tr key={`${cid}-${iid}`}>
                             <td>{renderConstructLabel(cid)}</td>
                             <td><strong>{getIndicatorName(iid)}</strong></td>
-                            <td>{fmt(val, 4)}</td>
+                            <td>{fmt(val)}</td>
                           </tr>
                         ))
                       )}
@@ -5133,22 +5138,22 @@ const ModelEditor = () => {
                             <strong>{row.global_construct}</strong>
                           </td>
                           <td className="cell-sig">
-                            <div className="cell-value">{fmt(row.path_coefficient, 4)}</div>
+                            <div className="cell-value">{fmt(row.path_coefficient)}</div>
                           </td>
                           {plsResults.convergent_validity_redundancy?.some((r: any) => r.bootstrap) && (
                             <>
-                              <td>{b ? fmt(b.mean, 4) : '—'}</td>
-                              <td>{b ? fmt(b.se, 4) : '—'}</td>
-                              <td>{b ? fmt(b.t_stat, 3) : '—'}</td>
+                              <td>{b ? fmt(b.mean) : '—'}</td>
+                              <td>{b ? fmt(b.se) : '—'}</td>
+                              <td>{b ? fmt(b.t_stat) : '—'}</td>
                               <td className={b && b.p_value < 0.05 ? 'cell-sig' : ''}>
-                                {b ? fmt(b.p_value, 4) : '—'}
+                                {b ? fmtP(b.p_value) : '—'}
                               </td>
                               <td>
-                                {b && b.ci_low !== undefined ? `[${fmt(b.ci_low, 3)}, ${fmt(b.ci_high, 3)}]` : '—'}
+                                {b && b.ci_low !== undefined ? `[${fmt(b.ci_low)}, ${fmt(b.ci_high)}]` : '—'}
                               </td>
                             </>
                           )}
-                          <td>{fmt(row.r_squared, 4)}</td>
+                          <td>{fmt(row.r_squared)}</td>
                           <td>&ge; 0.70</td>
                           <td>
                             <span style={{
@@ -5221,7 +5226,7 @@ const ModelEditor = () => {
                       <td><strong>Case #{rIdx + 1}</strong></td>
                       {resultConstructs.map(c => {
                         const val = plsResults.construct_scores?.[c]?.[rIdx];
-                        return <td key={c}>{fmt(val, 4)}</td>;
+                        return <td key={c}>{fmt(val)}</td>;
                       })}
                     </tr>
                   ))}
@@ -5286,15 +5291,15 @@ const ModelEditor = () => {
                               </div>
                             </td>
                             <td className={cellSigClass}>
-                              <div className="cell-value">{fmt(p.original, 4)}</div>
+                              <div className="cell-value">{fmt(p.original)}</div>
                             </td>
-                            <td>{fmt(p.mean, 4)}</td>
-                            <td>{fmt(p.se, 4)}</td>
-                            <td><strong>{fmt(p.t_stat, 3)}</strong></td>
+                            <td>{fmt(p.mean)}</td>
+                            <td>{fmt(p.se)}</td>
+                            <td><strong>{fmt(p.t_stat)}</strong></td>
                             <td className={cellSigClass} style={{ fontWeight: 600 }}>
-                              {p.p_value < 0.0001 ? '< 0.0001' : fmt(p.p_value, 4)}
+                              {fmtP(p.p_value)}
                             </td>
-                            <td>[{fmt(p.ci_low, 4)}, {fmt(p.ci_high, 4)}]</td>
+                            <td>[{fmt(p.ci_low)}, {fmt(p.ci_high)}]</td>
                             <td>
                               {p.p_value < 0.001 ? (
                                 <span className="sig-badge sig-badge--p001">p &lt; 0.001</span>
@@ -5338,15 +5343,15 @@ const ModelEditor = () => {
                             <td>{l.construct_name || getConstructName(l.construct)}</td>
                             <td><strong>{l.indicator_name || getIndicatorName(l.indicator)}</strong></td>
                             <td className={cellSigClass}>
-                              <div className="cell-value">{fmt(l.original, 4)}</div>
+                              <div className="cell-value">{fmt(l.original)}</div>
                             </td>
-                            <td>{fmt(l.mean, 4)}</td>
-                            <td>{fmt(l.se, 4)}</td>
-                            <td>{fmt(l.t_stat, 3)}</td>
+                            <td>{fmt(l.mean)}</td>
+                            <td>{fmt(l.se)}</td>
+                            <td>{fmt(l.t_stat)}</td>
                             <td className={cellSigClass} style={{ fontWeight: 600 }}>
-                              {l.p_value < 0.0001 ? '< 0.0001' : fmt(l.p_value, 4)}
+                              {fmtP(l.p_value)}
                             </td>
-                            <td>[{fmt(l.ci_low, 4)}, {fmt(l.ci_high, 4)}]</td>
+                            <td>[{fmt(l.ci_low)}, {fmt(l.ci_high)}]</td>
                             <td>
                               {l.p_value < 0.001 ? (
                                 <span className="sig-badge sig-badge--p001">p &lt; 0.001</span>

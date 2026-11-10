@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { SavBufferReader as SavReader } from 'sav-reader';
 import { Buffer } from 'buffer';
 
@@ -197,14 +197,19 @@ export async function parseDatasetFile(file: File): Promise<ParsedDataset> {
       });
     } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const json: any[][] = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-          if (json.length === 0) return reject("Empty Excel file");
-          const headers = json[0].map(h => String(h));
+          const buffer = e.target?.result as ArrayBuffer;
+          const workbook = new ExcelJS.Workbook();
+          await workbook.xlsx.load(buffer);
+          const firstSheet = workbook.worksheets[0];
+          if (!firstSheet) return reject('Empty Excel file');
+          const json: any[][] = [];
+          firstSheet.eachRow({ includeEmpty: false }, (row) => {
+            json.push((row.values as any[]).slice(1)); // row.values is 1-indexed
+          });
+          if (json.length === 0) return reject('Empty Excel file');
+          const headers = json[0].map((h: any) => String(h ?? ''));
           const rows = json.slice(1);
           resolve(processData(file.name, headers, rows));
         } catch (err) {

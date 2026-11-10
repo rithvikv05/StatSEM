@@ -1,5 +1,5 @@
 //! Cross-validated PLSpredict with the existing Python result semantics.
-use crate::{linalg, matrix, model, pipeline, rng, stats};
+use crate::{linalg, model, pipeline, rng, stats};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -328,15 +328,15 @@ pub fn run_with_control(
                 better_count += 1;
                 total_better += 1;
             }
-            q2s.push(matrix::round(q2, 4));
-            indicators.push(json!({"indicator":col,"construct":target,"q2_predict":matrix::round(q2,4),"q2_predict_positive":q2 > 0.0,
-                "rmse_pls":matrix::round(rmse_pls,4),"rmse_lm":matrix::round(rmse_lm,4),"rmse_diff":matrix::round(rmse_pls-rmse_lm,4),
-                "mae_pls":matrix::round(mae_pls,4),"mae_lm":matrix::round(mae_lm,4),"mae_diff":matrix::round(mae_pls-mae_lm,4),"pls_beats_lm":better}));
+            q2s.push(q2);
+            indicators.push(json!({"indicator":col,"construct":target,"q2_predict":q2,"q2_predict_positive":q2 > 0.0,
+                "rmse_pls":rmse_pls,"rmse_lm":rmse_lm,"rmse_diff":rmse_pls-rmse_lm,
+                "mae_pls":mae_pls,"mae_lm":mae_lm,"mae_diff":mae_pls-mae_lm,"pls_beats_lm":better}));
         }
         if !q2s.is_empty() {
             let classification = verdict(better_count, q2s.len());
             let description = match classification { "high"=>"High predictive power: PLS-SEM outperforms LM for all indicators.","medium"=>"Medium predictive power: PLS-SEM outperforms LM for the majority of indicators.","low"=>"Low predictive power: PLS-SEM outperforms LM for a minority of indicators.",_=>"No predictive power: LM outperforms PLS-SEM for all indicators." };
-            constructs.insert(target.clone(),json!({"construct":target,"n_indicators":q2s.len(),"n_pls_beats_lm":better_count,"predictive_power":classification,"description":description,"mean_q2_predict":matrix::round(stats::mean(&q2s,None),4)}));
+            constructs.insert(target.clone(),json!({"construct":target,"n_indicators":q2s.len(),"n_pls_beats_lm":better_count,"predictive_power":classification,"description":description,"mean_q2_predict":stats::mean(&q2s,None)}));
         }
     }
     Ok(

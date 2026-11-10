@@ -283,7 +283,7 @@ pub fn run(
             if !includes {
                 significant.push(def.original_index);
             }
-            tetrads.push(json!({"tetrad_number":def.original_index,"tetrad_name":def.tetrad_name,"tetrad_label":def.label,"indicators":def.names,"original_value":matrix::round(original,4),"bootstrap_mean":matrix::round(stats::mean(&draw,None),4),"standard_error":matrix::round(sd,4),"t_statistic":matrix::round(statistic,4),"p_value":matrix::round(pvalue,4),"ci_lower_adjusted":matrix::round(low,4),"ci_upper_adjusted":matrix::round(high,4),"includes_zero":includes,"is_significant":!includes}));
+            tetrads.push(json!({"tetrad_number":def.original_index,"tetrad_name":def.tetrad_name,"tetrad_label":def.label,"indicators":def.names,"original_value":original,"bootstrap_mean":stats::mean(&draw,None),"standard_error":sd,"t_statistic":statistic,"p_value":pvalue,"ci_lower_adjusted":low,"ci_upper_adjusted":high,"includes_zero":includes,"is_significant":!includes}));
         }
         let verdict = if significant.is_empty() {
             "Reflective specification supported"
@@ -295,7 +295,7 @@ pub fn run(
         } else {
             format!("Significant vanishing tetrad(s) detected: {significant:?}. At least one nonredundant tetrad statistically differs from zero at the adjusted {confidence}% level. The reflective null is rejected, supporting a formative specification (Hair et al. 2018; Gudergan et al. 2008).")
         };
-        results.push(json!({"construct_id":block.id,"construct_name":name,"drawn_type":block.measurement_type,"applicable":true,"n_indicators":p,"total_possible_tetrads":all.len(),"n_nonredundant_tetrads":r,"min_indicator_correlation":matrix::round(minimum,4),"indicator_correlations_adequate":minimum>0.10,"bonferroni_alpha":matrix::round(alpha,6),"verdict":verdict,"interpretation":interpretation,"has_significant_tetrads":!significant.is_empty(),"significant_tetrad_numbers":significant,"tetrads":tetrads}));
+        results.push(json!({"construct_id":block.id,"construct_name":name,"drawn_type":block.measurement_type,"applicable":true,"n_indicators":p,"total_possible_tetrads":all.len(),"n_nonredundant_tetrads":r,"min_indicator_correlation":minimum,"indicator_correlations_adequate":minimum>0.10,"bonferroni_alpha":alpha,"verdict":verdict,"interpretation":interpretation,"has_significant_tetrads":!significant.is_empty(),"significant_tetrad_numbers":significant,"tetrads":tetrads}));
     }
     Ok(
         json!({"constructs":results,"n_boot":o.n_boot,"nominal_alpha":o.alpha,"confidence_level":format!("{confidence}%"),"decision_rules_help":{

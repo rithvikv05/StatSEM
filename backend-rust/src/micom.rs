@@ -1,5 +1,5 @@
 //! Configural/compositional invariance and equality of composite moments.
-use crate::{grouping, inference, matrix::round, model, pipeline, rng, stats};
+use crate::{grouping, inference, model, pipeline, rng, stats};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -352,9 +352,9 @@ pub fn run(
             ("Full measurement invariance","You can compare path coefficients and latent means, and pooling group data is permitted.")
         };
         eligible &= pass2;
-        evaluations.push(json!({"construct_id":c.id,"step2_compositional":{"c_correlation":round(c.observed[0],4),"threshold_5pct":round(quantile,4),"p_value":round(pvalue(0,false),4),"passed":pass2},
-            "step3_equal_means":{"mean_difference":round(c.observed[1],4),"ci_lower":round(mean_ci[0],4),"ci_upper":round(mean_ci[1],4),"p_value":round(pvalue(1,true),4),"passed":mean_equal},
-            "step3_equal_variances":{"log_variance_ratio":round(c.observed[2],4),"ci_lower":round(var_ci[0],4),"ci_upper":round(var_ci[1],4),"p_value":round(pvalue(2,true),4),"passed":var_equal},"invariance_status":status,"recommendation":recommendation}));
+        evaluations.push(json!({"construct_id":c.id,"step2_compositional":{"c_correlation":c.observed[0],"threshold_5pct":quantile,"p_value":pvalue(0,false),"passed":pass2},
+            "step3_equal_means":{"mean_difference":c.observed[1],"ci_lower":mean_ci[0],"ci_upper":mean_ci[1],"p_value":pvalue(1,true),"passed":mean_equal},
+            "step3_equal_variances":{"log_variance_ratio":c.observed[2],"ci_lower":var_ci[0],"ci_upper":var_ci[1],"p_value":pvalue(2,true),"passed":var_equal},"invariance_status":status,"recommendation":recommendation}));
     }
     Ok(
         json!({"group_column":o.group_col,"group_1":grouping::label(&groups[0]),"group_2":grouping::label(&groups[1]),"n_group_1":n1,"n_group_2":n2,"n_permutations":o.n_permutations,

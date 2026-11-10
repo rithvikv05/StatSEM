@@ -8,8 +8,202 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
+
+/// Return the current user's home directory across Unix/macOS and Windows.
+pub fn user_home_dir() -> Result<PathBuf, String> {
+    if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(home));
+    }
+    if let Some(profile) = std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(profile));
+    }
+    if let (Some(drive), Some(path)) = (
+        std::env::var_os("HOMEDRIVE").filter(|v| !v.is_empty()),
+        std::env::var_os("HOMEPATH").filter(|v| !v.is_empty()),
+    ) {
+        let mut combined = PathBuf::from(drive);
+        combined.push(path);
+        return Ok(combined);
+    }
+    Err("Home directory is unavailable".into())
+}
+
+fn strip_windows_verbatim(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path
+}
+
+/// Canonicalize an existing path, or canonicalize its deepest existing ancestor
+/// and lexically normalize any not-yet-created trailing segments.
+pub fn canonicalize_or_normalize(path: &Path) -> PathBuf {
+    if path.exists() {
+        if let Ok(canon) = fs::canonicalize(path) {
+            return strip_windows_verbatim(canon);
+        }
+    }
+
+    let mut existing_ancestor: Option<PathBuf> = None;
+    let mut missing_parts: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = Some(path);
+    while let Some(curr) = cursor {
+        if curr.exists() {
+            existing_ancestor = Some(curr.to_path_buf());
+            break;
+        }
+        if let Some(name) = curr.file_name() {
+            missing_parts.push(name.to_os_string());
+        }
+        cursor = curr.parent();
+    }
+
+    let mut base = match existing_ancestor {
+        Some(ancestor) => fs::canonicalize(&ancestor)
+            .map(strip_windows_verbatim)
+            .unwrap_or(ancestor),
+        None => std::env::current_dir().unwrap_or_default(),
+    };
+
+    for part in missing_parts.into_iter().rev() {
+        let part_path = Path::new(&part);
+        if matches!(part_path.components().next(), Some(Component::ParentDir)) {
+            base.pop();
+        } else if !matches!(part_path.components().next(), Some(Component::CurDir)) {
+            base.push(part);
+        }
+    }
+    base
+}
+
+fn extract_src_tauri_tilde_tail(raw: &str) -> Option<&str> {
+    for marker in ["/src-tauri/~/", r"\src-tauri\~\", "src-tauri/~/", r"src-tauri\~\"] {
+        if let Some(idx) = raw.find(marker) {
+            let tail = &raw[idx + marker.len()..];
+            return Some(tail.trim_start_matches(['/', '\\']));
+        }
+    }
+    None
+}
+
+fn expand_tilde_only(raw: &str) -> Result<(PathBuf, Option<String>), String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Path is required".into());
+    }
+    if trimmed == "~" {
+        return Ok((user_home_dir()?, Some(String::new())));
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+        let clean_rest = rest.trim_start_matches(['/', '\\']);
+        let home = user_home_dir()?;
+        let expanded = if clean_rest.is_empty() {
+            home
+        } else {
+            home.join(clean_rest)
+        };
+        return Ok((expanded, Some(clean_rest.to_string())));
+    }
+    if let Some(clean_rest) = extract_src_tauri_tilde_tail(trimmed) {
+        let home = user_home_dir()?;
+        let expanded = if clean_rest.is_empty() {
+            home
+        } else {
+            home.join(clean_rest)
+        };
+        return Ok((expanded, Some(clean_rest.to_string())));
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_relative() {
+        let abs = std::env::current_dir()
+            .map_err(|e| e.to_string())?
+            .join(&path);
+        return Ok((abs, None));
+    }
+    Ok((path, None))
+}
+
+fn copy_dir_without_journals(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.ends_with(".pls-journal")
+            || name_str.ends_with(".pls-wal")
+            || name_str.ends_with(".pls-shm")
+        {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        if file_type.is_dir() {
+            copy_dir_without_journals(&from, &to)?;
+        } else if file_type.is_file() && !to.exists() {
+            fs::copy(&from, &to).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Non-destructively copy legacy `src-tauri/~/...` or `<cwd>/~/...` data to the
+/// resolved `$HOME/...` location if the resolved target does not exist yet.
+/// Existing `~/` sources are intentionally preserved so verification comes first.
+pub fn migrate_legacy_tilde_if_needed(raw: &str, resolved: &Path) {
+    if resolved.exists() {
+        return;
+    }
+    let raw_trimmed = raw.trim();
+    let mut legacy_candidates: Vec<PathBuf> = Vec::new();
+    if let Some((_, Some(tail))) = expand_tilde_only(raw_trimmed).ok() {
+        if !tail.is_empty() {
+            if let Ok(cwd) = std::env::current_dir() {
+                legacy_candidates.push(cwd.join("~").join(&tail));
+                legacy_candidates.push(cwd.join("src-tauri").join("~").join(&tail));
+            }
+        }
+    }
+    let raw_path = PathBuf::from(raw_trimmed);
+    if extract_src_tauri_tilde_tail(raw_trimmed).is_some() && raw_path.exists() {
+        legacy_candidates.push(raw_path);
+    }
+
+    for legacy in legacy_candidates {
+        if legacy == resolved || !legacy.exists() {
+            continue;
+        }
+        if legacy.is_dir() {
+            let _ = copy_dir_without_journals(&legacy, resolved);
+            break;
+        } else if legacy.is_file() {
+            if let Some(parent) = resolved.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if fs::copy(&legacy, resolved).is_ok() {
+                break;
+            }
+        }
+    }
+}
+
+/// Expand leading `~` (and legacy `src-tauri/~/`) to the OS home directory and
+/// return a canonicalized path without modifying or deleting legacy directories.
+pub fn resolve_user_path(raw: &str) -> Result<PathBuf, String> {
+    let (expanded, _) = expand_tilde_only(raw)?;
+    let resolved = canonicalize_or_normalize(&expanded);
+    migrate_legacy_tilde_if_needed(raw, &resolved);
+    Ok(canonicalize_or_normalize(&resolved))
+}
 
 pub struct Store {
     path: PathBuf,
@@ -17,14 +211,24 @@ pub struct Store {
 }
 impl Store {
     pub fn new(path: impl Into<PathBuf>) -> Self {
+        let input = path.into();
+        let resolved = input
+            .to_str()
+            .and_then(|s| resolve_user_path(s).ok())
+            .unwrap_or_else(|| canonicalize_or_normalize(&input));
         Self {
-            path: path.into(),
+            path: resolved,
             fixed_time: None,
         }
     }
     pub fn with_timestamp(path: impl Into<PathBuf>, timestamp: String) -> Self {
+        let input = path.into();
+        let resolved = input
+            .to_str()
+            .and_then(|s| resolve_user_path(s).ok())
+            .unwrap_or_else(|| canonicalize_or_normalize(&input));
         Self {
-            path: path.into(),
+            path: resolved,
             fixed_time: Some(timestamp),
         }
     }
@@ -36,7 +240,21 @@ impl Store {
     pub fn path(&self) -> &Path {
         &self.path
     }
+    fn ensure_resolved_path(&self) -> Result<(), String> {
+        if self
+            .path
+            .components()
+            .any(|c| matches!(c, Component::Normal(part) if part == "~"))
+        {
+            return Err(format!(
+                "Unexpanded '~' directory component is not permitted in path: {}",
+                self.path.display()
+            ));
+        }
+        Ok(())
+    }
     fn connect(&self) -> Result<Connection, String> {
+        self.ensure_resolved_path()?;
         if !self.path.exists() {
             return Err(format!("Project not found: {}", self.path.display()));
         }
@@ -45,6 +263,7 @@ impl Store {
         Ok(db)
     }
     pub fn create(&self, name: &str) -> Result<Value, String> {
+        self.ensure_resolved_path()?;
         if self.path.exists() {
             return Err("Project file already exists".into());
         }
@@ -667,6 +886,68 @@ mod tests {
             .unwrap_err()
             .contains("not yet verified"));
         assert_eq!(before, fs::read(&path).unwrap());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tilde_and_legacy_src_tauri_paths_resolve_to_home_directory() {
+        let home = user_home_dir().expect("home dir should exist");
+        let canonical_home = canonicalize_or_normalize(&home);
+
+        assert_eq!(resolve_user_path("~").unwrap(), canonical_home);
+        assert_eq!(
+            resolve_user_path("~/StatSEM/Workspaces/final").unwrap(),
+            canonical_home.join("StatSEM/Workspaces/final")
+        );
+        assert_eq!(
+            resolve_user_path("~//StatSEM/Workspaces/final").unwrap(),
+            canonical_home.join("StatSEM/Workspaces/final")
+        );
+        assert_eq!(
+            resolve_user_path("/tmp/repo/src-tauri/~/StatSEM/Workspaces/final").unwrap(),
+            canonical_home.join("StatSEM/Workspaces/final")
+        );
+    }
+
+    #[test]
+    fn store_rejects_unexpanded_tilde_components() {
+        let bad = Store {
+            path: PathBuf::from("/tmp/src-tauri/~/StatSEM/study.pls"),
+            fixed_time: None,
+        };
+        assert!(bad.create("Study").unwrap_err().contains("Unexpanded '~'"));
+    }
+
+    #[test]
+    fn non_destructive_migration_copies_pls_without_journals_or_source_deletion() {
+        let directory =
+            std::env::temp_dir().join(format!("statsem-migrate-test-{}", uuid::Uuid::new_v4()));
+        let legacy_ws = directory.join("src-tauri/~/StatSEM/Workspaces/demo");
+        let target_ws = directory.join("home/StatSEM/Workspaces/demo");
+        fs::create_dir_all(legacy_ws.join("Archive")).unwrap();
+        fs::write(legacy_ws.join("workspace.json"), br#"{"name":"demo"}"#).unwrap();
+        let src_pls = legacy_ws.join("Demo.pls");
+        {
+            let db = Connection::open(&src_pls, true).unwrap();
+            schema(&db).unwrap();
+            db.execute(
+                "INSERT OR REPLACE INTO metadata(key,value) VALUES ('name','Demo')",
+                &[],
+            )
+            .unwrap();
+        }
+        fs::write(legacy_ws.join("Demo.pls-journal"), b"stale").unwrap();
+
+        copy_dir_without_journals(&legacy_ws, &target_ws).unwrap();
+
+        assert!(legacy_ws.join("Demo.pls").exists());
+        assert!(legacy_ws.join("Demo.pls-journal").exists());
+        assert!(target_ws.join("workspace.json").exists());
+        assert!(target_ws.join("Archive").is_dir());
+        assert!(target_ws.join("Demo.pls").is_file());
+        assert!(!target_ws.join("Demo.pls-journal").exists());
+        let meta = Store::new(target_ws.join("Demo.pls")).metadata().unwrap();
+        assert_eq!(meta["name"], "Demo");
         fs::remove_dir_all(directory).unwrap();
     }
 }

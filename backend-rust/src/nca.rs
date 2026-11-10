@@ -108,7 +108,7 @@ fn bottleneck(px: &[f64], py: &[f64], xb: (f64, f64), yb: (f64, f64)) -> Vec<Val
         let target=ymin+(i as f64*10.0/100.0)*(ymax-ymin);
         let required=px.iter().zip(py).filter(|(_,y)|**y>=target).map(|(x,_)|*x).reduce(f64::min);
         let percentage=required.map(|x|((x-xmin)/(xmax-xmin).max(1e-12)*100.0).clamp(0.0,100.0));
-        json!({"outcome_level_pct":i*10,"outcome_value":round(target,4),"required_predictor_pct":percentage.map(|x|format!("{}%",rounded_text(x,1))).unwrap_or("NN".into()),"is_bottleneck":percentage.is_some_and(|v|v>0.0)})
+        json!({"outcome_level_pct":i*10,"outcome_value":target,"required_predictor_pct":percentage.map(|x|format!("{}%",rounded_text(x,1))).unwrap_or("NN".into()),"is_bottleneck":percentage.is_some_and(|v|v>0.0)})
     }).collect()
 }
 pub fn diagnostics(x: Vec<f64>, y: Vec<f64>) -> Result<Value, String> {
@@ -199,8 +199,8 @@ pub fn analyze(
     };
     let interpretation=format!("Construct '{predictor}' {} for '{outcome}' (CE-FDH d = {}, p = {}, {magnitude} effect). {}",if necessary {"is a necessary condition"} else {"is not a necessary condition"},rounded_text(d,4),rounded_text(p,4),if necessary {format!("Without sufficient levels of {predictor}, high levels of {outcome} are impossible (Dul 2016).")} else {String::new()});
     Ok(
-        json!({"predictor":predictor,"outcome":outcome,"n_samples":n,"scope":round(scope,4),"effect_size_d_ce":round(d,4),"effect_size_d_cr":round(dcr,4),"p_value":round(p,4),"is_necessary":necessary,
-        "ce_fdh":{"ceiling_zone_area":round(area,4),"effect_size_d":round(d,4),"p_value":round(p,4),"is_necessary":necessary,"magnitude":magnitude,"accuracy":100.0},
-        "cr_fdh":{"slope":round(slope,4),"intercept":round(intercept,4),"effect_size_d":round(dcr,4),"accuracy_pct":round(accuracy,2)},"bottleneck_table":bottleneck(&px,&py,xb,yb),"interpretation":interpretation}),
+        json!({"predictor":predictor,"outcome":outcome,"n_samples":n,"scope":scope,"effect_size_d_ce":d,"effect_size_d_cr":dcr,"p_value":p,"is_necessary":necessary,
+        "ce_fdh":{"ceiling_zone_area":area,"effect_size_d":d,"p_value":p,"is_necessary":necessary,"magnitude":magnitude,"accuracy":100.0},
+        "cr_fdh":{"slope":slope,"intercept":intercept,"effect_size_d":dcr,"accuracy_pct":accuracy},"bottleneck_table":bottleneck(&px,&py,xb,yb),"interpretation":interpretation}),
     )
 }

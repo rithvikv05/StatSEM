@@ -1,5 +1,6 @@
 import { getCachedTokenString } from './license';
 import { invoke } from '@tauri-apps/api/core';
+import { DEFAULT_DECIMAL_DIGITS, normalizeDecimalDigits } from './number-format';
 
 // Tauri supplies the port chosen by the Rust sidecar. Browser-only development
 // can still use a manually started backend on the historical development port.
@@ -109,6 +110,16 @@ export interface LoadModelResponse {
 }
 
 export const api = {
+  async getHealth(): Promise<{ status?: string; backend?: string; home_dir?: string | null } | null> {
+    try {
+      const res = await fetch(`${API_BASE}/health`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
   async createWorkspace(folderPath: string, name: string): Promise<WorkspaceResponse> {
     try {
       const res = await fetch(
@@ -1732,7 +1743,7 @@ export const api = {
         project_path: params.projectPath,
         table_name: params.tableName,
         format: params.format || 'csv',
-        decimals: String(params.decimals ?? 3),
+        decimals: String(normalizeDecimalDigits(params.decimals ?? DEFAULT_DECIMAL_DIGITS)),
       });
       if (params.modelId) query.append('model_id', params.modelId);
       const res = await fetch(`${API_BASE}/export/table?${query.toString()}`);

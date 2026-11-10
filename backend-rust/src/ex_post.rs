@@ -179,9 +179,9 @@ pub fn overlap(segments: Vec<i64>, categories: Vec<Value>) -> Result<Value, Stri
             )
         })
         .collect();
-    let pct = matrix::round(best as f64 / segments.len().max(1) as f64 * 100.0, 2);
+    let pct = best as f64 / segments.len().max(1) as f64 * 100.0;
     let satisfactory = pct >= 60.0;
-    let pct_text = crate::python_json::dumps(&json!(pct));
+    let pct_text = crate::python_json::dumps(&json!(matrix::round(pct, 2)));
     Ok(
         json!({"n_samples":segments.len(),"n_segments":unique.len(),"n_categories":cats.len(),"contingency_table":table,"optimal_mapping":mapping,"best_matching_mapping":mapping,"matched_cases":best,"overlap_percentage":pct,"is_satisfactory":satisfactory,"satisfaction_verdict":if satisfactory {format!("Satisfactory overlap ({pct_text}% >= 60%): The explanatory variable substantially accounts for segment membership.")}else{format!("Insufficient overlap ({pct_text}% < 60%): The explanatory variable does not adequately capture the latent segments.")}}),
     )
@@ -306,7 +306,7 @@ pub fn logistic(
     };
     let coefficients:Vec<_>=(0..p).map(|j|{
         let z=beta[j]/se[j].max(1e-12);let prob=2.0*(1.0-inference::normal_cdf(z.abs()));
-        json!({"predictor":names[j],"coefficient":matrix::round(beta[j],4),"std_error":matrix::round(se[j],4),"z_statistic":matrix::round(z,4),"p_value":matrix::round(prob,4),"odds_ratio":matrix::round(beta[j].clamp(-10.0,10.0).exp(),4),"is_significant":prob<0.05})
+        json!({"predictor":names[j],"coefficient":beta[j],"std_error":se[j],"z_statistic":z,"p_value":prob,"odds_ratio":beta[j].clamp(-10.0,10.0).exp(),"is_significant":prob<0.05})
     }).collect();
     Ok(
         json!({"type":"binary_logistic","reference_segment":groups[0],"target_segment":groups[1],"n_samples":rows.len(),"coefficients_table":coefficients,"coefficients":coefficients,"converged":converged}),
@@ -347,7 +347,7 @@ pub fn compare(
             .as_object()
             .into_iter()
             .flatten()
-            .map(|(k, v)| (k.clone(), json!(matrix::round(model::numeric(v), 4))))
+            .map(|(k, v)| (k.clone(), json!(model::numeric(v))))
             .collect();
         r2.insert(label.clone(), Value::Object(rounded));
         fits.insert(label, fit);
@@ -357,7 +357,7 @@ pub fn compare(
         .as_object()
         .into_iter()
         .flatten()
-        .map(|(k, v)| (k.clone(), json!(matrix::round(model::numeric(v), 4))))
+        .map(|(k, v)| (k.clone(), json!(model::numeric(v))))
         .collect();
     let mut targets: Vec<_> = paths.iter().map(|p| p[1].clone()).collect();
     targets.sort();
@@ -365,17 +365,14 @@ pub fn compare(
     let mut weighted = Map::new();
     let mut reproduces = true;
     for target in targets {
-        let value = matrix::round(
-            groups
-                .iter()
-                .map(|g| {
-                    let label = grouping::label(g);
-                    model::numeric(&sizes[&label]) / rows.len() as f64
-                        * r2[&label][&target].as_f64().unwrap_or(0.0)
-                })
-                .sum(),
-            4,
-        );
+        let value: f64 = groups
+            .iter()
+            .map(|g| {
+                let label = grouping::label(g);
+                model::numeric(&sizes[&label]) / rows.len() as f64
+                    * r2[&label][&target].as_f64().unwrap_or(0.0)
+            })
+            .sum();
         reproduces &= value >= pos["weighted_r_squared"][&target].as_f64().unwrap_or(0.0) - 0.05;
         weighted.insert(target, json!(value));
     }
@@ -384,12 +381,11 @@ pub fn compare(
         let mut row = Map::new();
         row.insert("path".into(), json!(format!("{from} -> {to}")));
         let coefficient = |fit: &Value| {
-            json!(matrix::round(
+            json!(
                 fit["structural"]["path_coefficients"][&to][&from]
                     .as_f64()
-                    .unwrap_or(0.0),
-                4
-            ))
+                    .unwrap_or(0.0)
+            )
         };
         row.insert("full_sample".into(), coefficient(&global));
         for group in &groups {
@@ -399,12 +395,11 @@ pub fn compare(
         for segment in pos["segments"].as_array().into_iter().flatten() {
             row.insert(
                 format!("pos_segment_{}", segment["segment"].as_i64().unwrap_or(1)),
-                json!(matrix::round(
+                json!(
                     segment["path_coefficients"][&to][&from]
                         .as_f64()
-                        .unwrap_or(0.0),
-                    4
-                )),
+                        .unwrap_or(0.0)
+                ),
             );
         }
         table.push(row);

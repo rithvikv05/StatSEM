@@ -1,5 +1,5 @@
 //! Regression power and discrete minimum sample sizes, without SciPy runtime.
-use crate::{inference, matrix::round, model};
+use crate::{inference, model};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -123,7 +123,7 @@ pub fn evaluate(samples: usize, spec: Value, r2: Value, alpha: f64) -> Result<Va
         };
         let adequate = observed_power.unwrap_or(benchmark) >= 0.80;
         all &= adequate;
-        evaluations.push(json!({"endogenous_construct":target,"n_predictors":preds.len(),"predictors":preds,"observed_r_squared":observed.map(|v|round(v,4)),"observed_power":observed_power.map(|v|round(v,4)),"power_at_benchmark_r2_0_25":round(benchmark,4),"n_required_for_power_80_percent":required,"has_adequate_power":adequate}));
+        evaluations.push(json!({"endogenous_construct":target,"n_predictors":preds.len(),"predictors":preds,"observed_r_squared":observed,"observed_power":observed_power,"power_at_benchmark_r2_0_25":benchmark,"n_required_for_power_80_percent":required,"has_adequate_power":adequate}));
     }
     Ok(
         json!({"n_samples":samples,"alpha":alpha,"construct_evaluations":evaluations,"general_adequate":all}),

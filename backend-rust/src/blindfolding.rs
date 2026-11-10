@@ -1,5 +1,5 @@
 //! Omission-round Q² and q² effects, composed from native PLS.
-use crate::{matrix, model, pipeline, stats};
+use crate::{model, pipeline, stats};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,7 +29,7 @@ struct Context {
     distance: usize,
 }
 fn rounded(value: f64) -> f64 {
-    matrix::round(value, 4)
+    value
 }
 impl Context {
     fn pass(

@@ -1,0 +1,9 @@
+# Exclude accidental tilde directories and SQLite project/journal files from Tauri's dev watcher
+~/
+~
+Workspaces/
+*.pls
+*.pls-journal
+*.pls-wal
+*.pls-shm
+

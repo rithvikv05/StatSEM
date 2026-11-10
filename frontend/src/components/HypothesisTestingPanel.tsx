@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from 'react';
+import { useStore } from '../store';
+import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 
 interface HypothesisTestingPanelProps {
   results: any;
@@ -31,6 +33,9 @@ export const HypothesisTestingPanel: React.FC<HypothesisTestingPanelProps> = ({
   model,
   onExportExcel,
 }) => {
+  const { settings } = useStore();
+  const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
+  const decimalSystem = settings.decimalSystem;
   const [copied, setCopied] = useState(false);
   const [directions, setDirections] = useState<Record<string, '+' | '-' | '+/-'>>({});
   const [customLabels, setCustomLabels] = useState<Record<string, string>>({});
@@ -179,10 +184,11 @@ export const HypothesisTestingPanel: React.FC<HypothesisTestingPanelProps> = ({
     return 'None';
   };
 
-  const fmt = (v: number | undefined, decimals = 3) => {
-    if (v === undefined || v === null || isNaN(v)) return '—';
-    return v.toFixed(decimals);
-  };
+  const fmt = (v: number | undefined, decimals = decimalDigits) =>
+    formatNumber(v, decimals, decimalSystem);
+
+  const fmtP = (v: number | undefined, decimals = decimalDigits) =>
+    formatPValue(v, decimals, decimalSystem);
 
   const handleDirectionChange = (id: string, newDir: '+' | '-' | '+/-') => {
     setDirections(prev => ({ ...prev, [id]: newDir }));
@@ -223,13 +229,13 @@ export const HypothesisTestingPanel: React.FC<HypothesisTestingPanelProps> = ({
                 <td style="padding: 5px 8px; font-weight: bold;">${h.label}</td>
                 <td style="padding: 5px 8px;">${h.fromName} → ${h.toName}</td>
                 <td style="padding: 5px 8px; text-align: center;">${h.direction}</td>
-                <td style="padding: 5px 8px; text-align: right;">${fmt(h.beta, 3)}</td>
-                <td style="padding: 5px 8px; text-align: right;">${fmt(h.mean, 3)}</td>
-                <td style="padding: 5px 8px; text-align: right;">${fmt(h.se, 3)}</td>
-                <td style="padding: 5px 8px; text-align: right;">${fmt(h.tStat, 3)}</td>
-                <td style="padding: 5px 8px; text-align: right;">${h.pValue !== undefined ? (h.pValue < 0.001 ? '< .001' : fmt(h.pValue, 3)) : '—'}</td>
-                <td style="padding: 5px 8px; text-align: center;">[${fmt(h.ciLow, 3)}, ${fmt(h.ciHigh, 3)}]</td>
-                <td style="padding: 5px 8px; text-align: right;">${fmt(h.f2, 3)}</td>
+                <td style="padding: 5px 8px; text-align: right;">${fmt(h.beta)}</td>
+                <td style="padding: 5px 8px; text-align: right;">${fmt(h.mean)}</td>
+                <td style="padding: 5px 8px; text-align: right;">${fmt(h.se)}</td>
+                <td style="padding: 5px 8px; text-align: right;">${fmt(h.tStat)}</td>
+                <td style="padding: 5px 8px; text-align: right;">${h.pValue !== undefined ? fmtP(h.pValue) : '—'}</td>
+                <td style="padding: 5px 8px; text-align: center;">[${fmt(h.ciLow)}, ${fmt(h.ciHigh)}]</td>
+                <td style="padding: 5px 8px; text-align: right;">${fmt(h.f2)}</td>
                 <td style="padding: 5px 8px;">${getEffectSizeRating(h.f2)}</td>
                 <td style="padding: 5px 8px; text-align: center; font-weight: bold;">${h.supported}</td>
               </tr>
@@ -249,7 +255,7 @@ export const HypothesisTestingPanel: React.FC<HypothesisTestingPanelProps> = ({
       const text = [
         'Hypothesis\tStructural Relationship\tDirect.\tStd. Beta (β)\tSample Mean\tStd. Error\tt-Value\tp-Value\t95% BCa CI\tf²\tEffect Size\tDecision',
         ...hypotheses.map(h =>
-          `${h.label}\t${h.fromName} -> ${h.toName}\t${h.direction}\t${fmt(h.beta, 3)}\t${fmt(h.mean, 3)}\t${fmt(h.se, 3)}\t${fmt(h.tStat, 3)}\t${h.pValue !== undefined ? fmt(h.pValue, 3) : '—'}\t[${fmt(h.ciLow, 3)}, ${fmt(h.ciHigh, 3)}]\t${fmt(h.f2, 3)}\t${getEffectSizeRating(h.f2)}\t${h.supported}`
+          `${h.label}\t${h.fromName} -> ${h.toName}\t${h.direction}\t${fmt(h.beta)}\t${fmt(h.mean)}\t${fmt(h.se)}\t${fmt(h.tStat)}\t${h.pValue !== undefined ? fmtP(h.pValue) : '—'}\t[${fmt(h.ciLow)}, ${fmt(h.ciHigh)}]\t${fmt(h.f2)}\t${getEffectSizeRating(h.f2)}\t${h.supported}`
         ),
       ].join('\n');
 
@@ -482,18 +488,18 @@ export const HypothesisTestingPanel: React.FC<HypothesisTestingPanelProps> = ({
                       </select>
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600, color: h.beta >= 0 ? 'var(--color-text-primary)' : '#ef4444' }}>
-                      {fmt(h.beta, 3)}
+                      {fmt(h.beta)}
                     </td>
                     <td style={{ textAlign: 'right', color: 'var(--color-text-muted)' }}>
-                      {fmt(h.mean, 3)}
+                      {fmt(h.mean)}
                     </td>
                     <td style={{ textAlign: 'right', color: 'var(--color-text-muted)' }}>
-                      {fmt(h.se, 3)}
+                      {fmt(h.se)}
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>
                       {h.tStat !== undefined ? (
                         <span style={{ color: (h.tStat >= 1.96 || h.tStat <= -1.96) ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }}>
-                          {fmt(h.tStat, 3)}
+                          {fmt(h.tStat)}
                         </span>
                       ) : '—'}
                     </td>
@@ -503,7 +509,7 @@ export const HypothesisTestingPanel: React.FC<HypothesisTestingPanelProps> = ({
                           fontWeight: 600,
                           color: isVerySig ? '#10b981' : (isSig ? '#059669' : 'var(--color-text-muted)'),
                         }}>
-                          {h.pValue < 0.001 ? '< .001' : fmt(h.pValue, 3)}
+                          {fmtP(h.pValue)}
                         </span>
                       ) : (
                         <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Pending Boot</span>
@@ -511,11 +517,11 @@ export const HypothesisTestingPanel: React.FC<HypothesisTestingPanelProps> = ({
                     </td>
                     <td style={{ textAlign: 'center', fontSize: 12, fontFamily: 'monospace' }}>
                       {h.ciLow !== undefined && h.ciHigh !== undefined ? (
-                        <span>[{fmt(h.ciLow, 3)}, {fmt(h.ciHigh, 3)}]</span>
+                        <span>[{fmt(h.ciLow)}, {fmt(h.ciHigh)}]</span>
                       ) : '—'}
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 500 }}>
-                      {fmt(h.f2, 3)}
+                      {fmt(h.f2)}
                     </td>
                     <td>
                       <span style={{

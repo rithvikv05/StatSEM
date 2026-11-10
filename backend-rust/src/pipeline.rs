@@ -269,7 +269,7 @@ fn redundancy(blocks: &[pls::Block], paths: &[[String; 2]], result: &Value) -> O
             .as_f64()
             .unwrap_or(beta * beta);
         rows.push(json!({"formative_construct":src.name.as_ref().unwrap_or(source),"formative_id":source,
-            "global_construct":tgt.name.as_ref().unwrap_or(target),"global_id":target,"path_coefficient":matrix::round(beta,4),"r_squared":matrix::round(r2,4),
+            "global_construct":tgt.name.as_ref().unwrap_or(target),"global_id":target,"path_coefficient":beta,"r_squared":r2,
             "threshold":0.70,"supported":beta >= 0.70,"result":if beta >= 0.70 { "Supported (>= 0.70)" } else { "Not supported (< 0.70)" },
             "note":"Hair et al. (2022): path coefficient of at least 0.70 (R² of at least 0.50). If not met, consider adding indicators that cover the domain of the construct."}));
     }

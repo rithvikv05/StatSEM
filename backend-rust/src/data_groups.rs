@@ -1,5 +1,5 @@
 //! Categorical group summaries and sample-size diagnostics.
-use crate::{grouping, matrix, model};
+use crate::{grouping, model};
 use serde_json::{json, Value};
 
 pub fn categorical(
@@ -89,7 +89,7 @@ pub fn categorical(
         } else {
             label.clone()
         };
-        summary.push(json!({"name":format!("{column}={label}"),"value":group,"count":count,"percentage":matrix::round(count as f64/rows.len() as f64*100.0,2),"valid_percentage":matrix::round(count as f64/valid as f64*100.0,2),"filter_expression":format!("df['{column}'] == {repr}"),"is_valid_size":count>=minimum,"power_status":if count>=54{"adequate"}else if count>=ten{"caution"}else{"low_power"}}));
+        summary.push(json!({"name":format!("{column}={label}"),"value":group,"count":count,"percentage":count as f64/rows.len() as f64*100.0,"valid_percentage":count as f64/valid as f64*100.0,"filter_expression":format!("df['{column}'] == {repr}"),"is_valid_size":count>=minimum,"power_status":if count>=54{"adequate"}else if count>=ten{"caution"}else{"low_power"}}));
     }
     Ok(
         json!({"column":column,"total_observations":rows.len(),"total_samples":rows.len(),"valid_observations":valid,"missing_count":missing,"n_groups":groups.len(),"groups":summary,"has_critical_error":!critical.is_empty(),"critical_errors":critical,"power_warnings":warnings,"ten_times_threshold":ten,"cohen_threshold":54}),

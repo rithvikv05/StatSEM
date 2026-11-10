@@ -3,6 +3,44 @@
  * Pure Vanilla JS + SVG implementation for professional vector diagramming.
  */
 import { performAutoLayout, resolveBadgePositions } from './semLayoutEngine';
+import {
+  formatNumber,
+  formatPValue,
+  normalizeDecimalDigits,
+  DEFAULT_DECIMAL_DIGITS,
+} from './number-format';
+
+function getPrecisionSettings() {
+  let settings = null;
+  if (typeof window !== 'undefined' && window.__useStore) {
+    try {
+      settings = window.__useStore.getState()?.settings;
+    } catch (e) {}
+  }
+  if (!settings && typeof localStorage !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('cspls-storage') || localStorage.getItem('statsem-storage');
+      if (stored) {
+        settings = JSON.parse(stored)?.state?.settings;
+      }
+    } catch (e) {}
+  }
+  return {
+    decimalDigits: normalizeDecimalDigits(settings?.decimalDigits),
+    decimalSystem: settings?.decimalSystem === 'comma' ? 'comma' : 'point',
+  };
+}
+
+function formatCanvasNumber(val) {
+  const { decimalDigits, decimalSystem } = getPrecisionSettings();
+  return formatNumber(val, decimalDigits, decimalSystem);
+}
+
+function formatCanvasPEq(val) {
+  const { decimalDigits, decimalSystem } = getPrecisionSettings();
+  const formatted = formatPValue(val, decimalDigits, decimalSystem);
+  return formatted.startsWith('<') ? `p ${formatted}` : `p = ${formatted}`;
+}
 
 export function getCanvasGridColors(bgColor) {
   const isDark = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark';
@@ -172,6 +210,8 @@ export function initModelCanvas() {
   let currentGrid = 'dots';
   let currentBgColor = '';
   let currentRecentBgColors = [];
+  let currentDecimalDigits = DEFAULT_DECIMAL_DIGITS;
+  let currentDecimalSystem = 'point';
 
   function updateCanvasGridColors(bgColor) {
     const colors = getCanvasGridColors(bgColor);
@@ -249,6 +289,8 @@ export function initModelCanvas() {
       if (s.canvasGrid) currentGrid = s.canvasGrid;
       if (s.canvasBgColor !== undefined) currentBgColor = s.canvasBgColor;
       if (Array.isArray(s.canvasRecentBgColors)) currentRecentBgColors = s.canvasRecentBgColors;
+      currentDecimalDigits = normalizeDecimalDigits(s.decimalDigits);
+      currentDecimalSystem = s.decimalSystem === 'comma' ? 'comma' : 'point';
     }
     applyGrid(currentGrid);
     applyBgColor(currentBgColor);
@@ -286,6 +328,15 @@ export function initModelCanvas() {
       }
       if (Array.isArray(state?.settings?.canvasRecentBgColors)) {
         currentRecentBgColors = state.settings.canvasRecentBgColors;
+      }
+      const nextDigits = normalizeDecimalDigits(state?.settings?.decimalDigits);
+      const nextSystem = state?.settings?.decimalSystem === 'comma' ? 'comma' : 'point';
+      if (nextDigits !== currentDecimalDigits || nextSystem !== currentDecimalSystem) {
+        currentDecimalDigits = nextDigits;
+        currentDecimalSystem = nextSystem;
+        if (typeof window !== 'undefined' && typeof window.renderModelCanvas === 'function') {
+          window.renderModelCanvas();
+        }
       }
     });
   }
@@ -2503,7 +2554,7 @@ export function initModelCanvas() {
       container.appendChild(popupEl);
     }
 
-    const fmtVal = (val) => (val !== null && val !== undefined && !isNaN(val)) ? Number(val).toFixed(4) : '—';
+    const fmtVal = (val) => formatCanvasNumber(val);
 
     let r2Rows = '';
     if (metrics.r2 !== null) {
@@ -3825,7 +3876,7 @@ export function initModelCanvas() {
         badgeG.setAttribute('transform', `translate(${midX}, ${midY})`);
         badgeG.setAttribute('pointer-events', 'none');
 
-        const textVal = coef.toFixed(3);
+        const textVal = formatCanvasNumber(coef);
         const pillW = Math.max(34, textVal.length * 7.5 + 10);
         const pillH = 18;
 
@@ -4056,7 +4107,7 @@ export function initModelCanvas() {
       badgeG.setAttribute('pointer-events', 'auto');
       badgeG.style.cursor = 'pointer';
 
-      const textVal = modDetails.beta.toFixed(3);
+      const textVal = formatCanvasNumber(modDetails.beta);
       const pillW = Math.max(34, textVal.length * 7.5 + 10);
       const pillH = 18;
 
@@ -4084,9 +4135,9 @@ export function initModelCanvas() {
       txt.textContent = textVal;
       badgeG.appendChild(txt);
 
-      let tooltipText = `${modDetails.term} → ${modDetails.target}: β = ${modDetails.beta.toFixed(3)}`;
-      if (modDetails.t !== null) tooltipText += `, t = ${modDetails.t.toFixed(3)}`;
-      if (modDetails.p !== null) tooltipText += `, p = ${modDetails.p.toFixed(3)}`;
+      let tooltipText = `${modDetails.term} → ${modDetails.target}: β = ${formatCanvasNumber(modDetails.beta)}`;
+      if (modDetails.t !== null) tooltipText += `, t = ${formatCanvasNumber(modDetails.t)}`;
+      if (modDetails.p !== null) tooltipText += `, ${formatCanvasPEq(modDetails.p)}`;
 
       const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       titleEl.textContent = tooltipText;
@@ -4267,7 +4318,7 @@ export function initModelCanvas() {
       badgeG.setAttribute('pointer-events', 'auto');
       badgeG.style.cursor = 'pointer';
 
-      const textVal = gcDetails.beta.toFixed(3);
+      const textVal = formatCanvasNumber(gcDetails.beta);
       const pillW = Math.max(34, textVal.length * 7.5 + 10);
       const pillH = 18;
 
@@ -4295,9 +4346,9 @@ export function initModelCanvas() {
       txt.textContent = textVal;
       badgeG.appendChild(txt);
 
-      let tooltipText = `${gcDetails.term} → ${gcDetails.target}: β = ${gcDetails.beta.toFixed(3)}`;
-      if (gcDetails.t !== null && gcDetails.t !== undefined) tooltipText += `, t = ${Number(gcDetails.t).toFixed(3)}`;
-      if (gcDetails.p !== null && gcDetails.p !== undefined) tooltipText += `, p = ${Number(gcDetails.p).toFixed(3)}`;
+      let tooltipText = `${gcDetails.term} → ${gcDetails.target}: β = ${formatCanvasNumber(gcDetails.beta)}`;
+      if (gcDetails.t !== null && gcDetails.t !== undefined) tooltipText += `, t = ${formatCanvasNumber(gcDetails.t)}`;
+      if (gcDetails.p !== null && gcDetails.p !== undefined) tooltipText += `, ${formatCanvasPEq(gcDetails.p)}`;
 
       const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       titleEl.textContent = tooltipText;
@@ -4551,7 +4602,7 @@ export function initModelCanvas() {
       badgeG.setAttribute('pointer-events', 'auto');
       badgeG.style.cursor = 'pointer';
 
-      const textVal = qeDetails.beta.toFixed(3);
+      const textVal = formatCanvasNumber(qeDetails.beta);
       const pillW = Math.max(34, textVal.length * 7.5 + 10);
       const pillH = 18;
 
@@ -4579,9 +4630,9 @@ export function initModelCanvas() {
       txt.textContent = textVal;
       badgeG.appendChild(txt);
 
-      let tooltipText = `${qeDetails.term} → ${qeDetails.target}: β = ${qeDetails.beta.toFixed(3)}`;
-      if (qeDetails.t !== null && qeDetails.t !== undefined) tooltipText += `, t = ${Number(qeDetails.t).toFixed(3)}`;
-      if (qeDetails.p !== null && qeDetails.p !== undefined) tooltipText += `, p = ${Number(qeDetails.p).toFixed(3)}`;
+      let tooltipText = `${qeDetails.term} → ${qeDetails.target}: β = ${formatCanvasNumber(qeDetails.beta)}`;
+      if (qeDetails.t !== null && qeDetails.t !== undefined) tooltipText += `, t = ${formatCanvasNumber(qeDetails.t)}`;
+      if (qeDetails.p !== null && qeDetails.p !== undefined) tooltipText += `, ${formatCanvasPEq(qeDetails.p)}`;
 
       const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       titleEl.textContent = tooltipText;
@@ -4815,7 +4866,7 @@ export function initModelCanvas() {
           r2Group.setAttribute('class', 'latent-r2-display');
           r2Group.setAttribute('pointer-events', 'none');
 
-          const r2Val = metrics.r2.toFixed(3);
+          const r2Val = formatCanvasNumber(metrics.r2);
 
           if (node.textInside !== false) {
             const r2Text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -5260,7 +5311,7 @@ export function initModelCanvas() {
               badgeG.setAttribute('transform', `translate(${indMidX}, ${indMidY})`);
               badgeG.setAttribute('pointer-events', 'none');
 
-              const textVal = loading.toFixed(3);
+              const textVal = formatCanvasNumber(loading);
               const pillW = Math.max(30, textVal.length * 6.5 + 8);
               const pillH = 15;
 

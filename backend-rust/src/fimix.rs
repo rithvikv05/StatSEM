@@ -57,9 +57,9 @@ fn argmax(row: &[f64]) -> usize {
 }
 fn coef_map(eq: &Equation, coef: &[f64]) -> Value {
     let mut map = serde_json::Map::new();
-    map.insert("_intercept".into(), json!(matrix::round(coef[0], 4)));
+    map.insert("_intercept".into(), json!(coef[0]));
     for (id, coef) in eq.predictors.iter().zip(&coef[1..]) {
-        map.insert(id.clone(), json!(matrix::round(*coef, 4)));
+        map.insert(id.clone(), json!(*coef));
     }
     Value::Object(map)
 }
@@ -109,9 +109,8 @@ pub fn em(equations: Vec<Equation>, o: EmOptions, cancel: &AtomicBool) -> Result
                     .collect();
             total_ll += stats::numpy_sum(&densities);
             let r2 = (1.0 - var / yvariance(&eq.y)).max(0.0);
-            let r2 = matrix::round(r2, 4);
             r2_map.insert(eq.target.clone(), json!(r2));
-            eq_results.insert(eq.target.clone(),json!({"coefficients":[coef_map(eq,coefficients)],"variances":[matrix::round(var,4)],"r_squared":[r2]}));
+            eq_results.insert(eq.target.clone(),json!({"coefficients":[coef_map(eq,coefficients)],"variances":[var],"r_squared":[r2]}));
         }
         return Ok(
             json!({"log_likelihood":total_ll,"free_parameters":k,"proportions":[1.0],"segment_sizes":[n],"equation_results":eq_results,"r_squared_per_segment":[r2_map],"weighted_r_squared":r2_map,"posteriors":vec![vec![1.0];n],"converged":true,"iterations":1,"local_optima_detected":false}),
@@ -244,9 +243,9 @@ pub fn em(equations: Vec<Equation>, o: EmOptions, cancel: &AtomicBool) -> Result
                 let yvar = yvariance(&eq.y);
                 for (new, &old) in order.iter().enumerate() {
                     let variance = variances[old][e];
-                    let r2 = matrix::round((1.0 - variance / yvar).max(0.0), 4);
+                    let r2 = (1.0 - variance / yvar).max(0.0);
                     coefficients.push(coef_map(eq, &betas[old][e]));
-                    vars.push(matrix::round(variance, 4));
+                    vars.push(variance);
                     r2s.push(r2);
                     r2_segments[new].insert(eq.target.clone(), json!(r2));
                 }
@@ -255,7 +254,7 @@ pub fn em(equations: Vec<Equation>, o: EmOptions, cancel: &AtomicBool) -> Result
                     .zip(&r2s)
                     .map(|(p, r2)| p * r2)
                     .sum::<f64>();
-                weighted.insert(eq.target.clone(), json!(matrix::round(wr2, 4)));
+                weighted.insert(eq.target.clone(), json!(wr2));
                 equations_out.insert(
                     eq.target.clone(),
                     json!({"coefficients":coefficients,"variances":vars,"r_squared":r2s}),
@@ -265,7 +264,7 @@ pub fn em(equations: Vec<Equation>, o: EmOptions, cancel: &AtomicBool) -> Result
             for row in &sorted_post {
                 counts[argmax(row)] += 1;
             }
-            best = json!({"log_likelihood":best_ll,"free_parameters":k,"proportions":sorted_pi.iter().map(|p|matrix::round(*p,4)).collect::<Vec<_>>(),"segment_sizes":counts,"equation_results":equations_out,"r_squared_per_segment":r2_segments,"weighted_r_squared":weighted,"posteriors":sorted_post,"converged":converged,"iterations":iterations});
+            best = json!({"log_likelihood":best_ll,"free_parameters":k,"proportions":sorted_pi,"segment_sizes":counts,"equation_results":equations_out,"r_squared_per_segment":r2_segments,"weighted_r_squared":weighted,"posteriors":sorted_post,"converged":converged,"iterations":iterations});
         }
     }
     let valid: Vec<_> = repetition_lls
@@ -415,7 +414,7 @@ pub fn run(
         } else {
             1.0
         };
-        let mut row = json!({"segments":s,"log_likelihood":matrix::round(ll,4),"free_parameters":k as usize,"entropy_normalized":matrix::round(en,4),"EN":matrix::round(en,4),"segment_proportions":solution["proportions"],"segment_sizes":solution["segment_sizes"],"has_small_segment":solution["segment_sizes"].as_array().unwrap().iter().any(|v|v.as_u64().unwrap()<(o.min_sample_size as u64)),"converged":solution["converged"],"iterations":solution["iterations"],"local_optima_detected":solution["local_optima_detected"]});
+        let mut row = json!({"segments":s,"log_likelihood":ll,"free_parameters":k as usize,"entropy_normalized":en,"EN":en,"segment_proportions":solution["proportions"],"segment_sizes":solution["segment_sizes"],"has_small_segment":solution["segment_sizes"].as_array().unwrap().iter().any(|v|v.as_u64().unwrap()<(o.min_sample_size as u64)),"converged":solution["converged"],"iterations":solution["iterations"],"local_optima_detected":solution["local_optima_detected"]});
         for (name, value) in [
             ("aic", -2.0 * ll + 2.0 * k),
             ("aic3", -2.0 * ll + 3.0 * k),
@@ -424,7 +423,7 @@ pub fn run(
             ("caic", -2.0 * ll + k * ((n as f64).ln() + 1.0)),
             ("mdl5", -2.0 * ll + 5.0 * k * (n as f64).ln()),
         ] {
-            let value = json!(matrix::round(value, 2));
+            let value = json!(value);
             row[name] = value.clone();
             row[name.to_uppercase()] = value;
         }
@@ -489,12 +488,11 @@ pub fn run(
             .map(|(target, _)| {
                 (
                     target.clone(),
-                    json!(matrix::round(
+                    json!(
                         global["structural"]["r_squared"][target]
                             .as_f64()
-                            .unwrap_or(0.0),
-                        4
-                    )),
+                            .unwrap_or(0.0)
+                    ),
                 )
             })
             .collect(),

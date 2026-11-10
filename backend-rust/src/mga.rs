@@ -22,7 +22,7 @@ pub fn tests(beta: [f64; 2], se: [f64; 2], n: [usize; 2]) -> Result<Value, Strin
     let se_diff = (pooled * (1.0 / n1 + 1.0 / n2)).max(1e-12).sqrt();
     let t = if se_diff > 1e-12 { diff / se_diff } else { 0.0 };
     let p = 2.0 * (1.0 - inference::student_t_cdf(t.abs(), df));
-    let parametric = json!({"t_statistic":round(t,4),"degrees_of_freedom":df as usize,"p_value":round(p,4),"is_significant":p<0.05});
+    let parametric = json!({"t_statistic":t,"degrees_of_freedom":df as usize,"p_value":p,"is_significant":p<0.05});
     let variance = ((n1 - 1.0) / n1) * se1.powi(2) + ((n2 - 1.0) / n2) * se2.powi(2);
     let t = diff / variance.max(1e-12).sqrt();
     let denominator =
@@ -34,7 +34,7 @@ pub fn tests(beta: [f64; 2], se: [f64; 2], n: [usize; 2]) -> Result<Value, Strin
     };
     let p = 2.0 * (1.0 - inference::student_t_cdf(t.abs(), df));
     Ok(
-        json!({"parametric":parametric,"welch":{"t_statistic":round(t,4),"degrees_of_freedom":round(df,2),"p_value":round(p,4),"is_significant":p<0.05}}),
+        json!({"parametric":parametric,"welch":{"t_statistic":t,"degrees_of_freedom":df,"p_value":p,"is_significant":p<0.05}}),
     )
 }
 pub fn henseler(x: &[f64], y: &[f64]) -> Value {
@@ -49,7 +49,7 @@ pub fn henseler(x: &[f64], y: &[f64]) -> Value {
         .sum();
     let one = count as f64 / (x.len() as f64 * y.len() as f64);
     let two = 2.0 * one.min(1.0 - one);
-    json!({"p_value_one_tailed":round(one,4),"p_value_two_tailed":round(two,4),"is_significant":two<0.05})
+    json!({"p_value_one_tailed":one,"p_value_two_tailed":two,"is_significant":two<0.05})
 }
 #[derive(Deserialize)]
 #[serde(default)]
@@ -225,8 +225,8 @@ pub fn run(
         };
         let henseler = henseler(&draws(&boot1), &draws(&boot2));
         let consensus = p < o.alpha || henseler["is_significant"] == true;
-        comparisons.push(json!({"path":format!("{from} -> {to}"),"from":from,"to":to,"beta_group_1":round(b1,4),"beta_group_2":round(b2,4),"difference":round(diff,4),
-            "parametric_test":tests["parametric"],"welch_test":tests["welch"],"welch_satterthwaite_test":tests["welch"],"permutation_test":{"p_value":round(p,4),"is_significant":p<o.alpha},"henseler_pls_mga":henseler,"consensus_significant":consensus,"consensus":consensus}));
+        comparisons.push(json!({"path":format!("{from} -> {to}"),"from":from,"to":to,"beta_group_1":b1,"beta_group_2":b2,"difference":diff,
+            "parametric_test":tests["parametric"],"welch_test":tests["welch"],"welch_satterthwaite_test":tests["welch"],"permutation_test":{"p_value":p,"is_significant":p<o.alpha},"henseler_pls_mga":henseler,"consensus_significant":consensus,"consensus":consensus}));
     }
     Ok(
         json!({"group_column":o.group_col,"group_1":label(&groups[0]),"group_2":label(&groups[1]),"n_group_1":n1,"n_group_2":n2,"n_boot":o.n_boot,"n_permutations":o.n_permutations,"warnings":warnings,"path_comparisons":comparisons,

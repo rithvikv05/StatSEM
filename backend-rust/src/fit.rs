@@ -13,7 +13,7 @@ fn number(v: &Value) -> f64 {
 }
 fn rounded(v: f64) -> Value {
     if v.is_finite() {
-        json!(matrix::round(v, 4))
+        json!(v)
     } else {
         Value::Null
     }
@@ -159,7 +159,7 @@ pub fn plsc(original: Value, spec: &Value, n: usize) -> Result<Value, String> {
             .sum::<f64>()
             .clamp(0.0, 1.0);
         for (i, id) in preds.iter().enumerate() {
-            let value = matrix::round(beta[i][0], 4);
+            let value = beta[i][0];
             coefficients[&target][id] = json!(value);
             path_matrix[indices[i]][target_index] = value;
         }

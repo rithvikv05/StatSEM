@@ -59,7 +59,11 @@ const GetStarted = () => {
     setActiveWorkspace(ws.id);
     openTab({ type: 'workspace', title: ws.name, workspaceId: ws.id });
     if (ws.path) {
-      api.openWorkspace(ws.path).catch((err) => {
+      api.openWorkspace(ws.path).then((res) => {
+        if (res?.path && res.path !== ws.path) {
+          useStore.getState().syncWorkspaceCanonicalPath(ws.id, res.path);
+        }
+      }).catch((err) => {
         console.warn('Failed opening workspace path:', err);
       });
     }
@@ -120,15 +124,18 @@ const GetStarted = () => {
           alert(res.error);
           return;
         }
-        const wsName = res?.workspace?.name || selected.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean).pop() || 'Workspace';
-        const existing = workspaces.find(w => w.path === selected);
-        const wsId = existing ? existing.id : selected;
+        const canonicalPath = res?.path || selected;
+        const wsName = res?.workspace?.name || canonicalPath.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean).pop() || 'Workspace';
+        const existing = workspaces.find(w => w.path === canonicalPath || w.path === selected || w.id === canonicalPath);
+        const wsId = existing ? existing.id : canonicalPath;
         if (!existing) {
           addWorkspace({
             id: wsId,
             name: wsName,
-            path: selected
+            path: canonicalPath
           });
+        } else if (existing.path !== canonicalPath) {
+          useStore.getState().syncWorkspaceCanonicalPath(existing.id, canonicalPath);
         }
         setActiveWorkspace(wsId);
         openTab({ type: 'workspace', title: wsName, workspaceId: wsId });
@@ -142,15 +149,18 @@ const GetStarted = () => {
           alert(res.error);
           return;
         }
-        const wsName = res?.workspace?.name || fallback.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean).pop() || 'Workspace';
-        const existing = workspaces.find(w => w.path === fallback);
-        const wsId = existing ? existing.id : fallback;
+        const canonicalPath = res?.path || fallback;
+        const wsName = res?.workspace?.name || canonicalPath.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean).pop() || 'Workspace';
+        const existing = workspaces.find(w => w.path === canonicalPath || w.path === fallback || w.id === canonicalPath);
+        const wsId = existing ? existing.id : canonicalPath;
         if (!existing) {
           addWorkspace({
             id: wsId,
             name: wsName,
-            path: fallback
+            path: canonicalPath
           });
+        } else if (existing.path !== canonicalPath) {
+          useStore.getState().syncWorkspaceCanonicalPath(existing.id, canonicalPath);
         }
         setActiveWorkspace(wsId);
         openTab({ type: 'workspace', title: wsName, workspaceId: wsId });

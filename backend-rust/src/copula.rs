@@ -260,12 +260,11 @@ pub fn attach(mut result: Value, boot: Value) -> Result<Value, String> {
             .or_else(|| parameters.get(&format!("{name} -> {target}")))
             .filter(|v| v.as_object().is_some_and(|v| !v.is_empty()))
         {
-            row["mean"] = json!(matrix::round(
+            row["mean"] = json!(
                 summary["mean"]
                     .as_f64()
-                    .unwrap_or_else(|| row["original"].as_f64().unwrap_or(0.0)),
-                4
-            ));
+                    .unwrap_or_else(|| row["original"].as_f64().unwrap_or(0.0))
+            );
             for (field, default) in [
                 ("se", 0.0),
                 ("t_stat", 0.0),
@@ -273,7 +272,7 @@ pub fn attach(mut result: Value, boot: Value) -> Result<Value, String> {
                 ("ci_lower", 0.0),
                 ("ci_upper", 0.0),
             ] {
-                row[field] = json!(matrix::round(summary[field].as_f64().unwrap_or(default), 4));
+                row[field] = json!(summary[field].as_f64().unwrap_or(default));
             }
             row["is_significant"] = json!(row["p_value"].as_f64().unwrap_or(1.0) < 0.05);
         }
@@ -294,13 +293,10 @@ pub fn attach(mut result: Value, boot: Value) -> Result<Value, String> {
             let se = stats::std(&draws, None, 1);
             draws.sort_by(f64::total_cmp);
             let t = row["difference"].as_f64().unwrap_or(0.0) / if se == 0.0 { 1e-9 } else { se };
-            row["diff_se"] = json!(matrix::round(se, 4));
-            row["diff_ci_lower"] = json!(matrix::round(inference::percentile(&draws, 0.025), 4));
-            row["diff_ci_upper"] = json!(matrix::round(inference::percentile(&draws, 0.975), 4));
-            row["diff_pvalue"] = json!(matrix::round(
-                2.0 * (1.0 - inference::normal_cdf(t.abs())),
-                4
-            ));
+            row["diff_se"] = json!(se);
+            row["diff_ci_lower"] = json!(inference::percentile(&draws, 0.025));
+            row["diff_ci_upper"] = json!(inference::percentile(&draws, 0.975));
+            row["diff_pvalue"] = json!(2.0 * (1.0 - inference::normal_cdf(t.abs())));
         }
     }
     let mut tests = wald(&gc["orig_gc_coefs"], &samples, &targets)?;
@@ -385,8 +381,8 @@ fn wald_row(
                 let transformed = linalg::matvec(&matrix::transpose(&inverse), &g)?;
                 let w = g.iter().zip(transformed).map(|(a, b)| a * b).sum::<f64>();
                 let prob = chi_square_sf(w, g.len());
-                statistic = Some(matrix::round(w, 4));
-                p = Some(matrix::round(prob, 4));
+                statistic = Some(w);
+                p = Some(prob);
                 note="Significant result indicates endogeneity. Researchers should keep and interpret the copula model estimates even when GC terms are not significant due to low power.";
             }
         }
@@ -541,7 +537,7 @@ fn diagnostics(values: &[f64], id: &str, role: &str, distinct: Option<usize>) ->
             "Construct has only {distinct} distinct values; caution with ties."
         ));
     }
-    json!({"construct":id,"role":role,"skewness":matrix::round(skew,4),"excess_kurtosis":matrix::round(kurt,4),"ad_stat":ad[0].as_f64().map(|v|matrix::round(v,4)),"ad_pvalue":ad[1].as_f64().map(|v|matrix::round(v,4)),"cvm_stat":cvm[0].as_f64().map(|v|matrix::round(v,4)),"cvm_pvalue":cvm[1].as_f64().map(|v|matrix::round(v,4)),"corr_copula":matrix::round(stats::correlation(values,&term(values,true,Some(12)),None),4),"is_non_normal":!normal,"flag":if flags.is_empty(){"Adequate non-normality".into()}else{flags.join(" | ")}})
+    json!({"construct":id,"role":role,"skewness":skew,"excess_kurtosis":kurt,"ad_stat":ad[0].as_f64(),"ad_pvalue":ad[1].as_f64(),"cvm_stat":cvm[0].as_f64(),"cvm_pvalue":cvm[1].as_f64(),"corr_copula":stats::correlation(values,&term(values,true,Some(12)),None),"is_non_normal":!normal,"flag":if flags.is_empty(){"Adequate non-normality".into()}else{flags.join(" | ")}})
 }
 
 pub fn run(
@@ -740,14 +736,14 @@ pub fn run(
             .unwrap()
             .push(json!(gc.name));
         let path = format!("{} -> {}", gc.source_name, gc.target_name);
-        tests.push(json!({"source":gc.source_name,"target":gc.target_name,"path":path,"gc_construct":gc.name,"original":matrix::round(beta,4),"mean":null,"se":null,"t_stat":null,"p_value":null,"ci_lower":null,"ci_upper":null,"is_significant":false}));
+        tests.push(json!({"source":gc.source_name,"target":gc.target_name,"path":path,"gc_construct":gc.name,"original":beta,"mean":null,"se":null,"t_stat":null,"p_value":null,"ci_lower":null,"ci_upper":null,"is_significant":false}));
         let b1 = first["structural"]["path_coefficients"][&gc.target][&gc.source]
             .as_f64()
             .unwrap_or(0.0);
         let b2 = second["structural"]["path_coefficients"][&gc.target][&gc.source]
             .as_f64()
             .unwrap_or(0.0);
-        effects.push(json!({"source":gc.source_name,"target":gc.target_name,"path":path,"beta_s1":matrix::round(b1,4),"beta_s2":matrix::round(b2,4),"difference":matrix::round(b2-b1,4),"diff_se":null,"diff_ci_lower":null,"diff_ci_upper":null,"diff_pvalue":null}));
+        effects.push(json!({"source":gc.source_name,"target":gc.target_name,"path":path,"beta_s1":b1,"beta_s2":b2,"difference":b2-b1,"diff_se":null,"diff_ci_lower":null,"diff_ci_upper":null,"diff_pvalue":null}));
     }
     let coefficients = Value::Object(coefficients);
     let mut wald = wald(&coefficients, &json!({}), &target_names)?;

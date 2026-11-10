@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../utils/api';
 import { processData } from '../utils/dataset-parser';
 import { promptOpenWorkspaceFolder } from '../utils/workspace-import';
+import { expandLeadingTilde, getDefaultWorkspacesDir, joinUserPath, resolveHomeDir } from '../utils/path';
 
 interface WorkspaceModalProps {
   isOpen: boolean;
@@ -22,10 +23,23 @@ const WorkspaceModal = ({
 }: WorkspaceModalProps) => {
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
+  const [resolvedHome, setResolvedHome] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { workspaces, addWorkspace, setActiveWorkspace, openTab, addStudy, setStudyDataset, setActiveStudy, addModel } = useStore();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let active = true;
+    resolveHomeDir().then((home) => {
+      if (active && home) {
+        setResolvedHome(home);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -62,9 +76,9 @@ const WorkspaceModal = ({
       }
     } catch (err) {
       console.warn('Tauri dialog not available, falling back to prompt:', err);
-      const fallback = window.prompt('Enter workspace directory path:', location || '~/StatSEM/Workspaces');
+      const fallback = window.prompt('Enter workspace directory path:', location || getDefaultWorkspacesDir(resolvedHome));
       if (fallback) {
-        setLocation(fallback);
+        setLocation(expandLeadingTilde(fallback, resolvedHome));
         if (!name.trim()) {
           const folderName = fallback.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean).pop();
           if (folderName) setName(folderName);
@@ -74,38 +88,56 @@ const WorkspaceModal = ({
   };
 
   const cleanName = name.trim();
-  const baseLoc = location.trim() || '~/StatSEM/Workspaces';
+  const defaultLocation = getDefaultWorkspacesDir(resolvedHome);
+  const rawBaseLoc = location.trim() || defaultLocation;
+  const baseLoc = expandLeadingTilde(rawBaseLoc, resolvedHome);
   const cleanLoc = baseLoc.replace(/[/\\]+$/, '');
   const lastFolder = cleanLoc.split(/[/\\]/).filter(Boolean).pop();
-  const calculatedPath = cleanName ? ((lastFolder === cleanName) ? cleanLoc : `${cleanLoc}/${cleanName}`) : cleanLoc;
+  const calculatedPath = cleanName ? ((lastFolder === cleanName) ? cleanLoc : joinUserPath(cleanLoc, cleanName)) : cleanLoc;
 
   const handleCreateWorkspace = async () => {
     if (!cleanName) return;
     setError(null);
     setIsCreating(true);
 
+    let resolvedPath = calculatedPath;
+    let backendOffline = false;
     try {
       const res = await api.createWorkspace(calculatedPath, cleanName);
 
       if (res?.error) {
         if (res.error.toLowerCase().includes('already exists')) {
-          await api.openWorkspace(calculatedPath);
+          const openRes = await api.openWorkspace(calculatedPath);
+          if (openRes?.path) {
+            resolvedPath = openRes.path;
+          }
         } else {
-          console.warn('Backend createWorkspace warning:', res.error);
+          setError(res.error);
+          setIsCreating(false);
+          return;
         }
+      } else if (res?.path) {
+        resolvedPath = res.path;
       }
     } catch (err: any) {
+      backendOffline = true;
       console.warn('Backend createWorkspace connection error:', err);
     }
 
-    const newId = calculatedPath;
-    const existing = workspaces.find(w => w.path === calculatedPath);
+    if (backendOffline && (resolvedPath === '~' || resolvedPath.startsWith('~/') || resolvedPath.startsWith('~\\'))) {
+      setError('Could not connect to backend to resolve workspace path.');
+      setIsCreating(false);
+      return;
+    }
+
+    const newId = resolvedPath;
+    const existing = workspaces.find(w => w.path === resolvedPath || w.id === newId);
 
     if (!existing) {
       addWorkspace({
         id: newId,
         name: cleanName,
-        path: calculatedPath
+        path: resolvedPath
       });
     }
 
@@ -118,12 +150,12 @@ const WorkspaceModal = ({
         const det = await api.detectFolder(initialImportProject);
         if (det.kind === 'cspls_project') {
           if (initialImportProject.toLowerCase().endsWith('.zip')) {
-            importRes = await api.importProjectZip(initialImportProject, calculatedPath, 'rename');
+            importRes = await api.importProjectZip(initialImportProject, resolvedPath, 'rename');
           } else {
-            importRes = await api.importProjectFile(initialImportProject, calculatedPath, 'rename');
+            importRes = await api.importProjectFile(initialImportProject, resolvedPath, 'rename');
           }
         } else {
-          importRes = await api.importSmartPls(initialImportProject, calculatedPath, cleanName);
+          importRes = await api.importSmartPls(initialImportProject, resolvedPath, cleanName);
         }
 
         if (importRes?.studies && importRes.studies.length > 0) {
@@ -290,7 +322,7 @@ const WorkspaceModal = ({
                   className="modal__input modal__input--path"
                   id="modal-workspace-location"
                   type="text"
-                  placeholder="~/StatSEM/Workspaces"
+                  placeholder={defaultLocation}
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   spellCheck="false"

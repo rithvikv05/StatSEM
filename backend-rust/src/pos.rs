@@ -1,6 +1,6 @@
 //! Sequential prediction-oriented segmentation. Global scores are invariant
 //! across candidate moves and are fitted once instead of once per segment/move.
-use crate::{fimix, matrix::round, model, pipeline, rng};
+use crate::{fimix, model, pipeline, rng};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -106,7 +106,7 @@ impl Context<'_> {
                             .unwrap_or(0.0)
                 })
                 .sum::<f64>();
-            weighted.insert(target.clone(), json!(round(value, 4)));
+            weighted.insert(target.clone(), json!(value));
         }
         let value = if self.o.criterion == "sum_r2" {
             models
@@ -178,7 +178,7 @@ impl Context<'_> {
         if current.models.is_empty() || current.value == f64::NEG_INFINITY {
             return Ok(json!({"objective":null,"converged":false,"iterations":0}));
         }
-        let mut history = vec![round(current.value, 4)];
+        let mut history = vec![current.value];
         let mut converged = false;
         if pre {
             let dist = self.distances(&current.models)?;
@@ -190,7 +190,7 @@ impl Context<'_> {
                 if next.value > current.value {
                     assignments = pre_assign;
                     current = next;
-                    history.push(round(current.value, 4));
+                    history.push(current.value);
                 }
             }
         }
@@ -225,7 +225,7 @@ impl Context<'_> {
                 let next = self.evaluate(&assignments);
                 if next.value > current.value + 1e-7 {
                     current = next;
-                    history.push(round(current.value, 4));
+                    history.push(current.value);
                     moved = true;
                     break;
                 }
@@ -239,7 +239,7 @@ impl Context<'_> {
         let mut segments = Vec::new();
         for s in 0..s {
             let size = assignments.iter().filter(|&&a| a == s).count();
-            segments.push(json!({"segment":s+1,"sample_size":size,"relative_size":round(size as f64/n as f64,4),"r_squared":rounded_map(&current.models[s]["structural"]["r_squared"]),"path_coefficients":current.models[s]["structural"]["path_coefficients"]}));
+            segments.push(json!({"segment":s+1,"sample_size":size,"relative_size":size as f64/n as f64,"r_squared":rounded_map(&current.models[s]["structural"]["r_squared"]),"path_coefficients":current.models[s]["structural"]["path_coefficients"]}));
         }
         let mut diffs = serde_json::Map::new();
         for (target, pred) in current.models[0]["structural"]["path_coefficients"]
@@ -250,13 +250,12 @@ impl Context<'_> {
             for (source, b1) in pred.as_object().ok_or("POS path map invalid")? {
                 row.insert(
                     source.clone(),
-                    json!(round(
+                    json!(
                         b1.as_f64().unwrap_or(0.0)
                             - current.models[1]["structural"]["path_coefficients"][target][source]
                                 .as_f64()
-                                .unwrap_or(0.0),
-                        4
-                    )),
+                                .unwrap_or(0.0)
+                    ),
                 );
             }
             diffs.insert(target.clone(), Value::Object(row));
@@ -281,7 +280,7 @@ fn rounded_map(value: &Value) -> Value {
             .as_object()
             .into_iter()
             .flatten()
-            .map(|(k, v)| (k.clone(), json!(round(v.as_f64().unwrap_or(f64::NAN), 4))))
+            .map(|(k, v)| (k.clone(), json!(v.as_f64().unwrap_or(f64::NAN))))
             .collect(),
     )
 }
@@ -415,7 +414,7 @@ pub fn run(
     let assignments: Vec<usize> =
         serde_json::from_value(best["assignments"].clone()).map_err(|e| e.to_string())?;
     let assignments: Vec<_> = assignments.iter().map(|a| a + 1).collect();
-    let mut result = json!({"n_segments":o.n_segments,"n_samples":n,"initial_separation":o.initial_separation,"optimization_criterion":o.criterion,"converged":best["converged"],"iterations":best["iterations"],"final_objective":round(objective,4),"objective_history":best["objective_history"],"segments":best["segments"],"segment_sample_sizes":best["segments"].as_array().unwrap().iter().map(|s|s["sample_size"].clone()).collect::<Vec<_>>(),"signed_path_differences":best["signed_path_differences"],"weighted_r_squared":best["weighted_r_squared"],"full_sample_r_squared":global_r2,
+    let mut result = json!({"n_segments":o.n_segments,"n_samples":n,"initial_separation":o.initial_separation,"optimization_criterion":o.criterion,"converged":best["converged"],"iterations":best["iterations"],"final_objective":objective,"objective_history":best["objective_history"],"segments":best["segments"],"segment_sample_sizes":best["segments"].as_array().unwrap().iter().map(|s|s["sample_size"].clone()).collect::<Vec<_>>(),"signed_path_differences":best["signed_path_differences"],"weighted_r_squared":best["weighted_r_squared"],"full_sample_r_squared":global_r2,
         "quality_judgement":if substantial {"PLS-POS segmentation substantially improves variance explained (weighted R^2 exceeds global sample R^2)."} else {"Heterogeneity appears modest; segment-specific R^2 values are comparable to the full sample."},"case_assignments":assignments,"segment_assignments":assignments,"note":"PLS-POS reallocates cases using distance measures to maximize overall predictive power (Hair et al. 2018; Squillacciotti 2005)."});
     if let Some(retained) = prepared.retained {
         result["retained_case_indices"] = json!(retained);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useStore } from '../store';
 import { api } from '../utils/api';
+import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 import AppSidebar from '../components/AppSidebar';
 import {
   History,
@@ -620,10 +621,14 @@ export const SnapshotView: React.FC = () => {
     return results?.indicator_names?.[iid] || iid;
   };
 
-  const fmt = (val: any, decimals: number = 4): string => {
-    if (val === undefined || val === null || isNaN(Number(val))) return '—';
-    return Number(val).toFixed(decimals);
-  };
+  const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
+  const decimalSystem = settings.decimalSystem;
+
+  const fmt = (val: any, decimals: number = decimalDigits): string =>
+    formatNumber(val, decimals, decimalSystem);
+
+  const fmtP = (val: any, decimals: number = decimalDigits): string =>
+    formatPValue(val, decimals, decimalSystem);
 
   const reportTabDetails = useMemo(() => {
     switch (activeResultTab) {
@@ -1282,7 +1287,7 @@ export const SnapshotView: React.FC = () => {
                                   if (val !== undefined && val !== null) {
                                     return (
                                       <td key={targetC} className="cell-sig">
-                                        <div className="cell-value">{fmt(val, 4)}</div>
+                                        <div className="cell-value">{fmt(val)}</div>
                                       </td>
                                     );
                                   }
@@ -1329,10 +1334,10 @@ export const SnapshotView: React.FC = () => {
                                       </div>
                                     </td>
                                     <td className="cell-sig">
-                                      <div className="cell-value">{fmt(val, 4)}</div>
+                                      <div className="cell-value">{fmt(val)}</div>
                                     </td>
-                                    <td>{fmt(f2, 4)}</td>
-                                    <td>{vif !== undefined ? fmt(vif, 4) : '—'}</td>
+                                    <td>{fmt(f2)}</td>
+                                    <td>{vif !== undefined ? fmt(vif) : '—'}</td>
                                   </tr>
                                 );
                               })
@@ -1372,7 +1377,7 @@ export const SnapshotView: React.FC = () => {
                                   if (eff && eff.indirect !== undefined && eff.indirect !== null) {
                                     return (
                                       <td key={targetC} className="cell-sig">
-                                        <div className="cell-value">{fmt(eff.indirect, 4)}</div>
+                                        <div className="cell-value">{fmt(eff.indirect)}</div>
                                       </td>
                                     );
                                   }
@@ -1413,7 +1418,7 @@ export const SnapshotView: React.FC = () => {
                                   </div>
                                 </td>
                                 <td className="cell-sig">
-                                  <div className="cell-value">{fmt(eff.indirect, 4)}</div>
+                                  <div className="cell-value">{fmt(eff.indirect)}</div>
                                 </td>
                               </tr>
                             ))}
@@ -1453,7 +1458,7 @@ export const SnapshotView: React.FC = () => {
                                   if (val !== undefined && val !== null) {
                                     return (
                                       <td key={targetC} className="cell-sig">
-                                        <div className="cell-value">{fmt(val, 4)}</div>
+                                        <div className="cell-value">{fmt(val)}</div>
                                       </td>
                                     );
                                   }
@@ -1495,10 +1500,10 @@ export const SnapshotView: React.FC = () => {
                                     <span className="construct-name">{getConstructName(eff.to)}</span>
                                   </div>
                                 </td>
-                                <td>{fmt(eff.direct, 4)}</td>
-                                <td>{fmt(eff.indirect, 4)}</td>
+                                <td>{fmt(eff.direct)}</td>
+                                <td>{fmt(eff.indirect)}</td>
                                 <td className="cell-sig">
-                                  <div className="cell-value">{fmt(eff.total, 4)}</div>
+                                  <div className="cell-value">{fmt(eff.total)}</div>
                                 </td>
                               </tr>
                             ))}
@@ -1533,7 +1538,7 @@ export const SnapshotView: React.FC = () => {
                                     const isHigh = num >= 0.708;
                                     return (
                                       <td key={cid} className={isHigh ? 'cell-sig' : 'cell-ns'}>
-                                        <div className="cell-value">{fmt(num, 4)}</div>
+                                        <div className="cell-value">{fmt(num)}</div>
                                       </td>
                                     );
                                   }
@@ -1576,9 +1581,9 @@ export const SnapshotView: React.FC = () => {
                                     </td>
                                     <td><strong>{getIndicatorName(iid)}</strong></td>
                                     <td className={isHigh ? 'cell-sig' : 'cell-ns'}>
-                                      <div className="cell-value">{fmt(loadNum, 4)}</div>
+                                      <div className="cell-value">{fmt(loadNum)}</div>
                                     </td>
-                                    <td>{fmt(rel, 4)}</td>
+                                    <td>{fmt(rel)}</td>
                                     <td>
                                       <span style={{
                                         padding: '2px 8px',
@@ -1624,7 +1629,7 @@ export const SnapshotView: React.FC = () => {
                                   if (val !== undefined && val !== null) {
                                     return (
                                       <td key={cid} className="cell-sig">
-                                        <div className="cell-value">{fmt(val, 4)}</div>
+                                        <div className="cell-value">{fmt(val)}</div>
                                       </td>
                                     );
                                   }
@@ -1664,9 +1669,9 @@ export const SnapshotView: React.FC = () => {
                                     </td>
                                     <td><strong>{getIndicatorName(iid)}</strong></td>
                                     <td className="cell-sig">
-                                      <div className="cell-value">{fmt(val, 4)}</div>
+                                      <div className="cell-value">{fmt(val)}</div>
                                     </td>
-                                    <td>{vif !== undefined ? fmt(vif, 4) : '1.0000'}</td>
+                                    <td>{vif !== undefined ? fmt(vif) : fmt(1)}</td>
                                   </tr>
                                 );
                               })
@@ -1687,8 +1692,8 @@ export const SnapshotView: React.FC = () => {
                           {Object.entries(results?.structural?.r_squared || {}).map(([c, r2]: [string, any]) => (
                             <tr key={c}>
                               <td>{getConstructName(c)}</td>
-                              <td><strong>{fmt(r2, 4)}</strong></td>
-                              <td>{fmt(results?.structural?.r_squared_adj?.[c], 4)}</td>
+                              <td><strong>{fmt(r2)}</strong></td>
+                              <td>{fmt(results?.structural?.r_squared_adj?.[c])}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1710,10 +1715,10 @@ export const SnapshotView: React.FC = () => {
                             return (
                               <tr key={c}>
                                 <td>{getConstructName(c)}</td>
-                                <td>{fmt(rel.cronbach_alpha?.[c] ?? rel.cronbachs_alpha?.[c], 4)}</td>
-                                <td>{fmt(rel.rho_a?.[c], 4)}</td>
-                                <td>{fmt(rel.composite_reliability?.[c], 4)}</td>
-                                <td>{fmt(rel.ave?.[c], 4)}</td>
+                                <td>{fmt(rel.cronbach_alpha?.[c] ?? rel.cronbachs_alpha?.[c])}</td>
+                                <td>{fmt(rel.rho_a?.[c])}</td>
+                                <td>{fmt(rel.composite_reliability?.[c])}</td>
+                                <td>{fmt(rel.ave?.[c])}</td>
                               </tr>
                             );
                           })}
@@ -1748,7 +1753,7 @@ export const SnapshotView: React.FC = () => {
                                     const ok = num < 0.85;
                                     return (
                                       <td key={col} className={ok ? 'cell-sig' : 'cell-ns'}>
-                                        <div className="cell-value">{fmt(num, 4)}</div>
+                                        <div className="cell-value">{fmt(num)}</div>
                                       </td>
                                     );
                                   }
@@ -1797,7 +1802,7 @@ export const SnapshotView: React.FC = () => {
                                       </div>
                                     </td>
                                     <td className={isStrict ? 'cell-sig' : 'cell-ns'}>
-                                      <div className="cell-value">{fmt(val, 4)}</div>
+                                      <div className="cell-value">{fmt(val)}</div>
                                     </td>
                                     <td>
                                       <span style={{
@@ -1834,7 +1839,7 @@ export const SnapshotView: React.FC = () => {
                               <td>{getConstructName(r)}</td>
                               {resultConstructs.map(col => {
                                 const val = results?.reliability_and_validity?.fornell_larcker?.[r]?.[col];
-                                return <td key={col}>{fmt(val, 4)}</td>;
+                                return <td key={col}>{fmt(val)}</td>;
                               })}
                             </tr>
                           ))}
@@ -1873,7 +1878,7 @@ export const SnapshotView: React.FC = () => {
                                     const isHigh = f2 >= 0.15;
                                     return (
                                       <td key={tgt} className={isHigh ? 'cell-sig' : ''}>
-                                        <div className="cell-value">{fmt(f2, 4)}</div>
+                                        <div className="cell-value">{fmt(f2)}</div>
                                       </td>
                                     );
                                   }
@@ -1919,7 +1924,7 @@ export const SnapshotView: React.FC = () => {
                                       </div>
                                     </td>
                                     <td className="cell-sig">
-                                      <div className="cell-value">{fmt(f2, 4)}</div>
+                                      <div className="cell-value">{fmt(f2)}</div>
                                     </td>
                                     <td>
                                       <span style={{
@@ -1952,7 +1957,7 @@ export const SnapshotView: React.FC = () => {
                           {Object.entries(results?.quality_criteria?.inner_vif || results?.structural?.inner_vif || {}).map(([pair, vif]: [string, any]) => (
                             <tr key={pair}>
                               <td>{pair}</td>
-                              <td><strong>{fmt(vif, 3)}</strong></td>
+                              <td><strong>{fmt(vif)}</strong></td>
                             </tr>
                           ))}
                         </tbody>
@@ -1987,17 +1992,17 @@ export const SnapshotView: React.FC = () => {
                                 <tr key={idx}>
                                   <td><strong>{row.formative_construct}</strong></td>
                                   <td><strong>{row.global_construct}</strong></td>
-                                  <td className="cell-sig"><div className="cell-value">{fmt(row.path_coefficient, 4)}</div></td>
+                                  <td className="cell-sig"><div className="cell-value">{fmt(row.path_coefficient)}</div></td>
                                   {results?.convergent_validity_redundancy?.some((r: any) => r.bootstrap) && (
                                     <>
-                                      <td>{b ? fmt(b.mean, 4) : '—'}</td>
-                                      <td>{b ? fmt(b.se, 4) : '—'}</td>
-                                      <td>{b ? fmt(b.t_stat, 3) : '—'}</td>
-                                      <td className={b && b.p_value < 0.05 ? 'cell-sig' : ''}>{b ? fmt(b.p_value, 4) : '—'}</td>
-                                      <td>{b && b.ci_low !== undefined ? `[${fmt(b.ci_low, 3)}, ${fmt(b.ci_high, 3)}]` : '—'}</td>
+                                      <td>{b ? fmt(b.mean) : '—'}</td>
+                                      <td>{b ? fmt(b.se) : '—'}</td>
+                                      <td>{b ? fmt(b.t_stat) : '—'}</td>
+                                      <td className={b && b.p_value < 0.05 ? 'cell-sig' : ''}>{b ? fmtP(b.p_value) : '—'}</td>
+                                      <td>{b && b.ci_low !== undefined ? `[${fmt(b.ci_low)}, ${fmt(b.ci_high)}]` : '—'}</td>
                                     </>
                                   )}
-                                  <td>{fmt(row.r_squared, 4)}</td>
+                                  <td>{fmt(row.r_squared)}</td>
                                   <td>&ge; 0.70</td>
                                   <td>
                                     <span style={{
@@ -2050,7 +2055,7 @@ export const SnapshotView: React.FC = () => {
                               <td>{idx + 1}</td>
                               {resultConstructs.map(c => {
                                 const score = results?.construct_scores?.[c]?.[idx];
-                                return <td key={c}>{fmt(score, 4)}</td>;
+                                return <td key={c}>{fmt(score)}</td>;
                               })}
                             </tr>
                           ))}
@@ -2068,23 +2073,23 @@ export const SnapshotView: React.FC = () => {
                         <tbody>
                           <tr>
                             <td>SRMR (Standardized Root Mean Square Residual)</td>
-                            <td><strong>{fmt(results?.model_fit?.srmr, 4)}</strong></td>
-                            <td>{fmt(results?.model_fit?.srmr, 4)}</td>
+                            <td><strong>{fmt(results?.model_fit?.srmr)}</strong></td>
+                            <td>{fmt(results?.model_fit?.srmr)}</td>
                           </tr>
                           <tr>
                             <td>d_ULS (Squared Euclidean distance)</td>
-                            <td>{fmt(results?.model_fit?.d_uls, 4)}</td>
-                            <td>{fmt(results?.model_fit?.d_uls, 4)}</td>
+                            <td>{fmt(results?.model_fit?.d_uls)}</td>
+                            <td>{fmt(results?.model_fit?.d_uls)}</td>
                           </tr>
                           <tr>
                             <td>d_G (Geodesic distance)</td>
-                            <td>{fmt(results?.model_fit?.d_g, 4)}</td>
-                            <td>{fmt(results?.model_fit?.d_g, 4)}</td>
+                            <td>{fmt(results?.model_fit?.d_g)}</td>
+                            <td>{fmt(results?.model_fit?.d_g)}</td>
                           </tr>
                           <tr>
                             <td>NFI (Normed Fit Index)</td>
-                            <td>{fmt(results?.model_fit?.nfi, 4)}</td>
-                            <td>{fmt(results?.model_fit?.nfi, 4)}</td>
+                            <td>{fmt(results?.model_fit?.nfi)}</td>
+                            <td>{fmt(results?.model_fit?.nfi)}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -2907,12 +2912,13 @@ export const SnapshotView: React.FC = () => {
                         const indMidX = (x1 + x2) / 2;
                         const indMidY = (y1 + y2) / 2;
                         const loading = getOuterLoading(parentNode, indNode);
-                        const pillW = loading !== null ? Math.max(30, loading.toFixed(3).length * 6.5 + 8) : 32;
+                        const loadingStr = loading !== null ? fmt(loading) : null;
+                        const pillW = loadingStr !== null ? Math.max(30, loadingStr.length * 6.5 + 8) : 32;
                         const pillH = 15;
 
                         return (
                           <g key={`ind-link-${indNode.id}`}>
-                            <title>{isFormative ? `${indNode.label} → ${parentNode.label} (Formative weight${loading !== null ? `: ${loading.toFixed(3)}` : ''})` : `${parentNode.label} → ${indNode.label} (Reflective loading${loading !== null ? `: ${loading.toFixed(3)}` : ''})`}</title>
+                            <title>{isFormative ? `${indNode.label} → ${parentNode.label} (Formative weight${loadingStr !== null ? `: ${loadingStr}` : ''})` : `${parentNode.label} → ${indNode.label} (Reflective loading${loadingStr !== null ? `: ${loadingStr}` : ''})`}</title>
                             <line
                               x1={x1}
                               y1={y1}
@@ -2922,7 +2928,7 @@ export const SnapshotView: React.FC = () => {
                               strokeWidth="1.5"
                               markerEnd="url(#snap-arrowhead)"
                             />
-                            {loading !== null && (
+                            {loadingStr !== null && (
                               <g transform={`translate(${indMidX}, ${indMidY})`} pointerEvents="none">
                                 <rect
                                   x={-pillW / 2}
@@ -2942,7 +2948,7 @@ export const SnapshotView: React.FC = () => {
                                   fontWeight="500"
                                   fill="var(--canvas-badge-text, #0f172a)"
                                 >
-                                  {loading.toFixed(3)}
+                                  {loadingStr}
                                 </text>
                               </g>
                             )}
@@ -3008,12 +3014,13 @@ export const SnapshotView: React.FC = () => {
                         const badgeX = badgePos ? badgePos.x : (x1 + x2) / 2;
                         const badgeY = badgePos ? badgePos.y : (y1 + y2) / 2;
 
-                        const pillW = coef !== null ? Math.max(34, coef.toFixed(3).length * 7.5 + 10) : 34;
+                        const coefStr = coef !== null ? fmt(coef) : null;
+                        const pillW = coefStr !== null ? Math.max(34, coefStr.length * 7.5 + 10) : 34;
                         const pillH = 18;
 
                         return (
                           <g key={edge.id || `${edge.sourceId}-${edge.targetId}`}>
-                            <title>{srcNode.label} → {tgtNode.label}{coef !== null ? ` (Path Coefficient β = ${coef.toFixed(3)})` : ''}</title>
+                            <title>{srcNode.label} → {tgtNode.label}{coefStr !== null ? ` (Path Coefficient β = ${coefStr})` : ''}</title>
                             <path
                               d={d}
                               fill="none"
@@ -3021,7 +3028,7 @@ export const SnapshotView: React.FC = () => {
                               strokeWidth="2"
                               markerEnd="url(#snap-arrowhead)"
                             />
-                            {coef !== null && (
+                            {coefStr !== null && (
                               <g transform={`translate(${badgeX}, ${badgeY})`} pointerEvents="none">
                                 <rect
                                   x={-pillW / 2}
@@ -3041,7 +3048,7 @@ export const SnapshotView: React.FC = () => {
                                   fontWeight="600"
                                   fill="var(--canvas-badge-text, #0f172a)"
                                 >
-                                  {coef.toFixed(3)}
+                                  {coefStr}
                                 </text>
                               </g>
                             )}
@@ -3121,7 +3128,7 @@ export const SnapshotView: React.FC = () => {
                               onPointerLeave={() => setHoveredLatent(null)}
                               style={{ cursor: 'move', pointerEvents: 'all' }}
                             >
-                              <title>{node.label} ({node.type === 'formative' ? 'Formative' : 'Reflective'} Construct{r2 !== undefined ? `, R² = ${fmt(r2, 3)}` : ''})</title>
+                              <title>{node.label} ({node.type === 'formative' ? 'Formative' : 'Reflective'} Construct{r2 !== undefined ? `, R² = ${fmt(r2)}` : ''})</title>
                               <circle
                                 r={node.r || 36}
                                 fill={node.fill || "var(--canvas-latent-fill, #334155)"}
@@ -3150,7 +3157,7 @@ export const SnapshotView: React.FC = () => {
                                       fill="var(--canvas-latent-r2, #a5b4fc)"
                                       style={{ userSelect: 'none' }}
                                     >
-                                      R² = {fmt(r2, 3)}
+                                      R² = {fmt(r2)}
                                     </text>
                                   )}
                                 </>
@@ -3204,7 +3211,7 @@ export const SnapshotView: React.FC = () => {
                                       fill="var(--color-accent, #6366f1)"
                                       style={{ userSelect: 'none' }}
                                     >
-                                      R² = {fmt(r2, 3)}
+                                      R² = {fmt(r2)}
                                     </text>
                                   )}
                                 </>
@@ -3372,25 +3379,25 @@ export const SnapshotView: React.FC = () => {
                     <>
                       <div className="canvas-latent-popup__item">
                         <span className="canvas-latent-popup__label">R²</span>
-                        <span className="canvas-latent-popup__val highlight">{hoveredLatent.r2.toFixed(4)}</span>
+                        <span className="canvas-latent-popup__val highlight">{fmt(hoveredLatent.r2)}</span>
                       </div>
                       <div className="canvas-latent-popup__item">
                         <span className="canvas-latent-popup__label">R² Adjusted</span>
-                        <span className="canvas-latent-popup__val">{hoveredLatent.r2Adj !== null ? hoveredLatent.r2Adj.toFixed(4) : '—'}</span>
+                        <span className="canvas-latent-popup__val">{hoveredLatent.r2Adj !== null ? fmt(hoveredLatent.r2Adj) : '—'}</span>
                       </div>
                     </>
                   )}
                   <div className="canvas-latent-popup__item">
                     <span className="canvas-latent-popup__label">Composite Reliability</span>
-                    <span className="canvas-latent-popup__val">{hoveredLatent.cr !== null ? hoveredLatent.cr.toFixed(4) : '—'}</span>
+                    <span className="canvas-latent-popup__val">{hoveredLatent.cr !== null ? fmt(hoveredLatent.cr) : '—'}</span>
                   </div>
                   <div className="canvas-latent-popup__item">
                     <span className="canvas-latent-popup__label">Avg Variance Extracted</span>
-                    <span className="canvas-latent-popup__val">{hoveredLatent.ave !== null ? hoveredLatent.ave.toFixed(4) : '—'}</span>
+                    <span className="canvas-latent-popup__val">{hoveredLatent.ave !== null ? fmt(hoveredLatent.ave) : '—'}</span>
                   </div>
                   <div className="canvas-latent-popup__item">
                     <span className="canvas-latent-popup__label">Cronbach's Alpha (α)</span>
-                    <span className="canvas-latent-popup__val">{hoveredLatent.alpha !== null ? hoveredLatent.alpha.toFixed(4) : '—'}</span>
+                    <span className="canvas-latent-popup__val">{hoveredLatent.alpha !== null ? fmt(hoveredLatent.alpha) : '—'}</span>
                   </div>
                 </div>
               </div>

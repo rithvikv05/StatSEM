@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useStore } from '../store';
+import { formatNumber, normalizeDecimalDigits } from '../utils/number-format';
 import { api } from '../utils/api';
 import { X, GitCompare, Trophy, Check, Download, Copy, AlertCircle } from 'lucide-react';
 
@@ -17,6 +19,9 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
   initialSnapshotId,
   studyName = 'Study',
 }) => {
+  const { settings } = useStore();
+  const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
+  const decimalSystem = settings.decimalSystem;
   const [loading, setLoading] = useState<boolean>(true);
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -138,10 +143,8 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
 
   if (!isOpen) return null;
 
-  const fmt = (v: any, decimals = 3) => {
-    if (v === undefined || v === null || isNaN(Number(v))) return '—';
-    return Number(v).toFixed(decimals);
-  };
+  const fmt = (v: any, decimals = decimalDigits) =>
+    formatNumber(v, decimals, decimalSystem);
 
   // Determine winner for a metric (lower is better for SRMR, AIC, BIC; higher is better for R2)
   const getBestMetricId = (keyPath: string, lowerIsBetter: boolean) => {

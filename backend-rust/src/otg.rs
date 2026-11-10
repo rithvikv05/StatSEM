@@ -1,5 +1,5 @@
 //! Omnibus group tests and pairwise permutations. Fits shared across paths.
-use crate::{bootstrap, grouping, matrix::round, model, pipeline, rng, stats};
+use crate::{bootstrap, grouping, model, pipeline, rng, stats};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -171,7 +171,7 @@ pub fn run(
             }
         }
         let p = (exceed + 1) as f64 / (o.n_permutations + 1) as f64;
-        omnibus.push(json!({"path":format!("{from} -> {to}"),"fr_statistic":round(observed,4),"p_value":round(p,4),"is_significant":p<o.alpha,"verdict":if p<o.alpha {"Group differences exist"}else{"No omnibus difference"}}));
+        omnibus.push(json!({"path":format!("{from} -> {to}"),"fr_statistic":observed,"p_value":p,"is_significant":p<o.alpha,"verdict":if p<o.alpha {"Group differences exist"}else{"No omnibus difference"}}));
     }
     let comparisons = k * (k - 1) / 2 * paths.len();
     let thresholds = thresholds(comparisons, o.alpha);
@@ -212,12 +212,12 @@ pub fn run(
             }
             for (i, [from, to]) in paths.iter().enumerate() {
                 let p = (exceed[i] + 1) as f64 / (o.n_permutations + 1) as f64;
-                pairwise.push(json!({"group_pair":format!("{} vs {}",labels[a],labels[b]),"group_1":labels[a],"group_2":labels[b],"path":format!("{from} -> {to}"),"beta_group_1":round(coefficient(&fits[a],from,to),4),"beta_group_2":round(coefficient(&fits[b],from,to),4),"difference":round(observed[i],4),"permutation_p_value":round(p,4),"sig_standard_05":p<0.05,"sig_sidak":p<sidak,"sig_bonferroni":p<bonf}));
+                pairwise.push(json!({"group_pair":format!("{} vs {}",labels[a],labels[b]),"group_1":labels[a],"group_2":labels[b],"path":format!("{from} -> {to}"),"beta_group_1":coefficient(&fits[a],from,to),"beta_group_2":coefficient(&fits[b],from,to),"difference":observed[i],"permutation_p_value":p,"sig_standard_05":p<0.05,"sig_sidak":p<sidak,"sig_bonferroni":p<bonf}));
             }
         }
     }
     Ok(
-        json!({"group_column":o.group_col,"groups":labels,"n_groups":k,"group_sample_sizes":sizes,"n_boot":o.n_boot,"n_permutations":o.n_permutations,"omnibus_tests":omnibus,"pairwise_comparisons":pairwise,"multiple_testing":{"total_comparisons":comparisons,"nominal_alpha":o.alpha,"family_wise_error_rate":round(thresholds["fwer"].as_f64().unwrap(),4),"sidak_alpha":round(sidak,6),"bonferroni_alpha":round(bonf,6),"recommendation":"Šidák correction is preferred over Bonferroni due to superior statistical power (Hair et al. 2018)."},"note":"OTG is the non-parametric omnibus test of path differences across 3 or more groups (Sarstedt et al. 2011)."}),
+        json!({"group_column":o.group_col,"groups":labels,"n_groups":k,"group_sample_sizes":sizes,"n_boot":o.n_boot,"n_permutations":o.n_permutations,"omnibus_tests":omnibus,"pairwise_comparisons":pairwise,"multiple_testing":{"total_comparisons":comparisons,"nominal_alpha":o.alpha,"family_wise_error_rate":thresholds["fwer"].as_f64().unwrap(),"sidak_alpha":sidak,"bonferroni_alpha":bonf,"recommendation":"Šidák correction is preferred over Bonferroni due to superior statistical power (Hair et al. 2018)."},"note":"OTG is the non-parametric omnibus test of path differences across 3 or more groups (Sarstedt et al. 2011)."}),
     )
 }
 fn check(cancel: &AtomicBool) -> Result<(), String> {

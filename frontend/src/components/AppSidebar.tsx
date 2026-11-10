@@ -189,7 +189,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activeNav }) => {
                       setActiveWorkspace(ws.id);
                       openTab({ type: 'workspace', title: ws.name, workspaceId: ws.id });
                       if (ws.path) {
-                        api.openWorkspace(ws.path).catch((err) => {
+                        api.openWorkspace(ws.path).then((res) => {
+                          if (res?.path && res.path !== ws.path) {
+                            useStore.getState().syncWorkspaceCanonicalPath(ws.id, res.path);
+                          }
+                        }).catch((err) => {
                           console.warn('Failed opening workspace path:', err);
                         });
                       }

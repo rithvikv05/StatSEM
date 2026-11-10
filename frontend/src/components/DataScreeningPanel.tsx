@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useStore } from '../store';
+import { formatNumber, normalizeDecimalDigits } from '../utils/number-format';
 import { api } from '../utils/api';
 import { AlertTriangle, CheckCircle, BarChart2, ShieldAlert, FileText, Trash2, RefreshCw } from 'lucide-react';
 
@@ -23,6 +25,9 @@ export const DataScreeningPanel: React.FC<DataScreeningPanelProps> = ({
   variables,
   onDatasetUpdated,
 }) => {
+  const { settings } = useStore();
+  const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
+  const decimalSystem = settings.decimalSystem;
   const [activeScreeningTab, setActiveScreeningTab] = useState<'missing' | 'patterns' | 'outliers' | 'distributions' | 'directionality'>('missing');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,10 +134,8 @@ export const DataScreeningPanel: React.FC<DataScreeningPanelProps> = ({
     }
   };
 
-  const fmt = (val: any, d = 3) => {
-    if (val === undefined || val === null || isNaN(Number(val))) return '—';
-    return Number(val).toFixed(d);
-  };
+  const fmt = (val: any, d = decimalDigits) =>
+    formatNumber(val, d, decimalSystem);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--color-bg-base)' }}>
@@ -437,10 +440,10 @@ export const DataScreeningPanel: React.FC<DataScreeningPanelProps> = ({
                         return (
                           <tr key={col} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                             <td style={{ padding: '8px 12px', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{col}</td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.min, 1)} / {fmt(stat.max, 1)}</td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.q1, 2)} / {fmt(stat.q3, 2)}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.min)} / {fmt(stat.max)}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.q1)} / {fmt(stat.q3)}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                              [{fmt(stat.lower_fence, 2)}, {fmt(stat.upper_fence, 2)}]
+                              [{fmt(stat.lower_fence)}, {fmt(stat.upper_fence)}]
                             </td>
                             <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: count > 0 ? 600 : 400, color: count > 0 ? '#f59e0b' : 'inherit' }}>
                               {count}
@@ -496,8 +499,8 @@ export const DataScreeningPanel: React.FC<DataScreeningPanelProps> = ({
                                 }}
                               >
                                 <td style={{ padding: '8px 12px', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{col}</td>
-                                <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.skewness, 3)}</td>
-                                <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.kurtosis, 3)}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.skewness)}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmt(stat.kurtosis)}</td>
                                 <td style={{ padding: '8px 12px' }}>
                                   {isNormal ? (
                                     <span style={{ color: '#16a34a', fontSize: 11, fontWeight: 600 }}>Acceptable</span>
@@ -663,7 +666,7 @@ export const DataScreeningPanel: React.FC<DataScreeningPanelProps> = ({
                             <td style={{ padding: '8px 12px', fontWeight: 600 }}>{item.construct_name || item.construct_id}</td>
                             <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)' }}>{item.var1}</td>
                             <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)' }}>{item.var2}</td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right', color: '#ef4444', fontWeight: 600 }}>{fmt(item.r, 3)}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', color: '#ef4444', fontWeight: 600 }}>{fmt(item.r)}</td>
                             <td style={{ padding: '8px 12px', fontSize: 12, color: '#f59e0b' }}>
                               Possible reverse-coded item. Recode variable before estimating reflective measurement model.
                             </td>

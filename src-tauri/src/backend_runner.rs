@@ -73,6 +73,12 @@ pub fn start_backend(app: &AppHandle) -> Result<(), String> {
         .arg("0")
         .stdout(Stdio::piped());
 
+    // Keep backend working directory outside `src-tauri/` so `tauri dev`
+    // file watchers cannot be triggered by sidecar working-directory writes.
+    if let Ok(home) = app.path().home_dir() {
+        cmd.current_dir(home);
+    }
+
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

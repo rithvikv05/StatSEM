@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useStore, getStudyDatasets } from '../store';
+import { formatNumber, normalizeDecimalDigits } from '../utils/number-format';
 import { processData, type ParsedDataset, type ParsedVariable } from '../utils/dataset-parser';
 import { EditableCell } from '../components/EditableCell';
 import { Checkbox } from '../components/Checkbox';
@@ -19,8 +20,11 @@ export const DatasetView: React.FC = () => {
     datasetsByStudy,
     setStudyDataset,
     touchStudy,
-    openTab
+    openTab,
+    settings
   } = useStore();
+  const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
+  const decimalSystem = settings.decimalSystem;
 
   const activeTab = tabs.find(t => t.id === activeTabId);
   const currentStudyId = activeTab?.studyId || activeStudyId || '';
@@ -335,11 +339,11 @@ export const DatasetView: React.FC = () => {
                         <td style={{ padding: '0 14px', textAlign: 'right', color: v.missingCount > 0 ? 'var(--color-danger, #ef4444)' : 'var(--color-text-muted)', fontVariantNumeric: 'tabular-nums', fontSize: '11.5px' }}>
                           {v.missingCount > 0 ? `${v.missingCount} (${missingPct}%)` : '—'}
                         </td>
-                        <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{stats?.mean !== undefined ? stats.mean.toFixed(3) : '—'}</td>
-                        <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{stats?.median !== undefined ? stats.median.toFixed(3) : '—'}</td>
+                        <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{stats?.mean !== undefined ? formatNumber(stats.mean, decimalDigits, decimalSystem) : '—'}</td>
+                        <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{stats?.median !== undefined ? formatNumber(stats.median, decimalDigits, decimalSystem) : '—'}</td>
                         <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{v.min ?? '—'}</td>
                         <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{v.max ?? '—'}</td>
-                        <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{stats?.stdDev !== undefined ? stats.stdDev.toFixed(3) : '—'}</td>
+                        <td style={{ padding: '0 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)', fontSize: '11.5px' }}>{stats?.stdDev !== undefined ? formatNumber(stats.stdDev, decimalDigits, decimalSystem) : '—'}</td>
                       </tr>
                     );
                   })}

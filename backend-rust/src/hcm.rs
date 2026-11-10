@@ -189,13 +189,13 @@ pub fn reliability(loadings: &[f64], corr: &[Vec<f64>]) -> Value {
     } else {
         1.0
     };
-    json!({"ave":matrix::round(stats::mean(&squared,None),4),"composite_reliability":matrix::round(cr,4),"cronbachs_alpha":matrix::round(alpha,4)})
+    json!({"ave":stats::mean(&squared,None),"composite_reliability":cr,"cronbachs_alpha":alpha})
 }
 fn vifs(ids: &[String], cols: &[Vec<f64>]) -> Value {
     Value::Object(
         ids.iter()
             .zip(pls::vif(cols))
-            .map(|(id, v)| (id.clone(), json!(matrix::round(v, 4))))
+            .map(|(id, v)| (id.clone(), json!(v)))
             .collect(),
     )
 }
@@ -255,9 +255,8 @@ pub fn run(
         } else {
             1.0
         };
-        let rounded = matrix::round(correlation, 4);
-        values.push(rounded);
-        loadings.insert(id.clone(), json!(rounded));
+        values.push(correlation);
+        loadings.insert(id.clone(), json!(correlation));
     }
     let corr = matrix::correlation_rows(&matrix::transpose(&loc_scores));
     let metrics = reliability(&values, &corr);

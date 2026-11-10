@@ -1,5 +1,5 @@
 //! Single-group analyses composed from the verified pipeline and bootstrap.
-use crate::{bootstrap, inference, matrix, model, pipeline, stats};
+use crate::{bootstrap, inference, model, pipeline, stats};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -21,7 +21,7 @@ fn num(v: &Value) -> f64 {
     v.as_f64().unwrap_or(0.0)
 }
 fn r(v: f64) -> f64 {
-    matrix::round(v, 4)
+    v
 }
 fn effect_stat(coefficient: f64, stat: &Value, alpha: f64) -> Value {
     let p = stat["p_value"].as_f64().unwrap_or(1.0);
@@ -155,7 +155,7 @@ pub fn mediation(
         json!({"source":source,"target":target,"direct_effect":effect_stat(direct,direct_stat,options.alpha),
         "total_indirect_effect":effect_stat(indirect,indirect_stat,options.alpha),"total_effect":{"coefficient":r(total)},
         "direct_effect_without_mediators":auxiliary,"specific_indirect_effects":entries,"overall_classification":classification.0,"overall_interpretation":classification.1,
-        "vaf_percentage":if total.abs() > 1e-12 { Some(matrix::round(indirect/total*100.0,2)) } else { None },
+        "vaf_percentage":if total.abs() > 1e-12 { Some(indirect/total*100.0) } else { None },
         "vaf_note":"VAF (Variance Accounted For) is reported for informational purposes; modern guidelines rely on bootstrap confidence intervals for classification (Zhao et al. 2010; Hair et al. 2017)."}),
     )
 }

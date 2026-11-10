@@ -2,7 +2,10 @@
 //! It deliberately binds only to loopback and has no remote authentication role.
 use crate::{
     bootstrap, pipeline, power,
-    project_store::{Dataset, Results, Snapshot, Store},
+    project_store::{
+        canonicalize_or_normalize, resolve_user_path, user_home_dir, Dataset, Results, Snapshot,
+        Store,
+    },
 };
 use serde_json::{json, Value};
 use std::{
@@ -155,12 +158,23 @@ fn text(body: &Value, query: &HashMap<String, String>, key: &str) -> Option<Stri
 fn number(body: &Value, key: &str, default: usize) -> usize {
     body[key].as_u64().map(|v| v as usize).unwrap_or(default)
 }
+fn resolved_text_path(
+    body: &Value,
+    query: &HashMap<String, String>,
+    key: &str,
+    missing_msg: &str,
+) -> Result<PathBuf, String> {
+    let raw = text(body, query, key).ok_or_else(|| missing_msg.to_string())?;
+    resolve_user_path(&raw)
+}
+fn workspace_folder(body: &Value, query: &HashMap<String, String>) -> Result<PathBuf, String> {
+    resolved_text_path(body, query, "folder_path", "folder_path required")
+}
 fn project(body: &Value, query: &HashMap<String, String>) -> Result<Store, String> {
-    Ok(Store::new(
-        text(body, query, "project_path")
-            .or_else(|| text(body, query, "path"))
-            .ok_or("project path is required")?,
-    ))
+    let raw = text(body, query, "project_path")
+        .or_else(|| text(body, query, "path"))
+        .ok_or("project path is required")?;
+    Ok(Store::new(resolve_user_path(&raw)?))
 }
 type DatasetRows = (Vec<String>, Vec<Vec<Value>>, Value);
 fn dataset(body: &Value, query: &HashMap<String, String>) -> Result<DatasetRows, String> {
@@ -219,6 +233,15 @@ fn workspace(path: &Path) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 fn save_workspace(path: &Path, data: &Value) -> Result<(), String> {
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::Normal(part) if part == "~"))
+    {
+        return Err(format!(
+            "Unexpanded '~' directory component is not permitted in workspace path: {}",
+            path.display()
+        ));
+    }
     fs::create_dir_all(path).map_err(|e| e.to_string())?;
     fs::write(
         workspace_file(path),
@@ -237,28 +260,30 @@ fn route(
     }
     match (method, path) {
         ("GET", "/") | ("GET", "/health") => {
-            Ok(json!({"status":"ok","backend":"rust","python_runtime":false}))
+            let home_dir = user_home_dir().ok().map(|p| canonicalize_or_normalize(&p));
+            Ok(json!({"status":"ok","backend":"rust","python_runtime":false,"home_dir":home_dir}))
         }
         ("POST", "/workspace/create") => {
             let folder =
-                PathBuf::from(text(&body, query, "folder_path").ok_or("folder_path is required")?);
+                resolved_text_path(&body, query, "folder_path", "folder_path is required")?;
             let name = text(&body, query, "name")
                 .filter(|s| !s.trim().is_empty())
                 .ok_or("name is required")?;
             let data = json!({"name":name,"created_at":now(),"modified_at":now(),"projects":[],"archived_projects":[]});
             save_workspace(&folder, &data)?;
             fs::create_dir_all(folder.join("Archive")).map_err(|e| e.to_string())?;
+            let folder = canonicalize_or_normalize(&folder);
             Ok(json!({"status":"success","path":folder,"workspace":data}))
         }
         ("POST", "/workspace/open") => {
             let folder =
-                PathBuf::from(text(&body, query, "folder_path").ok_or("folder_path is required")?);
+                resolved_text_path(&body, query, "folder_path", "folder_path is required")?;
             let data = workspace(&folder)?;
             Ok(json!({"status":"success","path":folder,"workspace":data}))
         }
         ("POST", "/workspace/add-project") => {
             let folder =
-                PathBuf::from(text(&body, query, "folder_path").ok_or("folder_path is required")?);
+                resolved_text_path(&body, query, "folder_path", "folder_path is required")?;
             let name = text(&body, query, "project_name")
                 .filter(|s| !s.trim().is_empty())
                 .ok_or("project_name is required")?;
@@ -266,32 +291,29 @@ fn route(
             let filename = format!("{}.pls", safe_name(&name));
             let path = folder.join(&filename);
             Store::new(&path).create(&name)?;
+            let canonical_project_path = canonicalize_or_normalize(&path);
             ws["projects"]
                 .as_array_mut()
                 .ok_or("Invalid workspace")?
                 .push(json!({"path":filename,"name":name}));
             ws["modified_at"] = json!(now());
             save_workspace(&folder, &ws)?;
-            Ok(json!({"status":"success","project_path":path,"project_name":name,"workspace":ws}))
+            Ok(json!({"status":"success","project_path":canonical_project_path,"project_name":name,"workspace":ws}))
         }
         ("POST", "/workspace/remove-project") => workspace_remove(query, &body, false),
         ("POST", "/workspace/delete-project") => workspace_remove(query, &body, true),
         ("POST", "/workspace/archive-project") => archive_project(query, &body),
         ("POST", "/workspace/restore-project") => restore_project(query, &body),
         ("POST", "/workspace/delete-archived-project") => delete_archived_project(query, &body),
-        ("POST", "/workspace/archive") => archive_workspace(&PathBuf::from(
-            text(&body, query, "folder_path").ok_or("folder_path required")?,
-        )),
-        ("POST", "/workspace/restore") => restore_workspace(&PathBuf::from(
-            text(&body, query, "folder_path").ok_or("folder_path required")?,
-        )),
+        ("POST", "/workspace/archive") => archive_workspace(&workspace_folder(&body, query)?),
+        ("POST", "/workspace/restore") => restore_workspace(&workspace_folder(&body, query)?),
         ("GET", "/workspace/archived-list") => archived_workspaces(),
         ("POST", "/project/open") => {
-            let path = text(&body, query, "path").ok_or("path is required")?;
-            if !Path::new(&path).is_file() {
+            let path = resolved_text_path(&body, query, "path", "path is required")?;
+            if !path.is_file() {
                 return Err("Project not found".into());
             }
-            Ok(json!({"status":"success","path":path}))
+            Ok(json!({"status":"success","path":canonicalize_or_normalize(&path)}))
         }
         ("GET", "/project/metadata") => project(&body, query)?.metadata(),
         ("GET", "/project/datasets") => Ok(json!({"datasets":project(&body,query)?.datasets()?})),
@@ -439,7 +461,7 @@ fn workspace_remove(
     body: &Value,
     delete: bool,
 ) -> Result<Value, String> {
-    let folder = PathBuf::from(text(body, query, "folder_path").ok_or("folder_path required")?);
+    let folder = workspace_folder(body, query)?;
     let filename = text(body, query, "project_filename").ok_or("project_filename required")?;
     let mut ws = workspace(&folder)?;
     let projects = ws["projects"].as_array_mut().ok_or("Invalid workspace")?;
@@ -465,7 +487,7 @@ fn project_index(list: &[Value], filename: &str) -> Option<usize> {
     })
 }
 fn archive_project(query: &HashMap<String, String>, body: &Value) -> Result<Value, String> {
-    let folder = PathBuf::from(text(body, query, "folder_path").ok_or("folder_path required")?);
+    let folder = workspace_folder(body, query)?;
     let filename = text(body, query, "project_filename").ok_or("project_filename required")?;
     let mut ws = workspace(&folder)?;
     let projects = ws["projects"].as_array_mut().ok_or("Invalid workspace")?;
@@ -497,7 +519,7 @@ fn archive_project(query: &HashMap<String, String>, body: &Value) -> Result<Valu
     Ok(json!({"status":"archived","new_path":destination,"workspace":ws}))
 }
 fn restore_project(query: &HashMap<String, String>, body: &Value) -> Result<Value, String> {
-    let folder = PathBuf::from(text(body, query, "folder_path").ok_or("folder_path required")?);
+    let folder = workspace_folder(body, query)?;
     let filename = text(body, query, "project_filename").ok_or("project_filename required")?;
     let mut ws = workspace(&folder)?;
     let archived = ws["archived_projects"]
@@ -531,7 +553,7 @@ fn restore_project(query: &HashMap<String, String>, body: &Value) -> Result<Valu
     Ok(json!({"status":"restored","new_path":destination,"workspace":ws}))
 }
 fn delete_archived_project(query: &HashMap<String, String>, body: &Value) -> Result<Value, String> {
-    let folder = PathBuf::from(text(body, query, "folder_path").ok_or("folder_path required")?);
+    let folder = workspace_folder(body, query)?;
     let filename = text(body, query, "project_filename").ok_or("project_filename required")?;
     let mut ws = workspace(&folder)?;
     let archived = ws["archived_projects"]
@@ -548,10 +570,12 @@ fn delete_archived_project(query: &HashMap<String, String>, body: &Value) -> Res
     Ok(json!({"status":"deleted","workspace":ws}))
 }
 fn archive_root() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("Home directory is unavailable")?;
-    let root = PathBuf::from(home).join("StatSEM").join("Archive");
+    let home = user_home_dir()?;
+    let root = canonicalize_or_normalize(&home)
+        .join("StatSEM")
+        .join("Archive");
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    Ok(root)
+    Ok(canonicalize_or_normalize(&root))
 }
 fn unique_path(root: &Path, name: &str) -> PathBuf {
     let mut path = root.join(name);
@@ -580,25 +604,25 @@ fn archive_workspace(folder: &Path) -> Result<Value, String> {
 }
 fn restore_workspace(folder: &Path) -> Result<Value, String> {
     let mut ws = workspace(folder)?;
-    let requested = ws["original_path"]
-        .as_str()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("StatSEM")
-                .join("Workspaces")
-                .join(ws["name"].as_str().unwrap_or("Workspace"))
-        });
+    let requested = match ws["original_path"].as_str() {
+        Some(raw) => resolve_user_path(raw)?,
+        None => canonicalize_or_normalize(&user_home_dir()?)
+            .join("StatSEM")
+            .join("Workspaces")
+            .join(ws["name"].as_str().unwrap_or("Workspace")),
+    };
     let parent = requested.parent().ok_or("Invalid restore path")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let parent = canonicalize_or_normalize(parent);
     let destination = unique_path(
-        parent,
+        &parent,
         requested
             .file_name()
             .and_then(|v| v.to_str())
             .ok_or("Invalid restore path")?,
     );
     fs::rename(folder, &destination).map_err(|e| e.to_string())?;
+    let destination = canonicalize_or_normalize(&destination);
     ws.as_object_mut()
         .ok_or("Invalid workspace")?
         .remove("original_path");
@@ -726,7 +750,10 @@ fn bootstrap_start(body: &Value, query: &HashMap<String, String>) -> Result<Valu
         .lock()
         .map_err(|_| "Bootstrap jobs lock poisoned")?
         .insert(id.clone(), job.clone());
-    let path = text(body, query, "project_path").or_else(|| text(body, query, "path"));
+    let path = text(body, query, "project_path")
+        .or_else(|| text(body, query, "path"))
+        .map(|raw| resolve_user_path(&raw))
+        .transpose()?;
     let model_id = text(body, query, "model_id");
     let layout = body.get("diagram_layout").cloned().unwrap_or(Value::Null);
     let options = bootstrap::Options {
@@ -889,4 +916,40 @@ fn analysis(path: &str, body: &Value, query: &HashMap<String, String>) -> Result
         ..Default::default()
     })?;
     Ok(json!({"status":"success","results":results}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_and_workspace_routes_return_canonical_paths() {
+        let query = HashMap::new();
+        let health = route("GET", "/health", &query, json!({})).unwrap();
+        assert_eq!(health["status"], "ok");
+        assert!(health["home_dir"].as_str().is_some_and(|s| !s.is_empty()));
+
+        let base = std::env::temp_dir().join(format!("statsem-srv-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let ws_path = base.join("ws_one");
+        let mut create_query = HashMap::new();
+        create_query.insert("folder_path".into(), ws_path.to_string_lossy().into_owned());
+        create_query.insert("name".into(), "ws_one".into());
+        let created = route("POST", "/workspace/create", &create_query, json!({})).unwrap();
+        let canon_ws = canonicalize_or_normalize(&ws_path);
+        assert_eq!(
+            created["path"].as_str().unwrap(),
+            canon_ws.to_string_lossy().as_ref()
+        );
+
+        let mut add_query = HashMap::new();
+        add_query.insert("folder_path".into(), ws_path.to_string_lossy().into_owned());
+        add_query.insert("project_name".into(), "StudyOne".into());
+        let added = route("POST", "/workspace/add-project", &add_query, json!({})).unwrap();
+        assert_eq!(
+            added["project_path"].as_str().unwrap(),
+            canon_ws.join("StudyOne.pls").to_string_lossy().as_ref()
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
 }

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useStore } from '../store';
+import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 import { HypothesisTestingPanel } from './HypothesisTestingPanel';
 import { NarrativeDraftPanel } from './NarrativeDraftPanel';
 
@@ -17,6 +19,9 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
   onExportExcel,
   onExportPdf,
 }) => {
+  const { settings } = useStore();
+  const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
+  const decimalSystem = settings.decimalSystem;
   const [activeSubTab, setActiveSubTab] = useState<string>('overview');
   const [selectedKpi, setSelectedKpi] = useState<string>('');
   const [selectedModIndex, setSelectedModIndex] = useState<number>(0);
@@ -27,17 +32,24 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
   // Extract analysis specific result or check if stored in main results
   const analysisData = analysisResults[activeTab] || results?.[activeTab] || results?.analysis?.[activeTab];
 
-  // Helper for formatting decimals
-  const fmt = (val: any, decimals = 3): string => {
-    if (val === undefined || val === null || isNaN(Number(val))) return '—';
-    return Number(val).toFixed(decimals);
+  // Helper for formatting decimals using user settings
+  const fmt = (val: any, decimals = decimalDigits): string =>
+    formatNumber(val, decimals, decimalSystem);
+
+  const fmtP = (val: any, decimals = decimalDigits): string =>
+    formatPValue(val, decimals, decimalSystem);
+
+  const formatPEq = (val: any): string => {
+    const s = fmtP(val);
+    return s.startsWith('<') ? `p ${s}` : `p = ${s}`;
   };
 
   const getSigBadge = (p: number) => {
-    if (p < 0.001) return <span style={{ color: '#16a34a', fontWeight: 600 }}>*** (p &lt; .001)</span>;
-    if (p < 0.01) return <span style={{ color: '#16a34a', fontWeight: 600 }}>** (p = {fmt(p)})</span>;
-    if (p < 0.05) return <span style={{ color: '#16a34a', fontWeight: 600 }}>* (p = {fmt(p)})</span>;
-    return <span style={{ color: '#94a3b8' }}>ns (p = {fmt(p)})</span>;
+    const label = formatPEq(p);
+    if (p < 0.001) return <span style={{ color: '#16a34a', fontWeight: 600 }}>*** ({label})</span>;
+    if (p < 0.01) return <span style={{ color: '#16a34a', fontWeight: 600 }}>** ({label})</span>;
+    if (p < 0.05) return <span style={{ color: '#16a34a', fontWeight: 600 }}>* ({label})</span>;
+    return <span style={{ color: '#94a3b8' }}>ns ({label})</span>;
   };
 
   // 1. MODEL FIT (SRMR, d_ULS, d_G, RMS_theta, GoF)
@@ -209,8 +221,8 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                 return (
                   <tr key={c.construct_id}>
                     <td style={{ padding: '10px 14px', fontWeight: 600 }}>{c.construct_name || c.construct_id}</td>
-                    <td style={{ padding: '10px 14px' }}>{ssoVal != null ? fmt(ssoVal, 1) : '-'}</td>
-                    <td style={{ padding: '10px 14px' }}>{sseVal != null ? fmt(sseVal, 1) : '-'}</td>
+                    <td style={{ padding: '10px 14px' }}>{ssoVal != null ? fmt(ssoVal) : '-'}</td>
+                    <td style={{ padding: '10px 14px' }}>{sseVal != null ? fmt(sseVal) : '-'}</td>
                     <td style={{ padding: '10px 14px', fontWeight: 600, color: isRelevant ? '#16a34a' : q2 != null ? '#dc2626' : 'var(--color-text-muted)' }}>
                       {q2 != null ? fmt(q2) : '-'}
                     </td>
@@ -336,13 +348,13 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
               {typology || 'Complementary Mediation'}
             </div>
             <p style={{ margin: '4px 0 0', fontSize: 12, color: '#166534' }}>
-              VAF (Variance Accounted For): <strong>{fmt((vaf || 0) * 100, 1)}%</strong>
+              VAF (Variance Accounted For): <strong>{fmt((vaf || 0) * 100)}%</strong>
             </p>
           </div>
           <div style={{ textAlign: 'right' }}>
             <span style={{ fontSize: 12, color: '#166534' }}>Sobel Test:</span>
             <div style={{ fontSize: 15, fontWeight: 600, color: '#166534' }}>
-              z = {fmt(sobel?.z_value)}, p = {fmt(sobel?.p_value)}
+              z = {fmt(sobel?.z_value)}, {formatPEq(sobel?.p_value)}
             </div>
           </div>
         </div>
@@ -607,10 +619,10 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                           {fmt(eff.interaction_se)}
                         </td>
                         <td style={{ padding: '10px 14px', textAlign: 'right' }}>
-                          {fmt(eff.interaction_t, 2)}
+                          {fmt(eff.interaction_t)}
                         </td>
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 600, color: isSig ? '#16a34a' : 'var(--color-text-secondary)' }}>
-                          {eff.interaction_p_value !== null ? fmt(eff.interaction_p_value) : '—'}
+                          {eff.interaction_p_value !== null ? fmtP(eff.interaction_p_value) : '—'}
                         </td>
                         <td style={{ padding: '10px 14px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
                           [{fmt(eff.interaction_ci_lower)}, {fmt(eff.interaction_ci_upper)}]
@@ -652,7 +664,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   {fmt(sl.low?.slope ?? (typeof sl.low === 'number' ? sl.low : 0))}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                  p = {fmt(sl.low?.p_value ?? 0)} · CI: [{fmt(sl.low?.ci_lower)}, {fmt(sl.low?.ci_upper)}]
+                  {formatPEq(sl.low?.p_value ?? 0)} · CI: [{fmt(sl.low?.ci_lower)}, {fmt(sl.low?.ci_upper)}]
                 </div>
               </div>
               <div style={{ padding: 14, borderRadius: 8, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
@@ -661,7 +673,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   {fmt(sl.mean?.slope ?? (typeof sl.mean === 'number' ? sl.mean : activeMod.beta_source ?? 0))}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                  p = {fmt(sl.mean?.p_value ?? 0)} · CI: [{fmt(sl.mean?.ci_lower)}, {fmt(sl.mean?.ci_upper)}]
+                  {formatPEq(sl.mean?.p_value ?? 0)} · CI: [{fmt(sl.mean?.ci_lower)}, {fmt(sl.mean?.ci_upper)}]
                 </div>
               </div>
               <div style={{ padding: 14, borderRadius: 8, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
@@ -670,7 +682,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   {fmt(sl.high?.slope ?? (typeof sl.high === 'number' ? sl.high : 0))}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                  p = {fmt(sl.high?.p_value ?? 0)} · CI: [{fmt(sl.high?.ci_lower)}, {fmt(sl.high?.ci_upper)}]
+                  {formatPEq(sl.high?.p_value ?? 0)} · CI: [{fmt(sl.high?.ci_lower)}, {fmt(sl.high?.ci_upper)}]
                 </div>
               </div>
               <div style={{ padding: 14, borderRadius: 8, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
@@ -834,8 +846,8 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                         <div style={{ padding: '10px 18px', backgroundColor: 'var(--color-bg-base)', borderBottom: '1px solid var(--color-border-subtle)', display: 'flex', gap: 24, fontSize: 12 }}>
                           <div><strong>Index Point:</strong> {fmt(bInf.index_point)}</div>
                           <div><strong>Bootstrap SE:</strong> {fmt(bInf.index_se)}</div>
-                          <div><strong>t-statistic:</strong> {fmt(bInf.index_t, 2)}</div>
-                          <div><strong>p-value:</strong> {fmt(bInf.index_p_value)}</div>
+                          <div><strong>t-statistic:</strong> {fmt(bInf.index_t)}</div>
+                          <div><strong>p-value:</strong> {fmtP(bInf.index_p_value)}</div>
                           <div><strong>95% Bootstrap CI:</strong> [{fmt(bInf.index_ci_lower)}, {fmt(bInf.index_ci_upper)}]</div>
                         </div>
                       )}
@@ -870,10 +882,10 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                                   {fmt(row.se)}
                                 </td>
                                 <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                                  {fmt(row.t_statistic, 2)}
+                                  {fmt(row.t_statistic)}
                                 </td>
                                 <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 600, color: isRowSig ? '#16a34a' : 'var(--color-text-secondary)' }}>
-                                  {row.p_value !== undefined ? fmt(row.p_value) : '—'}
+                                  {row.p_value !== undefined ? fmtP(row.p_value) : '—'}
                                 </td>
                                 <td style={{ padding: '10px 16px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
                                   [{fmt(row.ci_lower)}, {fmt(row.ci_upper)}]
@@ -949,7 +961,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   <tr key={idx}>
                     <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.name || row.construct_id}</td>
                     <td style={{ padding: '10px 14px' }}>{fmt(importance)}</td>
-                    <td style={{ padding: '10px 14px', fontWeight: 600 }}>{fmt(performance, 1)} / 100</td>
+                    <td style={{ padding: '10px 14px', fontWeight: 600 }}>{fmt(performance)} / 100</td>
                     <td style={{ padding: '10px 14px' }}>
                       <span style={{
                         padding: '3px 8px',
@@ -1123,7 +1135,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
           <div style={{ padding: 16, borderRadius: 10, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
             <span style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600 }}>Bonferroni Adjusted α</span>
             <div style={{ fontSize: 24, fontWeight: 700, margin: '6px 0', color: 'var(--color-accent)' }}>
-              {fmt(bonferroni_alpha, 4)}
+              {fmt(bonferroni_alpha)}
             </div>
             <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
               Protects Family-Wise Error Rate (FWER)
@@ -1896,9 +1908,9 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                 return (
                   <tr key={idx}>
                     <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.construct}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.original_correlation, 4)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.quantile_5pct, 4)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.p_value, 3)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmt(row.original_correlation)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmt(row.quantile_5pct)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmtP(row.p_value)}</td>
                     <td style={{ padding: '10px 14px' }}>
                       <span style={{
                         padding: '2px 8px',
@@ -2044,10 +2056,10 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                     <td style={{ padding: '10px 14px' }}>{fmt(row.beta_g1)}</td>
                     <td style={{ padding: '10px 14px' }}>{fmt(row.beta_g2)}</td>
                     <td style={{ padding: '10px 14px', fontWeight: 600 }}>{fmt(row.diff ?? Math.abs((row.beta_g1 || 0) - (row.beta_g2 || 0)))}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.p_parametric)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(pWelch)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(pMga)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(pPerm)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmtP(row.p_parametric)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmtP(pWelch)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmtP(pMga)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmtP(pPerm)}</td>
                     <td style={{ padding: '10px 14px' }}>
                       <span style={{
                         padding: '2px 8px',
@@ -2107,7 +2119,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
           <div style={{ padding: 16, borderRadius: 10, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
             <span style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600 }}>Unadjusted FWER</span>
             <div style={{ fontSize: 24, fontWeight: 700, margin: '6px 0', color: '#dc2626' }}>
-              {fmt(fwer * 100, 1)}%
+              {fmt(fwer * 100)}%
             </div>
             <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>FWER = 1 - (1 - α)^m without correction</span>
           </div>
@@ -2115,7 +2127,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
           <div style={{ padding: 16, borderRadius: 10, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
             <span style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600 }}>Šidák Adjusted α</span>
             <div style={{ fontSize: 24, fontWeight: 700, margin: '6px 0', color: 'var(--color-accent)' }}>
-              {fmt(sidak_alpha, 4)}
+              {fmt(sidak_alpha)}
             </div>
             <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>α_sidak = 1 - (1 - α)^(1/m)</span>
           </div>
@@ -2123,7 +2135,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
           <div style={{ padding: 16, borderRadius: 10, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
             <span style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600 }}>Bonferroni Adjusted α</span>
             <div style={{ fontSize: 24, fontWeight: 700, margin: '6px 0', color: 'var(--color-accent)' }}>
-              {fmt(bonferroni_alpha, 4)}
+              {fmt(bonferroni_alpha)}
             </div>
             <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>α_bonf = α / m</span>
           </div>
@@ -2148,7 +2160,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                 <tr key={idx}>
                   <td style={{ padding: '10px 14px', fontWeight: 600 }}>{p.path}</td>
                   <td style={{ padding: '10px 14px' }}>{fmt(p.fr_statistic)}</td>
-                  <td style={{ padding: '10px 14px' }}>{fmt(p.p_value)}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmtP(p.p_value)}</td>
                   <td style={{ padding: '10px 14px' }}>
                     <span style={{
                       padding: '2px 8px',
@@ -2190,7 +2202,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                     <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.path}</td>
                     <td style={{ padding: '10px 14px' }}>{Array.isArray(row.group_pair) ? row.group_pair.join(' vs ') : row.pair}</td>
                     <td style={{ padding: '10px 14px' }}>{fmt(row.diff)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.p_permutation)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmtP(row.p_permutation)}</td>
                     <td style={{ padding: '10px 14px' }}>
                       <span style={{ color: row.is_significant_bonf ? '#16a34a' : '#94a3b8', fontWeight: 600 }}>
                         {row.is_significant_bonf ? 'Significant' : 'ns'}
@@ -2301,18 +2313,18 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
               {model_selection_table.map((row: any, idx: number) => (
                 <tr key={idx}>
                   <td style={{ padding: '10px 14px', fontWeight: 700 }}>Segment {row.segments || row.k || idx + 1}</td>
-                  <td style={{ padding: '10px 14px' }}>{fmt(row.log_likelihood ?? row.lnL, 2)}</td>
-                  <td style={{ padding: '10px 14px' }}>{fmt(row.aic, 2)}</td>
-                  <td style={{ padding: '10px 14px' }}>{fmt(row.aic3, 2)}</td>
-                  <td style={{ padding: '10px 14px' }}>{fmt(row.aic4, 2)}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmt(row.log_likelihood ?? row.lnL)}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmt(row.aic)}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmt(row.aic3)}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmt(row.aic4)}</td>
                   <td style={{ padding: '10px 14px', fontWeight: row.min_bic ? 700 : 400, color: row.min_bic ? '#16a34a' : 'inherit' }}>
-                    {fmt(row.bic, 2)} {row.min_bic && '★'}
+                    {fmt(row.bic)} {row.min_bic && '★'}
                   </td>
                   <td style={{ padding: '10px 14px', fontWeight: row.min_caic ? 700 : 400, color: row.min_caic ? '#16a34a' : 'inherit' }}>
-                    {fmt(row.caic, 2)} {row.min_caic && '★'}
+                    {fmt(row.caic)} {row.min_caic && '★'}
                   </td>
-                  <td style={{ padding: '10px 14px' }}>{fmt(row.mdl5, 2)}</td>
-                  <td style={{ padding: '10px 14px' }}>{fmt(row.en ?? row.entropy, 3)}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmt(row.mdl5)}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmt(row.en ?? row.entropy)}</td>
                 </tr>
               ))}
             </tbody>
@@ -2469,7 +2481,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
           <div style={{ padding: 16, borderRadius: 10, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
             <span style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600 }}>Crosstab Matching Overlap</span>
             <div style={{ fontSize: 24, fontWeight: 700, margin: '6px 0', color: isOverlapSatisfactory ? '#16a34a' : '#d97706' }}>
-              {fmt(overlapPct, 1)}%
+              {fmt(overlapPct)}%
             </div>
             <span style={{ fontSize: 11, color: isOverlapSatisfactory ? '#16a34a' : '#d97706' }}>
               {isOverlapSatisfactory ? '✓ Satisfactory Overlap (≥ 60%)' : 'Caution: Low overlap (< 60%)'}
@@ -2512,7 +2524,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                     <td style={{ padding: '10px 14px' }}>{fmt(row.coefficient)}</td>
                     <td style={{ padding: '10px 14px' }}>{fmt(row.std_error)}</td>
                     <td style={{ padding: '10px 14px' }}>{fmt(row.z_statistic)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.p_value)}</td>
+                    <td style={{ padding: '10px 14px' }}>{fmtP(row.p_value)}</td>
                     <td style={{ padding: '10px 14px', fontWeight: 600 }}>{fmt(row.odds_ratio)}</td>
                     <td style={{ padding: '10px 14px' }}>{getSigBadge(row.p_value)}</td>
                   </tr>
@@ -2640,12 +2652,12 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   endoTests.map((t: any) => [
                     t.relationship,
                     t.gc_construct,
-                    fmt(t.original, 3),
-                    fmt(t.mean, 3),
-                    fmt(t.se, 3),
-                    fmt(t.t_stat, 3),
-                    fmt(t.p_value, 4),
-                    `[${fmt(t.ci_lower, 3)}, ${fmt(t.ci_upper, 3)}]`,
+                    fmt(t.original),
+                    fmt(t.mean),
+                    fmt(t.se),
+                    fmt(t.t_stat),
+                    fmtP(t.p_value),
+                    `[${fmt(t.ci_lower)}, ${fmt(t.ci_upper)}]`,
                     t.is_significant ? 'Yes' : 'No'
                   ])
                 )}
@@ -2679,14 +2691,14 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                           {row.gc_construct}
                         </span>
                       </td>
-                      <td className="cell-sig"><div className="cell-value">{fmt(row.original, 3)}</div></td>
-                      <td>{fmt(row.mean, 3)}</td>
-                      <td>{fmt(row.se, 3)}</td>
-                      <td>{fmt(row.t_stat, 3)}</td>
+                      <td className="cell-sig"><div className="cell-value">{fmt(row.original)}</div></td>
+                      <td>{fmt(row.mean)}</td>
+                      <td>{fmt(row.se)}</td>
+                      <td>{fmt(row.t_stat)}</td>
                       <td style={{ fontWeight: isSig ? 700 : 400, color: isSig ? '#16a34a' : 'inherit' }}>
-                        {fmt(pVal, 4)}
+                        {fmtP(pVal)}
                       </td>
-                      <td>[{fmt(row.ci_lower, 3)}, {fmt(row.ci_upper, 3)}]</td>
+                      <td>[{fmt(row.ci_lower)}, {fmt(row.ci_upper)}]</td>
                       <td>
                         <span style={{
                           fontSize: 11,
@@ -2719,16 +2731,16 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                 onClick={() => {
                   const perTarget = Object.entries(waldTests.per_target || {}).map(([tgt, st]: [string, any]) => [
                     `Target: ${tgt}`,
-                    fmt(st.statistic, 3),
+                    fmt(st.statistic),
                     String(st.df),
-                    fmt(st.p_value, 4),
+                    fmtP(st.p_value),
                     st.significant ? 'Significant' : 'Not Significant'
                   ]);
                   const overall = waldTests.overall ? [[
                     'Overall Model',
-                    fmt(waldTests.overall.statistic, 3),
+                    fmt(waldTests.overall.statistic),
                     String(waldTests.overall.df),
-                    fmt(waldTests.overall.p_value, 4),
+                    fmtP(waldTests.overall.p_value),
                     waldTests.overall.significant ? 'Significant' : 'Not Significant'
                   ]] : [];
                   copyTableData(['Scope', 'Chi-Square (W)', 'df', 'p-value', 'Decision'], [...perTarget, ...overall]);
@@ -2754,10 +2766,10 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   return (
                     <tr key={tgt}>
                       <td style={{ fontWeight: 600 }}>Target: {tgt}</td>
-                      <td>{fmt(st.statistic, 3)}</td>
+                      <td>{fmt(st.statistic)}</td>
                       <td>{st.df}</td>
                       <td style={{ fontWeight: isSig ? 700 : 400, color: isSig ? '#16a34a' : 'inherit' }}>
-                        {fmt(pVal, 4)}
+                        {fmtP(pVal)}
                       </td>
                       <td>
                         <span style={{
@@ -2777,10 +2789,10 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                 {waldTests.overall && (
                   <tr style={{ backgroundColor: 'var(--color-bg-surface, #f8fafc)', fontWeight: 600 }}>
                     <td>Overall Model</td>
-                    <td>{fmt(waldTests.overall.statistic, 3)}</td>
+                    <td>{fmt(waldTests.overall.statistic)}</td>
                     <td>{waldTests.overall.df}</td>
                     <td style={{ color: waldTests.overall.significant ? '#16a34a' : 'inherit' }}>
-                      {fmt(waldTests.overall.p_value, 4)}
+                      {fmtP(waldTests.overall.p_value)}
                     </td>
                     <td>
                       <span style={{
@@ -2819,11 +2831,11 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   regDiags.map((d: any) => [
                     d.construct,
                     d.role,
-                    fmt(d.skewness, 3),
-                    fmt(d.excess_kurtosis, 3),
-                    `${fmt(d.anderson_darling?.statistic, 3)} (p=${fmt(d.anderson_darling?.p_value, 3)})`,
-                    `${fmt(d.cramer_von_mises?.statistic, 3)} (p=${fmt(d.cramer_von_mises?.p_value, 3)})`,
-                    fmt(d.corr_p_cp, 3),
+                    fmt(d.skewness),
+                    fmt(d.excess_kurtosis),
+                    `${fmt(d.anderson_darling?.statistic)} (${formatPEq(d.anderson_darling?.p_value)})`,
+                    `${fmt(d.cramer_von_mises?.statistic)} (${formatPEq(d.cramer_von_mises?.p_value)})`,
+                    fmt(d.corr_p_cp),
                     d.warnings?.join('; ') || 'Non-normal supported'
                   ])
                 )}
@@ -2851,11 +2863,11 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                     <tr key={i}>
                       <td style={{ fontWeight: 600 }}>{d.construct}</td>
                       <td>{d.role}</td>
-                      <td>{fmt(d.skewness, 3)}</td>
-                      <td>{fmt(d.excess_kurtosis, 3)}</td>
-                      <td>{fmt(d.anderson_darling?.statistic, 3)} (p={fmt(d.anderson_darling?.p_value, 3)})</td>
-                      <td>{fmt(d.cramer_von_mises?.statistic, 3)} (p={fmt(d.cramer_von_mises?.p_value, 3)})</td>
-                      <td>{fmt(d.corr_p_cp, 3)}</td>
+                      <td>{fmt(d.skewness)}</td>
+                      <td>{fmt(d.excess_kurtosis)}</td>
+                      <td>{fmt(d.anderson_darling?.statistic)} ({formatPEq(d.anderson_darling?.p_value)})</td>
+                      <td>{fmt(d.cramer_von_mises?.statistic)} ({formatPEq(d.cramer_von_mises?.p_value)})</td>
+                      <td>{fmt(d.corr_p_cp)}</td>
                       <td>
                         {hasWarning ? (
                           <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#fef3c7', color: '#b45309', fontWeight: 600 }}>
@@ -2888,12 +2900,12 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   ['Relationship', 'Stage 1 (without GC)', 'Stage 2 (with GC)', 'Difference', 'Diff SE', 'Diff 95% CI', 'Diff p-value'],
                   effectsOfCorrection.map((e: any) => [
                     e.relationship,
-                    fmt(e.stage1_coefficient, 3),
-                    fmt(e.stage2_coefficient, 3),
-                    fmt(e.difference, 3),
-                    fmt(e.diff_se, 3),
-                    `[${fmt(e.diff_ci_lower, 3)}, ${fmt(e.diff_ci_upper, 3)}]`,
-                    fmt(e.diff_pvalue, 4)
+                    fmt(e.stage1_coefficient),
+                    fmt(e.stage2_coefficient),
+                    fmt(e.difference),
+                    fmt(e.diff_se),
+                    `[${fmt(e.diff_ci_lower)}, ${fmt(e.diff_ci_upper)}]`,
+                    fmtP(e.diff_pvalue)
                   ])
                 )}
               >
@@ -2920,17 +2932,17 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                   return (
                     <tr key={i}>
                       <td style={{ fontWeight: 600 }}>{e.relationship}</td>
-                      <td>{fmt(e.stage1_coefficient, 3)}</td>
-                      <td className="cell-sig"><div className="cell-value">{fmt(e.stage2_coefficient, 3)}</div></td>
+                      <td>{fmt(e.stage1_coefficient)}</td>
+                      <td className="cell-sig"><div className="cell-value">{fmt(e.stage2_coefficient)}</div></td>
                       <td style={{ fontWeight: 600, color: diff !== 0 ? 'var(--color-accent)' : 'inherit' }}>
-                        {fmt(diff, 3)}
+                        {fmt(diff)}
                       </td>
-                      <td>{fmt(e.diff_se, 3)}</td>
-                      <td>[{fmt(e.diff_ci_lower, 3)}, {fmt(e.diff_ci_upper, 3)}]</td>
-                      <td>{pVal !== null ? fmt(pVal, 4) : '—'}</td>
+                      <td>{fmt(e.diff_se)}</td>
+                      <td>[{fmt(e.diff_ci_lower)}, {fmt(e.diff_ci_upper)}]</td>
+                      <td>{pVal !== null ? fmtP(pVal) : '—'}</td>
                       <td>
                         <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: 'rgba(107,78,230,0.1)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                          {diff > 0 ? `+${fmt(diff, 3)} upward` : (diff < 0 ? `${fmt(diff, 3)} downward` : 'No shift')}
+                          {diff > 0 ? `+${fmt(diff)} upward` : (diff < 0 ? `${fmt(diff)} downward` : 'No shift')}
                         </span>
                       </td>
                     </tr>

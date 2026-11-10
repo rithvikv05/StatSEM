@@ -134,21 +134,25 @@ export async function promptOpenWorkspaceFolder(targetType: 'folder' | 'zip' = '
         alert(`Failed to open workspace: ${res.error}`);
         return;
       }
-      const wsName = detection.name || selectedPath.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean).pop() || 'Workspace';
+      const canonicalPath = res?.path || selectedPath;
+      const wsName = detection.name || canonicalPath.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean).pop() || 'Workspace';
       const state = useStore.getState();
-      const existing = state.workspaces.find(w => w.path === selectedPath);
+      const existing = state.workspaces.find(w => w.path === canonicalPath || w.path === selectedPath || w.id === canonicalPath);
+      const wsId = existing ? existing.id : canonicalPath;
       if (!existing) {
         state.addWorkspace({
-          id: selectedPath,
+          id: wsId,
           name: wsName,
-          path: selectedPath,
+          path: canonicalPath,
         });
+      } else if (existing.path !== canonicalPath) {
+        state.syncWorkspaceCanonicalPath(existing.id, canonicalPath);
       }
-      state.setActiveWorkspace(selectedPath);
+      state.setActiveWorkspace(wsId);
       state.openTab({
         type: 'workspace',
         title: wsName,
-        workspaceId: selectedPath,
+        workspaceId: wsId,
       });
       return;
     }

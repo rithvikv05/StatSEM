@@ -43,6 +43,9 @@ function App() {
           try {
             const res = await api.openWorkspace(ws.path);
             if (!isMounted) return;
+            if (res?.path && res.path !== ws.path) {
+              state.syncWorkspaceCanonicalPath(ws.id, res.path);
+            }
             // Existing backend returns 'Not a valid workspace' when the folder or workspace.json was deleted
             if (res?.error === 'Not a valid workspace') {
               console.log(`Pruning workspace missing on disk: ${ws.name} (${ws.path})`);

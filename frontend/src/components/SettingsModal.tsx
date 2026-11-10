@@ -976,6 +976,7 @@ export const SettingsModal: React.FC = () => {
                     <option value={4}>4 — e.g. 0.3472</option>
                     <option value={5}>5 — e.g. 0.34721</option>
                     <option value={6}>6 — e.g. 0.347210</option>
+                    <option value={7}>7 — e.g. 0.3472108</option>
                   </select>
                 </div>
                 <div className="settings-row">

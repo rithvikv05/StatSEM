@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, type PersistStorage } from 'zustand/middleware';
 import type { ParsedDataset } from './utils/dataset-parser';
 import { api } from './utils/api';
+import { DEFAULT_DECIMAL_DIGITS, normalizeDecimalDigits } from './utils/number-format';
 import {
   type LicenseStatus,
   getLicenseStatus,
@@ -217,6 +218,7 @@ interface AppState {
   setModelDatasetId: (modelId: string, datasetId: string) => void;
 
   addWorkspace: (ws: Workspace) => void;
+  syncWorkspaceCanonicalPath: (id: string, canonicalPath: string) => void;
   removeWorkspace: (id: string) => void;
   archiveWorkspace: (id: string) => void | Promise<void>;
   restoreWorkspace: (id: string) => void | Promise<void>;
@@ -300,7 +302,7 @@ const INITIAL_SETTINGS: AppSettings = {
   fontFamily: 'Inter',
   language: 'en',
   decimalSystem: 'point',
-  decimalDigits: 3,
+  decimalDigits: DEFAULT_DECIMAL_DIGITS,
   parallelProcessors: 'all',
   keyboardLayout: 'qwerty',
   flipOrientation: false,
@@ -360,8 +362,12 @@ export const useStore = create<AppState>()(
         if (partial.lockExpandedSidebar === true) {
           nextSidebarCollapsed = false;
         }
+        const nextSettings = { ...state.settings, ...partial };
+        if (partial.decimalDigits !== undefined) {
+          nextSettings.decimalDigits = normalizeDecimalDigits(partial.decimalDigits);
+        }
         return {
-          settings: { ...state.settings, ...partial },
+          settings: nextSettings,
           theme: nextTheme,
           isSidebarCollapsed: nextSidebarCollapsed,
         };
@@ -765,6 +771,52 @@ export const useStore = create<AppState>()(
         workspaces: [...state.workspaces, ws],
         activeWorkspaceId: ws.id 
       })),
+      syncWorkspaceCanonicalPath: (id, canonicalPath) => set((state) => {
+        if (!canonicalPath) return state;
+        const cleanCanonical = canonicalPath.replace(/[/\\]+$/, '');
+        const sep = cleanCanonical.includes('\\') ? '\\' : '/';
+        const rewriteStudyPath = (studyPath: string, oldWsPath: string | undefined): string => {
+          if (!studyPath) return studyPath;
+          const normalizedStudy = studyPath.replace(/\\/g, '/');
+          const normalizedOld = (oldWsPath || '').replace(/\\/g, '/').replace(/\/+$/, '');
+          if (normalizedOld && normalizedStudy.toLowerCase().startsWith(`${normalizedOld.toLowerCase()}/`)) {
+            const rel = studyPath.slice(normalizedOld.length).replace(/^[/\\]+/, '');
+            return rel ? `${cleanCanonical}${sep}${rel}` : studyPath;
+          }
+          if (
+            normalizedStudy.startsWith('~/') ||
+            normalizedStudy.includes('/src-tauri/~/') ||
+            normalizedStudy.startsWith('src-tauri/~/')
+          ) {
+            const fileName = normalizedStudy.split('/').filter(Boolean).pop();
+            return fileName ? `${cleanCanonical}${sep}${fileName}` : studyPath;
+          }
+          return studyPath;
+        };
+
+        const targetWs = state.workspaces.find((w) => w.id === id) || state.archivedWorkspaces.find((w) => w.id === id);
+        if (!targetWs) return state;
+        const oldWsPath = targetWs.path;
+        let changed = oldWsPath !== cleanCanonical;
+
+        const nextStudies = state.studies.map((s) => {
+          if (s.workspaceId !== id) return s;
+          const nextPath = rewriteStudyPath(s.path, oldWsPath);
+          if (nextPath !== s.path) {
+            changed = true;
+            return { ...s, path: nextPath };
+          }
+          return s;
+        });
+
+        if (!changed) return state;
+
+        return {
+          workspaces: state.workspaces.map((w) => (w.id === id ? { ...w, path: cleanCanonical } : w)),
+          archivedWorkspaces: state.archivedWorkspaces.map((w) => (w.id === id ? { ...w, path: cleanCanonical } : w)),
+          studies: nextStudies,
+        };
+      }),
       duplicateWorkspace: async (id) => {
         const state = get();
         const ws = state.workspaces.find(w => w.id === id);
@@ -1403,6 +1455,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'cspls-storage', // name of the item in the storage (must be unique)
+      version: 1,
       storage: workspaceStorage,
       partialize: (state) => ({
         workspaces: state.workspaces,
@@ -1417,14 +1470,30 @@ export const useStore = create<AppState>()(
         isSidebarCollapsed: state.isSidebarCollapsed,
         isLicenseActive: state.isLicenseActive,
       }), // only persist these fields
-      merge: (persistedState: any, currentState: AppState) => ({
-        ...currentState,
-        ...persistedState,
-        settings: {
+      migrate: (persistedState: any, version: number) => {
+        if (version === 0 && persistedState?.settings?.decimalDigits === 3) {
+          return {
+            ...persistedState,
+            settings: {
+              ...persistedState.settings,
+              decimalDigits: DEFAULT_DECIMAL_DIGITS,
+            },
+          };
+        }
+        return persistedState;
+      },
+      merge: (persistedState: any, currentState: AppState) => {
+        const mergedSettings = {
           ...INITIAL_SETTINGS,
           ...(persistedState?.settings || {}),
-        },
-      }),
+        };
+        mergedSettings.decimalDigits = normalizeDecimalDigits(mergedSettings.decimalDigits);
+        return {
+          ...currentState,
+          ...persistedState,
+          settings: mergedSettings,
+        };
+      },
     }
   )
 );

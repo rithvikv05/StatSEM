@@ -13,16 +13,17 @@ import {
   ZoomOut,
   Maximize2,
   AlertCircle,
-  FileSpreadsheet,
-  FileText,
-  Code,
-  FileCheck,
   LayoutGrid,
   RotateCcw,
   GitCompare,
 } from 'lucide-react';
 import { getCanvasGridColors } from '../utils/model-canvas';
 import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
+import { ResultsNavigation } from '../components/ResultsNavigation';
+import { SpecificIndirectResults } from '../components/SpecificIndirectResults';
+import { RunDetails } from '../components/RunDetails';
+import { hasRunDetails } from '../utils/run-details';
+import { ModelFitResults } from '../components/ModelFitResults';
 import { DiagramExportModal } from '../components/DiagramExportModal';
 import { ModelComparisonModal } from '../components/ModelComparisonModal';
 import { performAutoLayout, resolveBadgePositions } from '../utils/semLayoutEngine';
@@ -542,18 +543,12 @@ export const SnapshotView: React.FC = () => {
     const height = container?.clientHeight || 700;
 
     const currentEdges = layoutEdges.length > 0 ? layoutEdges : (layout?.edges || []);
-    const { nodes: alignedNodes, edges: alignedEdges } = performAutoLayout(layoutNodes, currentEdges, {
+    const { nodes: alignedNodes } = performAutoLayout(layoutNodes, currentEdges, {
       containerWidth: width,
       containerHeight: height,
     });
 
     setLayoutNodes(alignedNodes);
-    if (alignedEdges) {
-      setLayoutEdges(alignedEdges);
-      if (layout) {
-        layout.edges = alignedEdges;
-      }
-    }
     centerDiagram(alignedNodes);
   };
 
@@ -638,6 +633,10 @@ export const SnapshotView: React.FC = () => {
           badge: 'β (beta)',
           subtitle: 'Standardized beta coefficients between endogenous and exogenous latent constructs.',
         };
+      case 'specific_indirect_effects':
+        return { title: 'Individual Indirect Paths', badge: 'Indirect effects', subtitle: 'Estimates for each distinct mediation path.' };
+      case 'run_details':
+        return { title: 'Calculation Details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
       case 'total_indirect_effects':
         return {
           title: 'Total Indirect Effects',
@@ -1013,152 +1012,14 @@ export const SnapshotView: React.FC = () => {
           <div id="view-results" className="view-panel" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
             <div className="app-body" style={{ width: '100%', height: '100%' }}>
               {/* Left Navigation Tree */}
-              <aside className="results-sidebar" id="results-sidebar">
-                <div className="results-sidebar__search">
-                  <div className="results-sidebar__search-wrap">
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
-                      Snapshot Tables
-                    </span>
-                  </div>
-                </div>
-                <div className="results-sidebar__tree">
-                  {/* Final Results Section */}
-                  <div className="tree-section">
-                    <div className="tree-section__header">
-                      <span>Final results</span>
-                    </div>
-                    <div className="tree-section__items">
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'path_coefficients' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('path_coefficients'); }}
-                      >
-                        Path coefficients
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'hypotheses' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('hypotheses'); }}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-                      >
-                        <span>Hypotheses Testing</span>
-                        <span style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: '1px 5px',
-                          borderRadius: 4,
-                          background: 'rgba(99, 102, 241, 0.15)',
-                          color: 'var(--color-accent)',
-                        }}>
-                          APA
-                        </span>
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'total_indirect_effects' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('total_indirect_effects'); }}
-                      >
-                        Total indirect effects
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'total_effects' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('total_effects'); }}
-                      >
-                        Total effects
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'outer_loadings' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('outer_loadings'); }}
-                      >
-                        Outer loadings
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'outer_weights' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('outer_weights'); }}
-                      >
-                        Outer weights
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'construct_scores' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('construct_scores'); }}
-                      >
-                        Latent variable scores
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Quality Criteria Section */}
-                  <div className="tree-section">
-                    <div className="tree-section__header">
-                      <span>Quality criteria</span>
-                    </div>
-                    <div className="tree-section__items">
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'r_squared' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('r_squared'); }}
-                      >
-                        R-square (R²)
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'construct_reliability' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('construct_reliability'); }}
-                      >
-                        Construct reliability & validity
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'htmt' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('htmt'); }}
-                      >
-                        Discriminant validity (HTMT)
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'fornell_larcker' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('fornell_larcker'); }}
-                      >
-                        Fornell-Larcker criterion
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'f_squared' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('f_squared'); }}
-                      >
-                        f-square (f²) effect sizes
-                      </a>
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'collinearity' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('collinearity'); }}
-                      >
-                        Collinearity (VIF)
-                      </a>
-                      {results?.convergent_validity_redundancy && (
-                        <a
-                          href="#"
-                          className={`tree-item ${activeResultTab === 'convergent_validity_redundancy' ? 'active' : ''}`}
-                          onClick={(e) => { e.preventDefault(); setActiveResultTab('convergent_validity_redundancy'); }}
-                        >
-                          Convergent validity (redundancy)
-                        </a>
-                      )}
-                      <a
-                        href="#"
-                        className={`tree-item ${activeResultTab === 'model_fit' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveResultTab('model_fit'); }}
-                      >
-                        Model fit (SRMR)
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              </aside>
+              <ResultsNavigation
+                snapshot
+                activeTab={activeResultTab}
+                onSelect={setActiveResultTab}
+                hasRedundancy={!!results?.convergent_validity_redundancy}
+                hasRunDetails={hasRunDetails(results)}
+                hasSpecificIndirect={!!(results?.effects_decomposition?.specific_indirect?.length || results?.structural?.specific_indirect?.length)}
+              />
 
               {/* Main Content Area */}
               <main className="results-main" style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
@@ -1176,39 +1037,29 @@ export const SnapshotView: React.FC = () => {
                   <button
                     className="results-tool-btn"
                     type="button"
-                    onClick={handleExportCSV}
-                    title="Export CSV"
-                  >
-                    <FileSpreadsheet size={13} />
-                    <span>Excel</span>
-                  </button>
-                  <button
-                    className="results-tool-btn"
-                    type="button"
-                    onClick={() => window.print()}
-                    title="Print or create report"
-                  >
-                    <FileCheck size={13} />
-                    <span>Create Report</span>
-                  </button>
-                  <button
-                    className="results-tool-btn"
-                    type="button"
-                    onClick={handleExportJSON}
-                    title="Download snapshot JSON"
-                  >
-                    <Download size={13} />
-                    <span>Export JSON</span>
-                  </button>
-                  <button
-                    className="results-tool-btn results-tool-btn--accent"
-                    type="button"
                     onClick={() => setIsCompareModalOpen(true)}
                     title="Compare models side-by-side"
                   >
                     <GitCompare size={13} />
-                    <span>Compare Models</span>
+                    <span>Compare</span>
                   </button>
+                  <select
+                    className="results-tool-btn results-export-select"
+                    aria-label="Export snapshot results"
+                    value=""
+                    onChange={(event) => {
+                      switch (event.target.value) {
+                        case 'csv': handleExportCSV(); break;
+                        case 'json': handleExportJSON(); break;
+                        case 'print': window.print(); break;
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Export</option>
+                    <option value="csv">Current table as CSV</option>
+                    <option value="json">Snapshot as JSON</option>
+                    <option value="print">Print / save as PDF</option>
+                  </select>
                 </div>
 
                 {/* Header Area with Inline Title and Table Actions */}
@@ -1234,15 +1085,7 @@ export const SnapshotView: React.FC = () => {
                         <Copy size={13} />
                         <span>Copy Table</span>
                       </button>
-                      <button
-                        className="results-tool-btn"
-                        type="button"
-                        onClick={handleExportCSV}
-                        title="Export CSV"
-                      >
-                        <Download size={13} />
-                        <span>Export CSV</span>
-                      </button>
+
                     </div>
                   </div>
                 </div>
@@ -1250,11 +1093,14 @@ export const SnapshotView: React.FC = () => {
                 {/* Table Container */}
                 <div className="table-container">
                   <div className="scientific-table-wrap">
-                    {activeResultTab === 'hypotheses' ? (
+                    {activeResultTab === 'specific_indirect_effects' ? (
+                      <SpecificIndirectResults results={results} />
+                    ) : activeResultTab === 'run_details' ? (
+                      <RunDetails results={results} />
+                    ) : activeResultTab === 'hypotheses' ? (
                       <HypothesisTestingPanel
                         results={results}
                         model={snapshot?.model_state || snapshot?.model}
-                        onExportExcel={handleExportCSV}
                       />
                     ) : activeResultTab === 'path_coefficients' ? (
                       getTableMode('path_coefficients') === 'matrix' ? (
@@ -1671,7 +1517,7 @@ export const SnapshotView: React.FC = () => {
                                     <td className="cell-sig">
                                       <div className="cell-value">{fmt(val)}</div>
                                     </td>
-                                    <td>{vif !== undefined ? fmt(vif) : fmt(1)}</td>
+                                    <td>{vif != null ? fmt(vif) : '—'}</td>
                                   </tr>
                                 );
                               })
@@ -2062,37 +1908,7 @@ export const SnapshotView: React.FC = () => {
                         </tbody>
                       </table>
                     ) : activeResultTab === 'model_fit' ? (
-                      <table className="scientific-table">
-                        <thead>
-                          <tr>
-                            <th>Fit Criterion</th>
-                            <th>Saturated Model</th>
-                            <th>Estimated Model</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            <td>SRMR (Standardized Root Mean Square Residual)</td>
-                            <td><strong>{fmt(results?.model_fit?.srmr)}</strong></td>
-                            <td>{fmt(results?.model_fit?.srmr)}</td>
-                          </tr>
-                          <tr>
-                            <td>d_ULS (Squared Euclidean distance)</td>
-                            <td>{fmt(results?.model_fit?.d_uls)}</td>
-                            <td>{fmt(results?.model_fit?.d_uls)}</td>
-                          </tr>
-                          <tr>
-                            <td>d_G (Geodesic distance)</td>
-                            <td>{fmt(results?.model_fit?.d_g)}</td>
-                            <td>{fmt(results?.model_fit?.d_g)}</td>
-                          </tr>
-                          <tr>
-                            <td>NFI (Normed Fit Index)</td>
-                            <td>{fmt(results?.model_fit?.nfi)}</td>
-                            <td>{fmt(results?.model_fit?.nfi)}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                      <ModelFitResults results={results} />
                     ) : null}
                   </div>
                 </div>
@@ -2126,7 +1942,7 @@ export const SnapshotView: React.FC = () => {
             }}
             onContextMenu={(e) => {
               e.preventDefault();
-              setContextMenuPos({ x: e.clientX, y: e.clientY });
+              setContextMenuPos(prev => prev ? null : { x: e.clientX, y: e.clientY });
             }}
           >
             {/* Diagram HUD Floating Bar docked on bottom right */}
@@ -2218,7 +2034,7 @@ export const SnapshotView: React.FC = () => {
               <div
                 className="hud-btn"
                 onClick={() => setIsExportModalOpen(true)}
-                title="Export Diagram (Vector SVG, 300/600 DPI, Journal B&W)"
+                title="Export diagram"
               >
                 <Download size={13} />
                 <span>Export Diagram</span>
@@ -2451,6 +2267,7 @@ export const SnapshotView: React.FC = () => {
                       <span style={{ flex: 1 }}>{areIndicatorsHidden ? 'Show Indicators' : 'Hide Indicators'}</span>
                     </div>
 
+                    {!areIndicatorsHidden && hasIndicators && <>
                     <div className="canvas-ctx-divider" />
 
                     {/* 3. Align Indicators Left */}
@@ -2513,6 +2330,7 @@ export const SnapshotView: React.FC = () => {
                       <span style={{ flex: 1 }}>Align Indicators Bottom</span>
                     </div>
 
+                    </>}
                     <div className="canvas-ctx-divider" />
 
                     <div
@@ -2690,7 +2508,7 @@ export const SnapshotView: React.FC = () => {
                     }}
                   >
                     <Download size={15} style={{ color: 'var(--color-text-secondary)' }} />
-                    <span style={{ flex: 1 }}>Export Publication Diagram</span>
+                    <span style={{ flex: 1 }}>Export diagram</span>
                   </div>
 
                   <div className="canvas-ctx-divider" />
@@ -2870,7 +2688,8 @@ export const SnapshotView: React.FC = () => {
                   style={{ display: 'block', width: '100%', height: '100%' }}
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    setContextMenuPos({ x: e.clientX, y: e.clientY });
+                    e.stopPropagation();
+                    setContextMenuPos(prev => prev ? null : { x: e.clientX, y: e.clientY });
                   }}
                 >
                   <defs>
@@ -2884,10 +2703,10 @@ export const SnapshotView: React.FC = () => {
                       <polygon points="1 1, 7.5 3.5, 1 6" fill="var(--canvas-edge-stroke, #64748b)" />
                     </marker>
                   </defs>
-                  <rect width="100%" height="100%" fill={canvasBgColor || 'transparent'} />
-                  <rect width="100%" height="100%" fill={canvasGrid === 'none' ? 'transparent' : canvasGrid === 'lines' ? 'url(#line-grid-snap)' : 'url(#dot-grid-snap)'} />
+                  <rect id="bg-color-rect" width="100%" height="100%" fill={canvasBgColor || 'transparent'} />
+                  <rect id="bg-rect" width="100%" height="100%" fill={canvasGrid === 'none' ? 'transparent' : canvasGrid === 'lines' ? 'url(#line-grid-snap)' : 'url(#dot-grid-snap)'} />
 
-                  <g transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoomLevel})`}>
+                  <g id="zoom-layer" transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoomLevel})`}>
                     {/* 1. Measurement Indicator Lines (Parent Latent to Indicator) */}
                     {displayNodes
                       .filter((n: any) => !n.isLatent && n.parentId)
@@ -2917,7 +2736,7 @@ export const SnapshotView: React.FC = () => {
                         const pillH = 15;
 
                         return (
-                          <g key={`ind-link-${indNode.id}`}>
+                          <g key={`ind-link-${indNode.id}`} data-export-indicator="true" data-export-edge="true">
                             <title>{isFormative ? `${indNode.label} → ${parentNode.label} (Formative weight${loadingStr !== null ? `: ${loadingStr}` : ''})` : `${parentNode.label} → ${indNode.label} (Reflective loading${loadingStr !== null ? `: ${loadingStr}` : ''})`}</title>
                             <line
                               x1={x1}
@@ -2929,7 +2748,7 @@ export const SnapshotView: React.FC = () => {
                               markerEnd="url(#snap-arrowhead)"
                             />
                             {loadingStr !== null && (
-                              <g transform={`translate(${indMidX}, ${indMidY})`} pointerEvents="none">
+                              <g transform={`translate(${indMidX}, ${indMidY})`} pointerEvents="none" data-export-badge="true">
                                 <rect
                                   x={-pillW / 2}
                                   y={-pillH / 2}
@@ -3019,7 +2838,7 @@ export const SnapshotView: React.FC = () => {
                         const pillH = 18;
 
                         return (
-                          <g key={edge.id || `${edge.sourceId}-${edge.targetId}`}>
+                          <g key={edge.id || `${edge.sourceId}-${edge.targetId}`} data-export-edge="true">
                             <title>{srcNode.label} → {tgtNode.label}{coefStr !== null ? ` (Path Coefficient β = ${coefStr})` : ''}</title>
                             <path
                               d={d}
@@ -3029,7 +2848,7 @@ export const SnapshotView: React.FC = () => {
                               markerEnd="url(#snap-arrowhead)"
                             />
                             {coefStr !== null && (
-                              <g transform={`translate(${badgeX}, ${badgeY})`} pointerEvents="none">
+                              <g transform={`translate(${badgeX}, ${badgeY})`} pointerEvents="none" data-export-badge="true">
                                 <rect
                                   x={-pillW / 2}
                                   y={-pillH / 2}
@@ -3101,7 +2920,7 @@ export const SnapshotView: React.FC = () => {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 setHoveredLatent(null);
-                                setContextMenuPos({ x: e.clientX, y: e.clientY, targetNodeId: node.id });
+                                setContextMenuPos(prev => prev ? null : { x: e.clientX, y: e.clientY, targetNodeId: node.id });
                               }}
                               onPointerEnter={() => {
                                 const r2Val = results?.structural?.r_squared?.[node.label] ?? results?.structural?.r_squared?.[node.id] ?? results?.r_squared?.[node.label];
@@ -3135,7 +2954,7 @@ export const SnapshotView: React.FC = () => {
                                 stroke={node.stroke || "var(--canvas-latent-stroke, #1e293b)"}
                                 strokeWidth="2"
                               />
-                              {node.textInside !== false ? (
+                              {node.textInside === true ? (
                                 <>
                                   <text
                                     textAnchor="middle"
@@ -3279,13 +3098,14 @@ export const SnapshotView: React.FC = () => {
                         return (
                           <g
                             key={node.id}
+                            data-export-indicator="true"
                             transform={`translate(${node.x - 35}, ${node.y - 14})`}
                             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                             onContextMenu={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
                               setHoveredLatent(null);
-                              setContextMenuPos({ x: e.clientX, y: e.clientY, targetNodeId: node.id });
+                              setContextMenuPos(prev => prev ? null : { x: e.clientX, y: e.clientY, targetNodeId: node.id });
                             }}
                             style={{ cursor: 'move', pointerEvents: 'all' }}
                           >
@@ -3570,7 +3390,6 @@ export const SnapshotView: React.FC = () => {
           onClose={() => setIsExportModalOpen(false)}
           svgElement={svgRef.current}
           modelName={snapshot?.name || 'snapshot_model'}
-          results={results}
         />
 
         {/* ═══ Multi-Model Comparison Modal ═══ */}

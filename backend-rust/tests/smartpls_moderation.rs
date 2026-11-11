@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 fn corporate_reputation_two_stage_matches_smartpls_paths() {
     // Seven-decimal coefficients exported from SmartPLS for the primer's
     // "Moderation - multiple interactions" model.
-    let csv = include_str!("data/Corporate reputation data.csv");
+    let csv = include_str!("../../backend/tests/data/Corporate reputation data.csv");
     let mut records = csv.split(['\r', '\n']).filter(|line| !line.is_empty());
     let headers: Vec<_> = records.next().unwrap().split(';').collect();
     let blocks = [

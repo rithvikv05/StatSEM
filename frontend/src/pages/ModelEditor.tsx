@@ -1,10 +1,19 @@
+import { ModelCalculationModal } from '../components/ModelCalculationModal';
+import type { ModelCalculationSettings } from '../components/ModelCalculationModal';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, getStudyDatasets } from '../store';
 import { initModelCanvas, exportModelSpec, getModelCanvasState, loadModelCanvasState, setCanvasResults, renderModelCanvas, clearModelCanvas, resetModelStyles, setCanvasDatasetColumns, updateModeratingEffect, deleteModeratingEffect, getSelectedModeratingEffect, hasInvalidLatentVariables, getCanvasGridColors } from '../utils/model-canvas';
 import { BootstrapModal } from '../components/BootstrapModal';
 import { AnalysisModal } from '../components/AnalysisModal';
-import { AdvancedResultPanels } from '../components/AdvancedResultPanels';
+import { ModelComparisonModal } from '../components/ModelComparisonModal';
+import { CalculationMenu } from '../components/CalculationMenu';
+import { ModelFitResults } from '../components/ModelFitResults';
+import { ResultsNavigation } from '../components/ResultsNavigation';
+import { SpecificIndirectResults } from '../components/SpecificIndirectResults';
+import { RunDetails } from '../components/RunDetails';
+import { hasRunDetails } from '../utils/run-details';
+import { InlineAnalysisResults } from '../components/InlineAnalysisResults';
 import RedundancyWizardModal from '../components/RedundancyWizardModal';
 import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { DiagramExportModal } from '../components/DiagramExportModal';
@@ -15,7 +24,7 @@ import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/num
 
 import {
   Upload, Trash2, RotateCcw, AlertTriangle, History, Check,
-  FileText, FileSpreadsheet, Code, FileCheck, GitCompare, Copy, Download
+  GitCompare, Copy, Download
 } from 'lucide-react';
 import AppSidebar from '../components/AppSidebar';
 import '../model-canvas.css';
@@ -200,9 +209,52 @@ const ModelEditor = () => {
 
   const [isImporting, setIsImporting] = useState(false);
   const [isBootstrapModalOpen, setIsBootstrapModalOpen] = useState(false);
+  const [bootstrapConsistent, setBootstrapConsistent] = useState(false);
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+  const [modelSettingsConsistent, setModelSettingsConsistent] = useState(false);
   const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
-  const [analysisModalType, setAnalysisModalType] = useState<string>('blindfolding');
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+  const [analysisModalType, setAnalysisModalType] = useState<string>('predict');
   const [analysisResultsMap, setAnalysisResultsMap] = useState<Record<string, any>>({});
+  const [availableAnalyses, setAvailableAnalyses] = useState<string[]>([]);
+  const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({});
+  const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
+  const [analysisStale, setAnalysisStale] = useState<Record<string, boolean>>({});
+  const [latestAnalysis, setLatestAnalysis] = useState<{ id: string; revision: number }>();
+  const analysisModelKey = `${activeStudy?.path || ''}::${effectiveModelId || 'default'}`;
+  const analysisModelKeyRef = useRef(analysisModelKey);
+  analysisModelKeyRef.current = analysisModelKey;
+  useEffect(() => {
+    let cancelled = false;
+    setAnalysisResultsMap({});
+    setAvailableAnalyses([]);
+    setAnalysisLoading({});
+    setAnalysisErrors({});
+    setAnalysisStale({});
+    setLatestAnalysis(undefined);
+    if (activeStudy?.path) {
+      void api.listProjectAnalyses(activeStudy.path, effectiveModelId || undefined).then(analyses => {
+        if (!cancelled) setAvailableAnalyses(previous => Array.from(new Set([...previous, ...analyses])));
+      });
+    }
+    return () => { cancelled = true; };
+  }, [effectiveModelId, activeStudy?.path]);
+
+  const loadAnalysis = async (id: string) => {
+    if (!activeStudy?.path) return;
+    const requestedModel = analysisModelKey;
+    setAnalysisLoading(previous => ({ ...previous, [id]: true }));
+    setAnalysisErrors(previous => ({ ...previous, [id]: '' }));
+    const response = await api.loadProjectResults(activeStudy.path, 'pls', effectiveModelId || undefined, id);
+    if (analysisModelKeyRef.current !== requestedModel) return;
+    setAnalysisLoading(previous => ({ ...previous, [id]: false }));
+    if (response?.results != null) {
+      setAnalysisResultsMap(previous => ({ ...previous, [id]: response.results }));
+      setAnalysisStale(previous => ({ ...previous, [id]: !!response.stale }));
+    } else {
+      setAnalysisErrors(previous => ({ ...previous, [id]: response?.error || 'Could not load this analysis.' }));
+    }
+  };
   const [variableFilter, setVariableFilter] = useState('');
   const [isVarSearchOpen, setIsVarSearchOpen] = useState(false);
   const [isCalcMenuOpen, setIsCalcMenuOpen] = useState(false);
@@ -848,10 +900,12 @@ const ModelEditor = () => {
 
       const runRes = await api.runPlsModel(activeStudy.path, spec, {
         columns: datasetHeaders,
-        rows: activeDataset?.rows,
-        dataset_name: activeDataset?.filename,
+        rows: currentDs?.rows,
+        dataset_name: currentDs?.filename,
         model_id: effectiveModelId || undefined,
         diagram_layout: layout,
+        consistent: !!plsResultsRef.current?.is_consistent,
+        settings: plsResultsRef.current?.settings,
       });
 
       if (runRes && runRes.results) {
@@ -928,7 +982,7 @@ const ModelEditor = () => {
     }
   };
 
-  const handleCalculate = async () => {
+  const handleCalculate = async (consistent = false, settings?: ModelCalculationSettings) => {
     if (!activeStudy?.path) {
       alert('Please open or select an active project study first.');
       return;
@@ -980,6 +1034,8 @@ const ModelEditor = () => {
         dataset_name: activeDataset?.filename,
         model_id: effectiveModelId || undefined,
         diagram_layout: layout,
+        consistent,
+        settings: settings || plsResultsRef.current?.settings,
       });
       if (runRes.error) {
         alert('PLS-SEM calculation failed: ' + runRes.error);
@@ -1276,36 +1332,33 @@ const ModelEditor = () => {
     setTimeout(() => setSaveToast(null), 3000);
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (!plsResults) return;
     const table = document.querySelector('.scientific-table');
     if (!table) {
       alert('No active table to export.');
       return;
     }
-    let csv = '';
-    const rows = table.querySelectorAll('tr');
-    rows.forEach(r => {
-      const cells = r.querySelectorAll('th, td');
-      const rowVals: string[] = [];
-      cells.forEach(c => {
-        let text = c.textContent?.trim() || '';
-        if (text.includes(',') || text.includes('"')) {
-          text = `"${text.replace(/"/g, '""')}"`;
-        }
-        rowVals.push(text);
+    try {
+      const { default: ExcelJS } = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('Results');
+      table.querySelectorAll('tr').forEach(row => {
+        sheet.addRow(Array.from(row.querySelectorAll('th, td'), cell => cell.textContent?.trim() || ''));
       });
-      csv += rowVals.join(',') + '\n';
-    });
-    const blob = new Blob([csv], { type: 'application/vnd.ms-excel;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${activeModel?.name || 'Model'}_${activeResultTab}.xls`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setSaveToast('Excel report downloaded');
-    setTimeout(() => setSaveToast(null), 2500);
+      const bytes = await workbook.xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${activeModel?.name || 'Model'}_${activeResultTab}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setSaveToast('Excel report downloaded');
+      setTimeout(() => setSaveToast(null), 2500);
+    } catch (error) {
+      console.error('Excel export failed:', error);
+      alert('Could not export the table to Excel.');
+    }
   };
 
   const handleExportHtml = () => {
@@ -1624,6 +1677,10 @@ const ModelEditor = () => {
           badge: 'β (beta)',
           subtitle: 'Standardized beta coefficients between endogenous and exogenous latent constructs.',
         };
+      case 'specific_indirect_effects':
+        return { title: 'Individual Indirect Paths', badge: 'Indirect effects', subtitle: 'Estimates for each distinct mediation path.' };
+      case 'run_details':
+        return { title: 'Calculation Details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
       case 'total_indirect_effects':
         return {
           title: 'Total Indirect Effects',
@@ -1683,6 +1740,12 @@ const ModelEditor = () => {
           title: 'Latent Variable Scores',
           badge: 'Y (standardized)',
           subtitle: 'Estimated case-level construct scores standardized to zero mean and unit variance.',
+        };
+      case 'model_fit':
+        return {
+          title: 'Model Fit',
+          badge: 'SRMR & discrepancy',
+          subtitle: 'Model fit statistics and reference values.',
         };
       case 'bootstrap_significance':
         return {
@@ -1865,11 +1928,6 @@ const ModelEditor = () => {
       } else {
         isCanvasLoadingRef.current = false;
       }
-
-      // Load results script if it exists
-      import('../utils/results.js').then((m) => {
-        if (m.initResults) m.initResults();
-      }).catch(() => {});
 
       const viewSlider = document.getElementById('main-view-slider');
       const sliderBtns = viewSlider?.querySelectorAll('.view-slider__btn');
@@ -2056,12 +2114,12 @@ const ModelEditor = () => {
           type="button"
           className={`subheader__switcher-btn ${currentView === 'results' ? 'active' : ''}`}
           onClick={() => {
-            if (plsResults) {
+            if (plsResults || availableAnalyses.length || Object.keys(analysisResultsMap).length) {
               switchView('results');
             }
           }}
-          disabled={!plsResults}
-          title={plsResults ? 'View Results' : 'Please calculate the model first'}
+          disabled={!plsResults && !availableAnalyses.length && !Object.keys(analysisResultsMap).length}
+          title={plsResults || availableAnalyses.length || Object.keys(analysisResultsMap).length ? 'View Results' : 'Please calculate the model first'}
         >
           Results
         </button>
@@ -2076,6 +2134,8 @@ const ModelEditor = () => {
           onClick={() => setIsCalcMenuOpen(prev => !prev)}
           disabled={isValidating || isCalculating}
           title="Calculate Options"
+          aria-expanded={isCalcMenuOpen}
+          aria-haspopup="true"
           style={{ gap: 4 }}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: 13, height: 13 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
@@ -2083,303 +2143,25 @@ const ModelEditor = () => {
           <span className="material-symbols-outlined" style={{ fontSize: 16, marginLeft: -1 }}>expand_more</span>
         </button>
         {isCalcMenuOpen && (
-          <div className="subheader__dropdown-menu" style={{ minWidth: 280, maxHeight: '82vh', overflowY: 'auto', padding: '6px' }}>
-            <div style={{ padding: '6px 10px 2px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.5px' }}>
-              PLS-SEM Algorithms
-            </div>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                handleCalculate();
-              }}
-            >
-              PLS-SEM Algorithm
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('consistent_pls');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Consistent PLS-SEM (PLSc)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
+          <CalculationMenu
+            onSelect={(id) => {
+              setIsCalcMenuOpen(false);
+              if (id === 'pls' || id === 'consistent_pls') {
+                setModelSettingsConsistent(id === 'consistent_pls');
+                setModelSettingsOpen(true);
+              } else if (id === 'bootstrap' || id === 'consistent_bootstrap') {
+                setBootstrapConsistent(id === 'consistent_bootstrap');
                 setIsBootstrapModalOpen(true);
-              }}
-            >
-              Bootstrapping...
-            </button>
-
-            <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '4px 0' }} />
-            <div style={{ padding: '6px 10px 2px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.5px' }}>
-              Prediction &amp; Model Fit
-            </div>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setActiveResultTab('model_fit');
-                switchView('results');
-              }}
-            >
-              Model Fit (SRMR &amp; Exact Fit)
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('blindfolding');
+              } else if (id === 'compare') {
+                setIsCompareModalOpen(true);
+              } else {
+                setAnalysisModalType(id);
                 setIsAnalysisModalOpen(true);
-              }}
-            >
-              Blindfolding (Q² &amp; q²)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('predict');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              PLSpredict (Out-of-sample)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('cta');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Confirmatory Tetrads (CTA-PLS)...
-            </button>
-
-            <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '4px 0' }} />
-            <div style={{ padding: '6px 10px 2px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.5px' }}>
-              Advanced Relationships
-            </div>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('mediation');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Mediation Analysis...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('moderation');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Moderation &amp; Simple Slopes...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('quadratic');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Non-linear / Quadratic Effects...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('hcm');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Higher-Order Constructs (HCM)...
-            </button>
-
-            <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '4px 0' }} />
-            <div style={{ padding: '6px 10px 2px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.5px' }}>
-              Groups &amp; Segmentation
-            </div>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('micom');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Measurement Invariance (MICOM)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('mga');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Multigroup Analysis (MGA)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('otg');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Omnibus Group Differences (OTG)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('fimix');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Finite Mixture (FIMIX-PLS)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('pos');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Prediction-Oriented Segmentation (POS)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('ex_post');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Ex Post Segmentation...
-            </button>
-
-            <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '4px 0' }} />
-            <div style={{ padding: '6px 10px 2px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.5px' }}>
-              Diagnostics &amp; Reporting
-            </div>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('ipma');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Importance-Performance Map (IPMA)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('power');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Sample Size &amp; Power Calculator...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('copula');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Gaussian Copula Endogeneity...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('nca');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Necessary Condition Analysis (NCA)...
-            </button>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setAnalysisModalType('report');
-                setIsAnalysisModalOpen(true);
-              }}
-            >
-              Executive Report (PDF / APA)...
-            </button>
-            <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '4px 0' }} />
-            <div style={{ padding: '6px 10px 2px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.5px' }}>
-              Validation Tools
-            </div>
-            <button
-              type="button"
-              className="subheader__dropdown-item"
-              onClick={() => {
-                setIsCalcMenuOpen(false);
-                setWizardTargetConstructId(null);
-                setIsRedundancyWizardOpen(true);
-              }}
-            >
-              Create redundancy analysis...
-            </button>
-          </div>
+              }
+            }}
+          />
         )}
       </div>
-
-      {/* Tools Button */}
-      <button
-        className="subheader__btn"
-        type="button"
-        onClick={() => {
-          setWizardTargetConstructId(null);
-          setIsRedundancyWizardOpen(true);
-        }}
-        title="Redundancy analysis wizard for formative constructs"
-        style={{ gap: 4 }}
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>analytics</span>
-        <span>Tools</span>
-      </button>
     </div>
   </div>
   {/* ═══ APP BODY ═══ */}
@@ -2977,39 +2759,16 @@ const ModelEditor = () => {
 
               <div className="tb-divider" style={{width: '100%', height: '1px', margin: '4px 0 8px', opacity: 0.2}}></div>
 
-              {/* Border Weight Quick Pills */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-hint)' }}>Border Weight</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeBorderWeight}px</span>
-                </div>
-                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                  {[0, 1, 1.5, 2, 3, 4].map((w) => (
-                    <button
-                      key={w}
-                      type="button"
-                      style={{
-                        flex: 1,
-                        height: '24px',
-                        border: activeBorderWeight === w ? '1px solid var(--color-accent)' : '1px solid var(--color-border-subtle, #cbd5e1)',
-                        background: activeBorderWeight === w ? 'var(--color-accent-subtle)' : 'var(--color-bg-base)',
-                        color: activeBorderWeight === w ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                        borderRadius: '4px',
-                        fontSize: '11px',
-                        fontWeight: activeBorderWeight === w ? 600 : 400,
-                        cursor: 'pointer',
-                        padding: 0
-                      }}
-                      onClick={() => {
-                        setActiveBorderWeight(w);
-                        document.dispatchEvent(new CustomEvent('border-weight-change', { detail: { weight: w } }));
-                      }}
-                    >
-                      {w}px
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <label className="modal__field">
+                <span className="modal__label">Border weight</span>
+                <input key={activeBorderWeight} type="number" className="modal__input" min="0" max="20" step="0.25" defaultValue={activeBorderWeight} aria-label="Border weight in pixels" onBlur={(event) => {
+                  const raw = event.currentTarget.value.trim();
+                  const value = Number(raw);
+                  if (!raw || !Number.isFinite(value) || value < 0 || value > 20) { event.currentTarget.value = String(activeBorderWeight); return; }
+                  setActiveBorderWeight(value);
+                  document.dispatchEvent(new CustomEvent('border-weight-change', { detail: { weight: value } }));
+                }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.currentTarget.value = String(activeBorderWeight); event.currentTarget.blur(); } }} />
+              </label>
             </div>
           </div>
           
@@ -3699,427 +3458,18 @@ const ModelEditor = () => {
     {/* ═══ APP BODY ═══ */}
     <div className="app-body">
       {/* ─── Results Hierarchy Tree (Left) ─── */}
-      <aside className="results-sidebar" id="results-sidebar">
-        <div className="results-sidebar__search">
-          <div className="results-sidebar__search-wrap">
-            <svg className="results-sidebar__search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx={11} cy={11} r={8} /><line x1={21} y1={21} x2="16.65" y2="16.65" /></svg>
-            <input type="text" className="results-sidebar__search-input" placeholder="Filter results... (⌘F)" />
-          </div>
-        </div>
-        <div className="results-sidebar__tree" id="results-tree">
-          {/* Final results */}
-          <div className="tree-section">
-            <div className="tree-section__header" onClick={(e) => { (window as any).toggleTreeSection(e.currentTarget); }}>
-              <svg className="open" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-              <span>Final results</span>
-            </div>
-            <div className="tree-section__items">
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'path_coefficients' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('path_coefficients'); }}
-              >
-                Path coefficients
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'hypotheses' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('hypotheses'); }}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-              >
-                <span>Hypotheses Testing</span>
-                <span style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: '1px 5px',
-                  borderRadius: 4,
-                  background: 'rgba(99, 102, 241, 0.15)',
-                  color: 'var(--color-accent)',
-                }}>
-                  APA
-                </span>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'total_indirect_effects' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('total_indirect_effects'); }}
-              >
-                Total indirect effects
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'total_effects' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('total_effects'); }}
-              >
-                Total effects
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'outer_loadings' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('outer_loadings'); }}
-              >
-                Outer loadings
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'outer_weights' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('outer_weights'); }}
-              >
-                Outer weights
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'construct_scores' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('construct_scores'); }}
-              >
-                Latent variable scores
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'bootstrap_significance' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('bootstrap_significance'); }}
-                style={{ position: 'relative' }}
-              >
-                <div className="tree-item__left">
-                  <div className="tree-item__dot" style={{ backgroundColor: 'var(--color-accent)' }} />
-                  <span>Bootstrap significance</span>
-                </div>
-                {plsResults?.significance && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    p & t
-                  </span>
-                )}
-              </a>
-              {plsResults?.gaussian_copula && (
-                <a
-                  href="#"
-                  className={`tree-item ${activeResultTab === 'copula' ? 'active' : ''}`}
-                  onClick={(e) => { e.preventDefault(); setActiveResultTab('copula'); }}
-                  style={{ position: 'relative' }}
-                >
-                  <div className="tree-item__left">
-                    <div className="tree-item__dot" style={{ backgroundColor: '#8b5cf6' }} />
-                    <span>Gaussian copula</span>
-                  </div>
-                  <span className="tree-item__size" style={{ backgroundColor: 'rgba(139, 92, 246, 0.15)', color: '#7c3aed', fontWeight: 600 }}>
-                    endog
-                  </span>
-                </a>
-              )}
-              {(plsResults?.nonlinear_effects?.length > 0 || plsResults?.quadratic_effects?.length > 0) && (
-                <a
-                  href="#"
-                  className={`tree-item ${activeResultTab === 'quadratic' ? 'active' : ''}`}
-                  onClick={(e) => { e.preventDefault(); setActiveResultTab('quadratic'); }}
-                  style={{ position: 'relative' }}
-                >
-                  <div className="tree-item__left">
-                    <div className="tree-item__dot" style={{ backgroundColor: '#10b981' }} />
-                    <span>Nonlinear / Quadratic</span>
-                  </div>
-                  <span className="tree-item__size" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#059669', fontWeight: 600 }}>
-                    x²
-                  </span>
-                </a>
-              )}
-            </div>
-          </div>
-          {/* Quality criteria */}
-          <div className="tree-section">
-            <div className="tree-section__header" onClick={(e) => { (window as any).toggleTreeSection(e.currentTarget); }}>
-              <svg className="open" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-              <span>Quality criteria</span>
-            </div>
-            <div className="tree-section__items">
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'r_squared' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('r_squared'); }}
-              >
-                R-square (R²)
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'f_squared' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('f_squared'); }}
-              >
-                f-square (f²)
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'reliability' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('reliability'); }}
-              >
-                Construct reliability & validity
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'discriminant' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('discriminant'); }}
-              >
-                Discriminant validity
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'collinearity' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('collinearity'); }}
-              >
-                Collinearity statistics (VIF)
-              </a>
-              {plsResults?.convergent_validity_redundancy && (
-                <a
-                  href="#"
-                  className={`tree-item ${activeResultTab === 'convergent_validity_redundancy' ? 'active' : ''}`}
-                  onClick={(e) => { e.preventDefault(); setActiveResultTab('convergent_validity_redundancy'); }}
-                >
-                  Convergent validity (redundancy analysis)
-                </a>
-              )}
-            </div>
-          </div>
-
-          {/* Model Fit & Prediction */}
-          <div className="tree-section">
-            <div className="tree-section__header" onClick={(e) => { (window as any).toggleTreeSection(e.currentTarget); }}>
-              <svg className="open" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-              <span>Model Fit &amp; Prediction</span>
-            </div>
-            <div className="tree-section__items">
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'model_fit' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('model_fit'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Model fit (SRMR)</span>
-                </div>
-                {plsResults?.fit && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    fit
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'blindfolding' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('blindfolding'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Predictive relevance (Q²)</span>
-                </div>
-                {analysisResultsMap['blindfolding'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    Q²
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'predict' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('predict'); }}
-              >
-                <div className="tree-item__left">
-                  <span>PLSpredict (Out-of-sample)</span>
-                </div>
-                {analysisResultsMap['predict'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    cv
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'cta' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('cta'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Confirmatory tetrads (CTA)</span>
-                </div>
-              </a>
-            </div>
-          </div>
-
-          {/* Advanced Analyses */}
-          <div className="tree-section">
-            <div className="tree-section__header" onClick={(e) => { (window as any).toggleTreeSection(e.currentTarget); }}>
-              <svg className="open" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-              <span>Advanced Analyses</span>
-            </div>
-            <div className="tree-section__items">
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'mediation' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('mediation'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Mediation analysis</span>
-                </div>
-                {analysisResultsMap['mediation'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    Med
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'moderation' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('moderation'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Moderation &amp; Simple Slopes</span>
-                </div>
-                {analysisResultsMap['moderation'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    Mod
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'quadratic' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('quadratic'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Non-linear / Quadratic</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'ipma' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('ipma'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Importance-Performance (IPMA)</span>
-                </div>
-                {analysisResultsMap['ipma'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    IPMA
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'hcm' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('hcm'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Higher-Order Constructs (HCM)</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'micom' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('micom'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Measurement Invariance (MICOM)</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'mga' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('mga'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Multigroup Analysis (MGA)</span>
-                </div>
-                {analysisResultsMap['mga'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    MGA
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'otg' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('otg'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Omnibus Differences (OTG)</span>
-                </div>
-                {analysisResultsMap['otg'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    OTG
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'fimix' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('fimix'); }}
-              >
-                <div className="tree-item__left">
-                  <span>FIMIX-PLS Segmentation</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'pos' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('pos'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Prediction-Oriented Seg. (POS)</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'ex_post' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('ex_post'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Ex Post Segmentation</span>
-                </div>
-                {analysisResultsMap['ex_post'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    EXP
-                  </span>
-                )}
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'power' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('power'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Power &amp; Sample Size</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'copula' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('copula'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Gaussian Copula Endogeneity</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'nca' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('nca'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Necessary Condition (NCA)</span>
-                </div>
-              </a>
-              <a
-                href="#"
-                className={`tree-item ${activeResultTab === 'report_narrative' ? 'active' : ''}`}
-                onClick={(e) => { e.preventDefault(); setActiveResultTab('report_narrative'); }}
-              >
-                <div className="tree-item__left">
-                  <span>Executive Report &amp; APA Writeup</span>
-                </div>
-                {analysisResultsMap['report'] && (
-                  <span className="tree-item__size" style={{ backgroundColor: 'var(--color-accent-subtle)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                    APA
-                  </span>
-                )}
-              </a>
-            </div>
-          </div>
-        </div>
-      </aside>
+      <ResultsNavigation
+        activeTab={activeResultTab}
+        onSelect={(id) => {
+          setActiveResultTab(id);
+          if (id === 'specific_indirect_effects' && availableAnalyses.includes('mediation') && !analysisResultsMap.mediation && !analysisLoading.mediation) {
+            void loadAnalysis('mediation');
+          }
+        }}
+        hasRedundancy={!!plsResults?.convergent_validity_redundancy}
+        hasRunDetails={hasRunDetails(plsResults)}
+        hasSpecificIndirect={!!(plsResults?.effects_decomposition?.specific_indirect?.length || plsResults?.structural?.specific_indirect?.length || availableAnalyses.includes('mediation') || analysisResultsMap.mediation)}
+      />
       {/* ─── Center Results Area ─── */}
       <main className="results-main">
         {/* Secondary Header inline with filter search */}
@@ -4136,48 +3486,33 @@ const ModelEditor = () => {
           <button
             className="results-tool-btn"
             type="button"
-            onClick={handleCreateDataFile}
-            title="Create and download data file of construct scores"
-          >
-            <FileText size={13} />
-            <span>Create Data File</span>
-          </button>
-          <button
-            className="results-tool-btn"
-            type="button"
-            onClick={handleExportExcel}
-            title="Export current table to Excel"
-          >
-            <FileSpreadsheet size={13} />
-            <span>Excel</span>
-          </button>
-          <button
-            className="results-tool-btn"
-            type="button"
-            onClick={handleExportHtml}
-            title="Export current table as HTML report"
-          >
-            <Code size={13} />
-            <span>HTML</span>
-          </button>
-          <button
-            className="results-tool-btn"
-            type="button"
-            onClick={handleCreateReport}
-            title="Print or create report"
-          >
-            <FileCheck size={13} />
-            <span>Create Report</span>
-          </button>
-          <button
-            className="results-tool-btn"
-            type="button"
             onClick={handleCompare}
             title="Compare models and snapshots"
           >
             <GitCompare size={13} />
             <span>Compare</span>
           </button>
+          <select
+            className="results-tool-btn results-export-select"
+            aria-label="Export results"
+            value=""
+            onChange={(event) => {
+              switch (event.target.value) {
+                case 'csv': handleExportCurrentTable(); break;
+                case 'excel': void handleExportExcel(); break;
+                case 'html': handleExportHtml(); break;
+                case 'scores': handleCreateDataFile(); break;
+                case 'print': handleCreateReport(); break;
+              }
+            }}
+          >
+            <option value="" disabled>Export</option>
+            <option value="csv">Current table as CSV</option>
+            <option value="excel">Current table as Excel</option>
+            <option value="html">Current table as HTML</option>
+            <option value="scores">Construct scores as CSV</option>
+            <option value="print">Print / save as PDF</option>
+          </select>
         </div>
 
         {/* Outdated Calculation Notice Banner */}
@@ -4233,7 +3568,7 @@ const ModelEditor = () => {
               )}
               <button
                 type="button"
-                onClick={handleCalculate}
+                onClick={() => void handleCalculate(!!plsResults?.is_consistent)}
                 disabled={isCalculating}
                 style={{
                   padding: '6px 14px',
@@ -4259,6 +3594,7 @@ const ModelEditor = () => {
               <h1 className="report-header__title">
                 {reportTabDetails.title}
                 <span className="report-header__title-sub">{reportTabDetails.badge}</span>
+                {plsResults?.is_consistent && <span className="report-header__title-sub">Consistent PLS</span>}
               </h1>
               <p className="report-header__subtitle">{reportTabDetails.subtitle}</p>
             </div>
@@ -4272,15 +3608,7 @@ const ModelEditor = () => {
                 <Copy size={13} />
                 <span>Copy Table</span>
               </button>
-              <button
-                className="results-tool-btn"
-                type="button"
-                onClick={handleExportCurrentTable}
-                title="Export CSV"
-              >
-                <Download size={13} />
-                <span>Export CSV</span>
-              </button>
+
             </div>
           </div>
         </div>
@@ -4288,18 +3616,23 @@ const ModelEditor = () => {
         {/* Dynamic Table Area */}
         <div className="table-container">
           <div className="scientific-table-wrap">
-            {!plsResults ? (
+            {activeResultTab === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
+              <>
+                {analysisLoading.mediation && <p className="results-empty-note">Loading mediation results...</p>}
+                {analysisErrors.mediation && <p className="results-empty-note">{analysisErrors.mediation} <button type="button" onClick={() => void loadAnalysis('mediation')}>Retry</button></p>}
+                <SpecificIndirectResults results={plsResults} mediation={analysisResultsMap.mediation} mediationStale={analysisStale.mediation} />
+              </>
+            ) : !plsResults ? (
               <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
                 <svg style={{ width: 48, height: 48, margin: '0 auto 16px', color: '#94a3b8' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
                   <path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 600, color: '#334155' }}>No Results Calculated Yet</h3>
-                <p style={{ margin: 0, fontSize: '13px' }}>Return to the model canvas and click <strong>Calculate</strong> to run the PLS-SEM algorithm on your data.</p>
+                <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 600, color: '#334155' }}>Model estimates unavailable</h3>
+                <p style={{ margin: 0, fontSize: '13px' }}>Run the PLS-SEM algorithm to display the core model estimates. Any completed analysis output is shown below.</p>
               </div>
             ) : activeResultTab === 'hypotheses' ? (
               <HypothesisTestingPanel
                 results={plsResults}
-                onExportExcel={handleExportExcel}
               />
             ) : activeResultTab === 'path_coefficients' ? (
               getTableMode('path_coefficients') === 'matrix' ? (
@@ -4373,7 +3706,7 @@ const ModelEditor = () => {
                               <div className="cell-value">{fmt(val)}</div>
                             </td>
                             <td>{f2 !== undefined ? fmt(f2) : '—'}</td>
-                            <td>{vif !== undefined ? fmt(vif) : fmt(1)}</td>
+                            <td>{vif != null ? fmt(vif) : '—'}</td>
                           </tr>
                         );
                       })
@@ -4688,7 +4021,7 @@ const ModelEditor = () => {
                             <td className="cell-sig">
                               <div className="cell-value">{fmt(val)}</div>
                             </td>
-                            <td>{vif !== undefined ? fmt(vif) : fmt(1)}</td>
+                            <td>{vif != null ? fmt(vif) : '—'}</td>
                           </tr>
                         );
                       })
@@ -4847,11 +4180,13 @@ const ModelEditor = () => {
                 <tbody>
                   {measurementConstructs.map(cid => {
                     const rv = plsResults.reliability_and_validity || {};
-                    const alpha = Number(rv.cronbachs_alpha?.[cid] ?? 0);
-                    const cr = Number(rv.composite_reliability?.[cid] ?? 0);
-                    const rhoA = Number(rv.rho_a?.[cid] ?? 0);
-                    const ave = Number(rv.ave?.[cid] ?? 0);
-                    const isGood = cr >= 0.7 && ave >= 0.5;
+                    const construct = (plsResults.latent_variables || []).find((item: any) => item.id === cid);
+                    const formative = String(construct?.type || '').toLowerCase() === 'formative';
+                    const alpha = formative ? null : rv.cronbachs_alpha?.[cid] ?? null;
+                    const cr = formative ? null : rv.composite_reliability?.[cid] ?? null;
+                    const rhoA = formative ? null : rv.rho_a?.[cid] ?? null;
+                    const ave = formative ? null : rv.ave?.[cid] ?? null;
+                    const isGood = cr == null || ave == null ? null : cr >= 0.7 && ave >= 0.5;
                     return (
                       <tr key={cid}>
                         <td>
@@ -4860,20 +4195,20 @@ const ModelEditor = () => {
                             <span className="construct-name">{getConstructName(cid)}</span>
                           </div>
                         </td>
-                        <td className={alpha >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(alpha)}</td>
-                        <td className={cr >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(cr)}</td>
+                        <td className={alpha == null ? '' : alpha >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(alpha)}</td>
+                        <td className={cr == null ? '' : cr >= 0.7 ? 'cell-sig' : 'cell-ns'}>{fmt(cr)}</td>
                         <td>{fmt(rhoA)}</td>
-                        <td className={ave >= 0.5 ? 'cell-sig' : 'cell-ns'}>{fmt(ave)}</td>
+                        <td className={ave == null ? '' : ave >= 0.5 ? 'cell-sig' : 'cell-ns'}>{fmt(ave)}</td>
                         <td>
                           <span style={{
                             padding: '2px 8px',
                             borderRadius: '4px',
                             fontSize: '11px',
                             fontWeight: 600,
-                            backgroundColor: isGood ? '#dcfce7' : '#fee2e2',
-                            color: isGood ? '#166534' : '#991b1b'
+                            backgroundColor: isGood == null ? 'var(--color-bg-raised)' : isGood ? '#dcfce7' : '#fee2e2',
+                            color: isGood == null ? 'var(--color-text-muted)' : isGood ? '#166534' : '#991b1b'
                           }}>
-                            {isGood ? 'Valid & Reliable (CR ≥ 0.7, AVE ≥ 0.5)' : 'Review Model'}
+                            {formative ? 'Not applicable to formative constructs' : isGood == null ? 'Not available' : isGood ? 'Meets CR and AVE references' : 'Review model'}
                           </span>
                         </td>
                       </tr>
@@ -5374,50 +4709,44 @@ const ModelEditor = () => {
                     <div className="sig-legend-minimal__item"><span className="sig-legend-minimal__dot sig-legend-minimal__dot--p01" /> p &lt; 0.01</div>
                     <div className="sig-legend-minimal__item"><span className="sig-legend-minimal__dot sig-legend-minimal__dot--p05" /> p &lt; 0.05</div>
                     <div className="sig-legend-minimal__item"><span className="sig-legend-minimal__dot sig-legend-minimal__dot--ns" /> ns (≥ 0.05)</div>
-                    <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--color-text-muted)' }}>Two-tailed bootstrap test ({plsResults.significance.n_boot?.toLocaleString()} subsamples)</span>
+                    <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--color-text-muted)' }}>{plsResults.significance.settings?.tails === 'one' ? `One-sided ${plsResults.significance.settings?.direction === 'negative' ? 'negative' : 'positive'}` : 'Two-sided'} bootstrap test ({plsResults.significance.n_boot?.toLocaleString()} subsamples)</span>
                   </div>
                 </div>
               )
-            ) : (
-              <AdvancedResultPanels
-                activeTab={activeResultTab}
-                results={plsResults}
-                analysisResults={analysisResultsMap}
-                onExportExcel={handleExportExcel}
-                onExportPdf={() => {
-                  if (activeStudy?.path) {
-                    api.exportReportPdf({
-                      projectPath: activeStudy.path,
-                      modelId: effectiveModelId || undefined,
-                      datasetId: activeDataset?.id || activeDataset?.filename,
-                      projectName: activeStudy.name,
-                      modelName: activeModel?.name,
-                    })
-                      .then((blob: any) => {
-                        if (blob && !blob.error && blob instanceof Blob) {
-                          const url = window.URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = `${activeModel?.name || 'Model'}_Executive_Report.pdf`;
-                          a.click();
-                        }
-                      });
-                  }
-                }}
-              />
-            )}
+            ) : activeResultTab === 'run_details' ? (
+              <RunDetails results={plsResults} />
+            ) : activeResultTab === 'model_fit' ? (
+              <ModelFitResults results={plsResults} />
+            ) : null}
           </div>
+          {activeResultTab === 'path_coefficients' && (
+            <InlineAnalysisResults results={plsResults} analyses={analysisResultsMap} available={availableAnalyses} latest={latestAnalysis}
+              loading={analysisLoading} errors={analysisErrors} stale={analysisStale} onLoad={id => void loadAnalysis(id)} />
+          )}
         </div>
       </main>
     </div>{/* /app-body */}
   </div>{/* /view-results */}
 
+  {modelSettingsOpen && <ModelCalculationModal
+    isOpen={modelSettingsOpen}
+    consistent={modelSettingsConsistent}
+    initialSettings={plsResults?.settings}
+    spec={exportModelSpec()}
+    datasetHeaders={activeDataset?.variables?.map(v => v.name)}
+    datasetRows={activeDataset?.rows}
+    onClose={() => setModelSettingsOpen(false)}
+    onRun={(settings) => { setModelSettingsOpen(false); void handleCalculate(modelSettingsConsistent, settings); }}
+  />}
+
   <BootstrapModal
     isOpen={isBootstrapModalOpen}
+    consistent={bootstrapConsistent}
     projectPath={activeStudy?.path || ''}
     spec={exportModelSpec()}
     modelId={effectiveModelId || undefined}
     diagramLayout={getModelCanvasState()}
+    initialSettings={plsResults?.settings}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
     datasetName={activeDataset?.filename}
@@ -5441,35 +4770,32 @@ const ModelEditor = () => {
     onClose={() => setIsBootstrapModalOpen(false)}
   />
 
-  <AnalysisModal
+  {isCompareModalOpen && <ModelComparisonModal isOpen onClose={() => setIsCompareModalOpen(false)} projectPath={activeStudy?.path || ''} studyName={activeStudy?.name} />}
+
+  {isAnalysisModalOpen && <AnalysisModal
     isOpen={isAnalysisModalOpen}
-    analysisType={analysisModalType}
+    analysisType={analysisModalType === 'mga_consistent' ? 'mga' : analysisModalType}
+    initialSettings={plsResults?.settings}
+    consistent={analysisModalType === 'mga_consistent'}
     projectPath={activeStudy?.path || ''}
     modelId={effectiveModelId || undefined}
     datasetId={activeDataset?.id || undefined}
     spec={exportModelSpec()}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
-    datasetName={activeDataset?.filename}
     onComplete={(type, results) => {
-      setAnalysisResultsMap(prev => ({ ...prev, [type]: results }));
-      if (type === 'consistent_pls' && results?.structural) {
-        setPlsResults(results);
-        plsResultsRef.current = results;
-        setCanvasResults(results);
-      }
       setIsAnalysisModalOpen(false);
-      if (type === 'report') {
-        setActiveResultTab('report_narrative');
-      } else {
-        setActiveResultTab(type);
-      }
+      setAnalysisResultsMap(previous => ({ ...previous, [type]: results }));
+      setAvailableAnalyses(previous => Array.from(new Set([...previous, type])));
+      setAnalysisStale(previous => ({ ...previous, [type]: false }));
+      setLatestAnalysis({ id: type, revision: Date.now() });
+      setActiveResultTab('path_coefficients');
       switchView('results');
       setValidationSuccessToast('Calculation completed successfully!');
       setTimeout(() => setValidationSuccessToast(null), 3500);
     }}
     onClose={() => setIsAnalysisModalOpen(false)}
-  />
+  />}
 
   <RedundancyWizardModal
     isOpen={isRedundancyWizardOpen}
@@ -5486,7 +4812,6 @@ const ModelEditor = () => {
     onClose={() => setIsExportModalOpen(false)}
     svgElement={typeof document !== 'undefined' ? (document.getElementById('model-svg') as unknown as SVGSVGElement) : null}
     modelName={activeModel?.name || 'model_diagram'}
-    results={plsResults}
   />
 
   {/* ─── Validation Error Modal ─── */}

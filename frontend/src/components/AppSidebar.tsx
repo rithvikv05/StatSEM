@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useStore } from '../store';
 import { api } from '../utils/api';
 import WorkspaceModal from './WorkspaceModal';
+import { startWindowDrag } from '../utils/window-drag';
 
 interface AppSidebarProps {
   activeNav?: 'workspace' | 'archive' | 'docs' | 'samples' | 'feedback' | 'changelog';
@@ -85,9 +86,9 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activeNav }) => {
 
   return (
     <>
-      <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`} id="sidebar">
-        <div className="sidebar__top">
-          <div className="sidebar-ws-container">
+      <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`} id="sidebar" data-window-drag-surface onMouseDown={startWindowDrag}>
+        <div className="sidebar__top" data-window-drag-surface>
+          <div className="sidebar-ws-container" data-window-drag-surface>
             <div className="sidebar-header" style={{ paddingBottom: '10px', borderBottom: 'none' }}>
               {isWorkspaceSearchOpen ? (
                 <div className="inline-search-wrap">
@@ -179,7 +180,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activeNav }) => {
               </div>
             </div>
 
-            <div id="sidebar-ws-list" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <div id="sidebar-ws-list" data-window-drag-surface style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               {filteredWorkspaces.map((ws) => (
                 <div
                   key={ws.id}
@@ -329,7 +330,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activeNav }) => {
           </div>
         </div>
 
-        <div className="sidebar__bottom">
+        <div className="sidebar__bottom" data-window-drag-surface>
           <button
             className={`sidebar-item ${activeNav === 'archive' ? 'active' : ''}`}
             type="button"

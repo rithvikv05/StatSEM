@@ -163,6 +163,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
             </tbody>
           </table>
         </div>
+
       </div>
     );
   }
@@ -451,7 +452,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
           <div>
             <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-              Moderation Analysis &amp; Conditional Effects (SmartPLS 4 style)
+              Moderation Analysis &amp; Conditional Effects
             </h3>
             <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-muted)' }}>
               Interaction terms, Kenny (2016) f² effect sizes, simple slope plots, and moderated mediation (PROCESS-style conditional indirect effects).
@@ -571,7 +572,6 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
               <div style={{ padding: 14, borderRadius: 8, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
                 <span style={{ fontSize: 11, color: 'var(--color-text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Direct Moderator Paths</span>
                 <div style={{ fontSize: 16, fontWeight: 700, margin: '6px 0', color: 'var(--color-text-primary)' }}>Auto-included</div>
-                <span style={{ fontSize: 11, color: '#16a34a' }}>SmartPLS 4 compliant</span>
               </div>
             </div>
 
@@ -950,16 +950,18 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
             </thead>
             <tbody>
               {constructData.map((row: any, idx: number) => {
-                const importance = row.importance ?? row.total_effect ?? 0;
-                const performance = row.performance ?? 0;
-                let quadrant = 'Keep up the good work';
-                if (importance > 0.25 && performance < 60) quadrant = 'Concentrate here (Top Priority)';
-                else if (importance <= 0.25 && performance < 60) quadrant = 'Low priority';
-                else if (importance <= 0.25 && performance >= 60) quadrant = 'Possible overkill';
+                const importance = row.importance ?? row.total_effect;
+                const performance = row.performance;
+                const quadrant = ({
+                  concentrate_here: 'Concentrate here',
+                  keep_up_good_work: 'Keep up the good work',
+                  low_priority: 'Low priority',
+                  possible_overkill: 'Possible overkill',
+                } as Record<string, string>)[row.quadrant] || '—';
 
                 return (
                   <tr key={idx}>
-                    <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.name || row.construct_id}</td>
+                    <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.construct_name || row.name || row.construct_id}</td>
                     <td style={{ padding: '10px 14px' }}>{fmt(importance)}</td>
                     <td style={{ padding: '10px 14px', fontWeight: 600 }}>{fmt(performance)} / 100</td>
                     <td style={{ padding: '10px 14px' }}>
@@ -995,8 +997,9 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
       );
     }
 
-    const { evaluation = {}, indicators = [], summary = {} } = analysisData;
-    const powerClassification = summary.power || 'High Predictive Power';
+    const indicators = analysisData.indicator_metrics ?? analysisData.indicators ?? [];
+    const powerClassification = analysisData.overall_predictive_power ?? analysisData.summary?.power;
+    const interpretation = powerClassification && analysisData.interpretation?.[powerClassification];
 
     return (
       <div className="results-content-pane">
@@ -1021,10 +1024,10 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
             Overall Model Predictive Power
           </span>
           <div style={{ fontSize: 22, fontWeight: 700, color: '#1e40af', marginTop: 2 }}>
-            {powerClassification}
+            {powerClassification ?? 'Not provided'}
           </div>
           <p style={{ margin: '4px 0 0', fontSize: 12, color: '#1e3a8a' }}>
-            PLS-SEM achieves lower RMSE / MAE prediction errors compared to the naive LM benchmark on the majority of indicators.
+            {interpretation || 'Compare prediction errors with the linear-model benchmark below.'}
           </p>
         </div>
 
@@ -1042,9 +1045,9 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
             </thead>
             <tbody>
               {indicators.map((row: any, idx: number) => {
-                const plsRmse = row.pls_rmse || row.rmse_pls;
-                const lmRmse = row.lm_rmse || row.rmse_lm;
-                const outperforms = plsRmse < lmRmse;
+                const plsRmse = row.pls_rmse ?? row.rmse_pls;
+                const lmRmse = row.lm_rmse ?? row.rmse_lm;
+                const outperforms = row.pls_beats_lm ?? (plsRmse != null && lmRmse != null ? plsRmse < lmRmse : null);
 
                 return (
                   <tr key={idx}>
@@ -1058,10 +1061,10 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
                         borderRadius: 6,
                         fontSize: 11,
                         fontWeight: 600,
-                        backgroundColor: outperforms ? '#dcfce7' : '#fee2e2',
-                        color: outperforms ? '#166534' : '#991b1b',
+                        backgroundColor: outperforms == null ? 'var(--color-bg-raised)' : outperforms ? '#dcfce7' : '#fee2e2',
+                        color: outperforms == null ? 'var(--color-text-muted)' : outperforms ? '#166534' : '#991b1b',
                       }}>
-                        {outperforms ? '✓ Yes (Lower error)' : 'No (LM better)'}
+                        {outperforms == null ? '—' : outperforms ? '✓ Yes (Lower error)' : 'No (LM better)'}
                       </span>
                     </td>
                   </tr>
@@ -1070,6 +1073,15 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
             </tbody>
           </table>
         </div>
+        {analysisData.cvpat && <div style={{ marginTop: 24 }}>
+          <h3>Predictive ability test</h3>
+          <p className="results-empty-note">Squared prediction loss; negative differences favor PLS. One-sided p-values use paired case-level bootstrap standard errors. Predictions use direct antecedent scores; the linear benchmark uses exogenous indicators.</p>
+          <table className="results-table"><thead><tr><th>Scope</th><th>Benchmark</th><th>PLS loss</th><th>Benchmark loss</th><th>Difference</th><th>p-value</th></tr></thead><tbody>
+            {[{ construct: 'Overall', ...analysisData.cvpat.overall }, ...(analysisData.cvpat.constructs || [])].flatMap((scope: any) => [
+              { label: 'Indicator mean', data: scope.versus_indicator_mean }, { label: 'Linear model', data: scope.versus_linear_model },
+            ].filter(item => item.data).map(item => <tr key={`${scope.construct}-${item.label}`}><td>{scope.construct}</td><td>{item.label}</td><td>{fmt(item.data.mean_pls_loss)}</td><td>{fmt(item.data.mean_benchmark_loss)}</td><td>{fmt(item.data.mean_difference)}</td><td>{fmtP(item.data.p_one_sided)}</td></tr>))}
+          </tbody></table>
+        </div>}
       </div>
     );
   }
@@ -1272,7 +1284,7 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
               Nonlinear &amp; Quadratic Effects
             </h3>
             <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-muted)' }}>
-              Two-stage quadratic polynomial estimation matching SmartPLS 4, Hair et al. (2024), and Kenny (2015) effect sizes.
+              Quadratic estimates, turning points, and effect-size diagnostics.
             </p>
           </div>
 
@@ -1979,110 +1991,30 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
   }
 
   // 11. MULTIGROUP ANALYSIS (MGA) — CONSENSUS TABLE
-  if (activeTab === 'mga') {
-    if (!analysisData) {
-      return (
-        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--color-text-muted)' }}>
-          <h4 style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>No MGA Results Available</h4>
-          <p style={{ margin: 0, fontSize: 13 }}>Click <strong>Calculate → Multigroup Analysis (MGA)...</strong> to test structural differences across groups.</p>
-        </div>
-      );
-    }
-
-    const pathComparisons = analysisData.path_comparisons || analysisData.comparisons || [];
-    const groups = analysisData.groups || ['Group 1', 'Group 2'];
-    const sampleSizes = analysisData.sample_sizes || {};
-
-    return (
-      <div className="results-content-pane">
-        <div style={{ marginBottom: 20 }}>
-          <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-            Multigroup Analysis (MGA): {groups[0]} vs. {groups[1]}
-          </h3>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-muted)' }}>
-            Multi-method consensus testing across parametric, Welch-Satterthwaite, Henseler PLS-MGA, and permutation tests (Hair et al., 2018 Ch. 4).
-          </p>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 24 }}>
-          <div style={{ padding: 16, borderRadius: 10, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
-            <span style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600 }}>Group 1 Sample Size</span>
-            <div style={{ fontSize: 24, fontWeight: 700, margin: '6px 0', color: 'var(--color-text-primary)' }}>
-              N = {sampleSizes[groups[0]] || analysisData.n_g1 || '—'}
-            </div>
-            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{groups[0]}</span>
-          </div>
-
-          <div style={{ padding: 16, borderRadius: 10, backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border-subtle)' }}>
-            <span style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600 }}>Group 2 Sample Size</span>
-            <div style={{ fontSize: 24, fontWeight: 700, margin: '6px 0', color: 'var(--color-text-primary)' }}>
-              N = {sampleSizes[groups[1]] || analysisData.n_g2 || '—'}
-            </div>
-            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{groups[1]}</span>
-          </div>
-        </div>
-
-        <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ padding: '12px 14px', backgroundColor: 'var(--color-bg-surface)', borderBottom: '1px solid var(--color-border-subtle)', fontWeight: 600, fontSize: 13 }}>
-            Multi-Method Consensus Testing Table
-          </div>
-          <table className="results-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--color-bg-surface)', borderBottom: '1px solid var(--color-border-subtle)', textAlign: 'left' }}>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>Path Relationship</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>{groups[0]} β</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>{groups[1]} β</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>Diff (|Δβ|)</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>Parametric p</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>Welch p</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>PLS-MGA p</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>Permutation p</th>
-                <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600 }}>Consensus Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pathComparisons.map((row: any, idx: number) => {
-                const pPerm = row.p_permutation ?? 1;
-                const pMga = row.henseler_pls_mga ?? row.p_henseler ?? 1;
-                const pWelch = row.p_welch ?? row.p_parametric ?? 1;
-                const isSigPerm = pPerm < 0.05;
-                const isSigMga = pMga < 0.05;
-                const consensus = isSigPerm && isSigMga
-                  ? 'Significant across methods'
-                  : (isSigPerm || isSigMga ? 'Marginal / Method-dependent' : 'Non-significant');
-                return (
-                  <tr key={idx}>
-                    <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.path || `${row.source} → ${row.target}`}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.beta_g1)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmt(row.beta_g2)}</td>
-                    <td style={{ padding: '10px 14px', fontWeight: 600 }}>{fmt(row.diff ?? Math.abs((row.beta_g1 || 0) - (row.beta_g2 || 0)))}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmtP(row.p_parametric)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmtP(pWelch)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmtP(pMga)}</td>
-                    <td style={{ padding: '10px 14px' }}>{fmtP(pPerm)}</td>
-                    <td style={{ padding: '10px 14px' }}>
-                      <span style={{
-                        padding: '2px 8px',
-                        borderRadius: 4,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        backgroundColor: consensus.includes('Significant across') ? 'rgba(22, 163, 74, 0.12)' : (consensus.includes('Marginal') ? 'rgba(217, 119, 6, 0.12)' : 'rgba(100, 116, 139, 0.12)'),
-                        color: consensus.includes('Significant across') ? '#16a34a' : (consensus.includes('Marginal') ? '#d97706' : '#64748b'),
-                      }}>
-                        {consensus}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
+  if (activeTab === 'pca') {
+    if (!analysisData) return <p className="results-empty-note">No principal component results available.</p>;
+    return <div className="results-content-pane"><p className="results-empty-note">Standardized indicators; complete cases within each construct.</p>
+      {(analysisData.constructs || []).map((construct: any) => <section key={construct.id} style={{ marginBottom: 24 }}><h3>{construct.name}</h3><p className="results-empty-note">{construct.n_samples} observations</p>
+        <table className="results-table"><thead><tr><th>Component</th><th>Eigenvalue</th><th>Explained variance</th><th>Cumulative variance</th></tr></thead><tbody>{construct.components.map((c: any) => <tr key={c.component}><td>{c.component}</td><td>{fmt(c.eigenvalue)}</td><td>{fmt(c.variance_explained * 100)}%</td><td>{fmt(c.cumulative_variance * 100)}%</td></tr>)}</tbody></table>
+        <details><summary>Component loadings</summary><table className="results-table"><thead><tr><th>Indicator</th>{construct.components.map((c: any) => <th key={c.component}>Component {c.component}</th>)}</tr></thead><tbody>{(construct.components[0]?.loadings || []).map((loading: any, i: number) => <tr key={loading.indicator}><td>{loading.indicator}</td>{construct.components.map((c: any) => <td key={c.component}>{fmt(c.loadings[i]?.loading)}</td>)}</tr>)}</tbody></table></details>
+      </section>)}
+    </div>;
   }
 
-  // 12. OMNIBUS TEST OF GROUP DIFFERENCES (OTG)
+  if (activeTab === 'mga') {
+    if (!analysisData) return <p className="results-empty-note">No group comparison is available.</p>;
+    const rows = analysisData.path_comparisons || [];
+    const group1 = analysisData.group_1 ?? analysisData.groups?.[0] ?? 'Group 1';
+    const group2 = analysisData.group_2 ?? analysisData.groups?.[1] ?? 'Group 2';
+    return <div className="results-content-pane">
+      <h3>{analysisData.is_consistent ? 'Consistent group comparison' : 'Group comparison'}</h3>
+      <p className="results-empty-note">{group1}: {analysisData.n_group_1 ?? '—'} observations · {group2}: {analysisData.n_group_2 ?? '—'} observations</p>
+      <table className="results-table"><thead><tr><th>Path</th><th>{group1} β</th><th>{group2} β</th><th>Difference</th><th>Bootstrap p</th><th>Permutation p</th><th>Welch p</th></tr></thead><tbody>
+        {rows.map((row: any, idx: number) => <tr key={idx}><td>{row.path}</td><td>{fmt(row.beta_group_1)}</td><td>{fmt(row.beta_group_2)}</td><td>{fmt(row.difference)}</td><td>{fmtP(row.henseler_pls_mga?.p_value ?? row.henseler_pls_mga?.p_value_two_tailed)}</td><td>{fmtP(row.permutation_test?.p_value)}</td><td>{fmtP(row.welch_test?.p_value)}</td></tr>)}
+      </tbody></table>
+    </div>;
+  }
+
   if (activeTab === 'otg') {
     if (!analysisData) {
       return (

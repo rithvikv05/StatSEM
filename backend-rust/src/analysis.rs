@@ -169,8 +169,23 @@ pub fn ipma(
     level: String,
     settings: Value,
 ) -> Result<Value, String> {
-    let result = pipeline::run(columns.clone(), rows.clone(), spec.clone(), settings)?;
+    let predecessors = settings["ipma_predecessors"].as_str().unwrap_or("all");
+    if !["all", "direct"].contains(&predecessors) { return Err("Invalid IPMA predecessor selection".into()); }
     let parsed = model::parse(&spec)?;
+    let cfg = model::settings(&settings)?;
+    let mut rows = model::prepare_analysis_rows(&columns, rows, &spec, &cfg)?.rows;
+    if cfg["missing_treatment"] == "mean" {
+        let codes: Vec<_> = cfg["missing_codes"].as_array().unwrap().iter().map(model::numeric).filter(|v| v.is_finite()).collect();
+        for (id, column) in &parsed.indicators {
+            if !parsed.blocks.iter().any(|block| block.indicators.contains(id)) { continue; }
+            let Some(index) = columns.iter().position(|c| c == column) else { continue };
+            let observed: Vec<_> = rows.iter().map(|row| model::numeric(&row[index])).filter(|v| v.is_finite() && !codes.contains(v)).collect();
+            if observed.is_empty() { return Err(format!("IPMA indicator {column} has no observed values")); }
+            let mean = stats::mean(&observed, None);
+            for row in &mut rows { let value = model::numeric(&row[index]); if !value.is_finite() || codes.contains(&value) { row[index] = json!(mean); } }
+        }
+    } else if cfg["missing_treatment"] != "none" && cfg["missing_treatment"] != "listwise" { return Err("IPMA supports mean replacement, complete cases or no missing data".into()); }
+    let result = pipeline::run(columns.clone(), rows.clone(), spec.clone(), cfg)?;
     if !parsed.paths.iter().any(|[_, to]| to == &target) {
         return Err(format!(
             "IPMA target '{target}' is not an endogenous construct."
@@ -222,6 +237,9 @@ pub fn ipma(
                 let maximum = range
                     .and_then(|v| v[1].as_f64())
                     .unwrap_or_else(|| values.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+                if range.is_some() && (!minimum.is_finite() || !maximum.is_finite() || minimum >= maximum) {
+                    return Err(format!("IPMA scale bounds for {col} must have a finite minimum below the maximum"));
+                }
                 let rescaled: Vec<_> = values
                     .iter()
                     .map(|v| {
@@ -303,7 +321,7 @@ pub fn ipma(
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|e| e["to"] == target)
+        .filter(|e| e["to"] == target && (predecessors == "all" || parsed.paths.iter().any(|[from, to]| e["from"].as_str() == Some(from.as_str()) && to == &target)))
     {
         let from = effect["from"].as_str().unwrap_or("").to_string();
         let coefficient = num(&effect["total"]);

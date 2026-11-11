@@ -104,7 +104,10 @@ fn run_inner(
                 .collect()
         })
         .collect();
-    if settings["missing_treatment"] != "listwise" {
+    if settings["missing_treatment"] == "none" && numeric.iter().flatten().any(|v| v.is_nan()) {
+        return Err("Missing values found in model indicators; choose a missing-data treatment or provide complete data.".into());
+    }
+    if settings["missing_treatment"] != "listwise" && settings["missing_treatment"] != "none" {
         for j in 0..required.len() {
             let observed: Vec<_> = numeric
                 .iter()
@@ -184,15 +187,18 @@ fn run_inner(
             .collect();
         block.data = matrix::transpose(&standardized);
     }
+    let has_weights = weights.is_some();
     let mut result = pls::estimate(parsed.blocks.clone(), parsed.paths.clone(), cfg, weights)?;
     if settings["consistent"] == true {
         result = fit::plsc(result, &spec, n)?;
     }
     if compute_fit {
-        result["fit"] = match fit::evaluate(&required, &prepared, &spec, &result) {
+        result["fit"] = if has_weights {
+            json!({"error":"Model fit indices for observation-weighted models are not available."})
+        } else { match fit::evaluate(&required, &prepared, &spec, &result) {
             Ok(fit) => fit,
             Err(error) => json!({"error":error}),
-        };
+        }};
     }
     if let Some(card) = redundancy(&parsed.blocks, &parsed.paths, &result) {
         result["convergent_validity_redundancy"] = card.clone();

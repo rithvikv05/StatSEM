@@ -1494,12 +1494,6 @@ export function initModelCanvas() {
     result.edges.forEach(re => {
       const existing = edges.find(e => e.id === re.id || (e.sourceId === re.sourceId && e.targetId === re.targetId));
       if (existing) {
-        existing.curved = re.curved || false;
-        if (typeof re.curvature === 'number') {
-          existing.curvature = re.curvature;
-        } else {
-          delete existing.curvature;
-        }
         delete existing.waypoints;
       }
     });
@@ -1731,6 +1725,7 @@ export function initModelCanvas() {
             if (style === 'curved') {
               edge.strokeDasharray = '';
               edge.curved = true;
+              edge.waypoints = [];
             }
           });
           moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => {
@@ -1741,6 +1736,7 @@ export function initModelCanvas() {
             if (style === 'curved') {
               m.strokeDasharray = '';
               m.curved = true;
+              m.waypoints = [];
             }
           });
           nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => {
@@ -1796,6 +1792,7 @@ export function initModelCanvas() {
         if (style === 'curved') {
           edge.strokeDasharray = '';
           edge.curved = true;
+          edge.waypoints = [];
         }
       });
       moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => {
@@ -1806,6 +1803,7 @@ export function initModelCanvas() {
         if (style === 'curved') {
           m.strokeDasharray = '';
           m.curved = true;
+          m.waypoints = [];
         }
       });
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => {
@@ -2544,6 +2542,7 @@ export function initModelCanvas() {
   let activeHoverNodeId = null;
 
   function showLatentHoverPopup(node, metrics) {
+    if (contextMenu?.style.display === 'block') return;
     activeHoverNodeId = node.id;
     let popupEl = document.getElementById('canvas-latent-popup');
     if (!popupEl) {
@@ -2618,7 +2617,7 @@ export function initModelCanvas() {
 
     popupEl.style.display = 'block';
     requestAnimationFrame(() => {
-      popupEl.classList.add('visible');
+      if (activeHoverNodeId === node.id && contextMenu?.style.display !== 'block') popupEl.classList.add('visible');
     });
   }
 
@@ -2768,18 +2767,17 @@ export function initModelCanvas() {
       const parentGeo = getModerationLineGeometry(parentMod, visited);
       if (!parentGeo) return null;
       // Landing point: midpoint of the parent dashed arrow line
-      landX = (parentGeo.startX + parentGeo.landX) / 2;
-      landY = (parentGeo.startY + parentGeo.landY) / 2;
+      landX = parentGeo.midX;
+      landY = parentGeo.midY;
     } else {
       const sNode   = nodes.find(n => n.id === mod.source);
       const tNode   = nodes.find(n => n.id === mod.target);
       const targetEdge = edges.find(e => e.sourceId === mod.source && e.targetId === mod.target);
       if (!sNode || !tNode || !targetEdge) return null;
 
-      const { x1, y1, x2, y2 } = getEdgeCoordinates(sNode, tNode, targetEdge);
-      // All base moderators targeting this path land at the exact center of the structural path
-      landX = (x1 + x2) / 2;
-      landY = (y1 + y2) / 2;
+      const midpoint = getEdgeMidpointAndPoints(sNode, tNode, targetEdge);
+      landX = midpoint.midX;
+      landY = midpoint.midY;
     }
 
     // Start point: on moderator construct boundary toward landing point
@@ -2790,7 +2788,31 @@ export function initModelCanvas() {
     const startX = modNode.x + (mdx / mlen) * modR;
     const startY = modNode.y + (mdy / mlen) * modR;
 
-    return { startX, startY, landX, landY };
+    let points = [{ x: startX, y: startY }, ...(mod.waypoints || []), { x: landX, y: landY }];
+    let path = `M ${startX} ${startY}`;
+    if (mod.curved && !mod.waypoints?.length) {
+      const dx = landX - startX, dy = landY - startY, length = Math.hypot(dx, dy) || 1;
+      const curvature = typeof mod.curvature === 'number' ? mod.curvature : 40;
+      const cx = (startX + landX) / 2 - dy / length * curvature;
+      const cy = (startY + landY) / 2 + dx / length * curvature;
+      path += ` Q ${cx} ${cy} ${landX} ${landY}`;
+      points = Array.from({ length: 21 }, (_, i) => { const t = i / 20, u = 1 - t; return { x: u*u*startX + 2*u*t*cx + t*t*landX, y: u*u*startY + 2*u*t*cy + t*t*landY }; });
+    } else {
+      points.slice(1).forEach(point => { path += ` L ${point.x} ${point.y}`; });
+    }
+    const segments = points.slice(1).map((point, i) => [points[i].x, points[i].y, point.x, point.y]);
+    const lengths = segments.map(([x1, y1, x2, y2]) => Math.hypot(x2 - x1, y2 - y1));
+    const half = lengths.reduce((sum, length) => sum + length, 0) / 2;
+    let remaining = half, midX = startX, midY = startY;
+    for (let i = 0; i < segments.length; i++) {
+      if (remaining <= lengths[i] || i === segments.length - 1) {
+        const [x1, y1, x2, y2] = segments[i];
+        const t = lengths[i] ? remaining / lengths[i] : 0;
+        midX = x1 + t * (x2 - x1); midY = y1 + t * (y2 - y1); break;
+      }
+      remaining -= lengths[i];
+    }
+    return { startX, startY, landX, landY, midX, midY, path, segments };
   }
 
   /**
@@ -2806,11 +2828,8 @@ export function initModelCanvas() {
       if (excludeModeratorId && mod.moderator === excludeModeratorId) continue;
       const geo = getModerationLineGeometry(mod);
       if (!geo) continue;
-      const { startX, startY, landX, landY } = geo;
-
-      const dist = distToSegment(svgPt.x, svgPt.y, startX, startY, landX, landY);
-      const midX = (startX + landX) / 2;
-      const midY = (startY + landY) / 2;
+      const { midX, midY } = geo;
+      const dist = Math.min(...geo.segments.map(([x1, y1, x2, y2]) => distToSegment(svgPt.x, svgPt.y, x1, y1, x2, y2)));
       const distToMid = Math.hypot(svgPt.x - midX, svgPt.y - midY);
 
       if (dist <= 32 || distToMid <= 28) {
@@ -3096,8 +3115,9 @@ export function initModelCanvas() {
         midY = (edge.waypoints[idx1].y + edge.waypoints[idx2].y) / 2;
       }
     } else if (edge.curved) {
-      const cx = midX + (-dy / len) * 40;
-      const cy = midY + (dx / len) * 40;
+      const curveVal = typeof edge.curvature === 'number' ? edge.curvature : 40;
+      const cx = midX + (-dy / len) * curveVal;
+      const cy = midY + (dx / len) * curveVal;
       midX = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
       midY = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
     }
@@ -3326,8 +3346,9 @@ export function initModelCanvas() {
         midY = (edge.waypoints[idx1].y + edge.waypoints[idx2].y) / 2;
       }
     } else if (edge.curved) {
-      const cx = midX + (-dy / len) * 40;
-      const cy = midY + (dx / len) * 40;
+      const curveVal = typeof edge.curvature === 'number' ? edge.curvature : 40;
+      const cx = midX + (-dy / len) * curveVal;
+      const cy = midY + (dx / len) * curveVal;
       midX = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
       midY = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
     }
@@ -3910,6 +3931,19 @@ export function initModelCanvas() {
       
       // Draw handles if selected
       if (selectedIds.has(edge.id)) {
+        if (edge.curved) {
+          const dx = x2 - x1, dy = y2 - y1, length = Math.hypot(dx, dy) || 1;
+          const curvature = typeof edge.curvature === 'number' ? edge.curvature : 40;
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', (x1 + x2) / 2 - dy / length * curvature / 2);
+          handle.setAttribute('cy', (y1 + y2) / 2 + dx / length * curvature / 2);
+          handle.setAttribute('r', 5);
+          handle.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
+          handle.setAttribute('data-export-ui', 'true');
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', (event) => { if (event.button === 0) { event.stopPropagation(); draggingCurve = edge; } });
+          edgesLayer.appendChild(handle);
+        }
         if (!edge.curved && edge.waypoints) {
           edge.waypoints.forEach((wp, idx) => {
             const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -3971,7 +4005,7 @@ export function initModelCanvas() {
 
       if (isSelected) {
         const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        halo.setAttribute('d', `M ${startX} ${startY} L ${mx} ${my}`);
+        halo.setAttribute('d', geo.path);
         halo.setAttribute('fill', 'none');
         halo.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
         halo.setAttribute('stroke-width', String((parseFloat(mod.strokeWidth || '1.5')) + 5));
@@ -3982,12 +4016,12 @@ export function initModelCanvas() {
 
       // 1. Dashed line from moderator to midpoint
       const dashLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      dashLine.setAttribute('d', `M ${startX} ${startY} L ${mx} ${my}`);
+      dashLine.setAttribute('d', geo.path);
       dashLine.setAttribute('class', isSelected ? 'moderation-line selected' : 'moderation-line');
       dashLine.style.stroke = effectiveModColor;
       dashLine.style.color = effectiveModColor;
       dashLine.style.strokeWidth = mod.strokeWidth ? String(mod.strokeWidth) : '1.5';
-      dashLine.style.strokeDasharray = mod.strokeDasharray !== undefined ? mod.strokeDasharray : '4 4';
+      dashLine.style.strokeDasharray = mod.strokeDasharray !== undefined ? mod.strokeDasharray : '2 4';
       dashLine.style.fill = 'none';
       dashLine.style.cursor = 'pointer';
 
@@ -4013,8 +4047,8 @@ export function initModelCanvas() {
 
       // 2b. If other moderations chain onto this moderation, render a midpoint dot where they connect
       const hasChildren = moderatingEffects.some(m => m.attachToModId === mod.id);
-      const midDotX = (startX + mx) / 2;
-      const midDotY = (startY + my) / 2;
+      const midDotX = geo.midX;
+      const midDotY = geo.midY;
 
       const midDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       midDot.setAttribute('cx', midDotX);
@@ -4029,7 +4063,7 @@ export function initModelCanvas() {
 
       // 3. Invisible wide clickable hit-target for moderation line and dot
       const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      hitPath.setAttribute('d', `M ${startX} ${startY} L ${mx} ${my}`);
+      hitPath.setAttribute('d', geo.path);
       hitPath.style.stroke = 'rgba(0,0,0,0.001)';
       hitPath.style.strokeWidth = '32';
       hitPath.style.fill = 'none';
@@ -4065,6 +4099,35 @@ export function initModelCanvas() {
       hitPath.addEventListener('contextmenu', (e) => showContextMenu(e, mod.id));
       dot.addEventListener('contextmenu', (e) => showContextMenu(e, mod.id));
       edgesLayer.appendChild(hitPath);
+      if (isSelected) {
+        if (mod.curved) {
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', geo.midX); handle.setAttribute('cy', geo.midY); handle.setAttribute('r', 5);
+          handle.setAttribute('fill', 'var(--color-accent, #6B4EE6)'); handle.setAttribute('data-export-ui', 'true');
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', event => { if (event.button === 0) { event.stopPropagation(); draggingCurve = mod; } });
+          edgesLayer.appendChild(handle);
+        } else {
+          (mod.waypoints || []).forEach((point, index) => {
+            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            handle.setAttribute('cx', point.x); handle.setAttribute('cy', point.y); handle.setAttribute('r', 5);
+            handle.setAttribute('fill', 'var(--color-accent, #6B4EE6)'); handle.setAttribute('data-export-ui', 'true');
+            handle.style.cursor = 'move';
+            handle.addEventListener('mousedown', event => { if (event.button === 0) { event.stopPropagation(); draggingWaypoint = { edge: mod, idx: index }; } });
+            edgesLayer.appendChild(handle);
+          });
+          const points = [{ x: startX, y: startY }, ...(mod.waypoints || []), { x: mx, y: my }];
+          points.slice(1).forEach((point, index) => {
+            const midX = (points[index].x + point.x) / 2, midY = (points[index].y + point.y) / 2;
+            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            handle.setAttribute('cx', midX); handle.setAttribute('cy', midY); handle.setAttribute('r', 5);
+            handle.setAttribute('fill', 'rgba(168,85,247,0.8)'); handle.setAttribute('data-export-ui', 'true');
+            handle.style.cursor = 'crosshair';
+            handle.addEventListener('mousedown', event => { if (event.button === 0) { event.stopPropagation(); pendingWaypoint = { edge: mod, idx: index, midX, midY }; } });
+            edgesLayer.appendChild(handle);
+          });
+        }
+      }
 
       // 4. Collect moderation path coefficient badge to render in top pass
       const modDetails = getModerationDetails(mod);
@@ -4714,7 +4777,7 @@ export function initModelCanvas() {
         // Label
         const metrics = getConstructMetrics(node);
         const hasR2 = !!(metrics && metrics.r2 !== null && metrics.r2 !== undefined);
-        const isTextInside = node.textInside !== false;
+        const isTextInside = node.textInside === true;
 
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.textContent = node.label;
@@ -4868,7 +4931,7 @@ export function initModelCanvas() {
 
           const r2Val = formatCanvasNumber(metrics.r2);
 
-          if (node.textInside !== false) {
+          if (node.textInside === true) {
             const r2Text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             r2Text.setAttribute('text-anchor', 'middle');
             r2Text.setAttribute('dominant-baseline', 'central');
@@ -5030,6 +5093,7 @@ export function initModelCanvas() {
         g.appendChild(text);
       } else {
         // Indicator
+        g.setAttribute('data-export-indicator', 'true');
         if (node.parentId) {
           const parent = nodes.find(n => n.id === node.parentId);
           if (parent && parent.indicatorsHidden) {
@@ -5201,6 +5265,7 @@ export function initModelCanvas() {
 
             if (isIndEdgeSelected) {
               const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              halo.setAttribute('data-export-indicator', 'true');
               halo.setAttribute('d', d);
               halo.setAttribute('fill', 'none');
               halo.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
@@ -5211,6 +5276,7 @@ export function initModelCanvas() {
             }
 
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('data-export-indicator', 'true');
             path.setAttribute('d', d);
             path.setAttribute('stroke', effectiveIndColor);
             path.style.stroke = effectiveIndColor;
@@ -5232,6 +5298,7 @@ export function initModelCanvas() {
             edgesLayer.appendChild(path);
 
             const clickPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            clickPath.setAttribute('data-export-indicator', 'true');
             clickPath.setAttribute('d', d);
             clickPath.style.stroke = 'rgba(0,0,0,0.01)';
             clickPath.style.strokeWidth = '16';
@@ -5257,6 +5324,7 @@ export function initModelCanvas() {
               if (indEdgeObj.waypoints && indEdgeObj.waypoints.length > 0) {
                 indEdgeObj.waypoints.forEach((wp, idx) => {
                   const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                  handle.setAttribute('data-export-indicator', 'true');
                   handle.setAttribute('cx', wp.x);
                   handle.setAttribute('cy', wp.y);
                   handle.setAttribute('r', 5);
@@ -5274,6 +5342,7 @@ export function initModelCanvas() {
                 const midX = (pts[i].x + pts[i + 1].x) / 2;
                 const midY = (pts[i].y + pts[i + 1].y) / 2;
                 const midHandle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                midHandle.setAttribute('data-export-indicator', 'true');
                 midHandle.setAttribute('cx', midX);
                 midHandle.setAttribute('cy', midY);
                 midHandle.setAttribute('r', 5);
@@ -5307,6 +5376,7 @@ export function initModelCanvas() {
               }
 
               const badgeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+              badgeG.setAttribute('data-export-indicator', 'true');
               badgeG.setAttribute('class', 'edge-result-badge indicator-badge');
               badgeG.setAttribute('transform', `translate(${indMidX}, ${indMidY})`);
               badgeG.setAttribute('pointer-events', 'none');
@@ -5551,8 +5621,9 @@ export function initModelCanvas() {
       }
     } else if (selectedIds.size > 1) {
       const selectedNodes = nodes.filter(n => selectedIds.has(n.id));
-      const selectedEdgesList = edges.filter(e => selectedIds.has(e.id));
-      if (selectedNodes.length > 0 && selectedEdgesList.length === 0) {
+      const selectedEdgesList = [...edges, ...moderatingEffects].filter(e => selectedIds.has(e.id));
+      const selectedIndicatorEdges = nodes.some(n => selectedIds.has(`edge_ind_${n.id}`));
+      if (selectedNodes.length > 0 && selectedEdgesList.length === 0 && !selectedIndicatorEdges) {
         if (formattingDivider) formattingDivider.style.display = 'block';
         if (nodeFormattingTools) nodeFormattingTools.style.display = 'flex';
         if (edgeFormattingTools) edgeFormattingTools.style.display = 'none';
@@ -5563,7 +5634,7 @@ export function initModelCanvas() {
         if (containerStyle) containerStyle.style.display = hasLatent ? 'block' : 'none';
         if (containerColors) containerColors.style.display = 'block';
         if (containerText) containerText.style.display = 'block';
-      } else if (selectedEdgesList.length > 0 && selectedNodes.length === 0) {
+      } else if ((selectedEdgesList.length > 0 || selectedIndicatorEdges) && selectedNodes.length === 0) {
         if (formattingDivider) formattingDivider.style.display = 'block';
         if (nodeFormattingTools) nodeFormattingTools.style.display = 'none';
         if (edgeFormattingTools) edgeFormattingTools.style.display = 'flex';
@@ -5647,6 +5718,7 @@ export function initModelCanvas() {
   let draggingNode = null;
   let draggingWaypoint = null;
   let pendingWaypoint = null;
+  let draggingCurve = null;
   let dragOffset = { x: 0, y: 0 };
   let resizingNode = null;
   let resizeStartWidth = 0;
@@ -5681,19 +5753,9 @@ export function initModelCanvas() {
     hideLatentHoverPopup();
     e.stopPropagation();
 
-    // Only LEFT-click (e.button === 0) initiates dragging or canvas operations
-    if (e.button !== 0) {
-      if (e.button === 2) {
-        // Right-click: ensure target node is selected for context actions, but NEVER drag!
-        if (!e.shiftKey && !selectedIds.has(node.id)) {
-          clearSelection();
-        }
-        selectedIds.add(node.id);
-        render();
-      }
-      return;
-    }
-    
+    // Context selection happens once in the context-menu handler.
+    if (e.button !== 0) return;
+
     e.preventDefault();
 
     // Double click detection (timestamp based across DOM re-renders)
@@ -5798,6 +5860,23 @@ export function initModelCanvas() {
       return;
     }
 
+    if (draggingCurve) {
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      const cursor = pt.matrixTransform(zoomLayer.getScreenCTM().inverse());
+      const source = nodes.find(node => node.id === draggingCurve.sourceId);
+      const target = nodes.find(node => node.id === draggingCurve.targetId);
+      const modGeometry = draggingCurve.moderator ? getModerationLineGeometry(draggingCurve) : null;
+      if (modGeometry || (source && target)) {
+        const { x1, y1, x2, y2 } = modGeometry
+          ? { x1: modGeometry.startX, y1: modGeometry.startY, x2: modGeometry.landX, y2: modGeometry.landY }
+          : getEdgeCoordinates(source, target, draggingCurve);
+        const dx = x2 - x1, dy = y2 - y1, length = Math.hypot(dx, dy) || 1;
+        draggingCurve.curvature = 2 * ((cursor.x - (x1 + x2) / 2) * (-dy / length) + (cursor.y - (y1 + y2) / 2) * (dx / length));
+        render();
+      }
+      return;
+    }
     if (pendingWaypoint) {
       const pt = svg.createSVGPoint();
       pt.x = e.clientX;
@@ -6148,12 +6227,19 @@ export function initModelCanvas() {
   });
 
   window.addEventListener('mouseup', (e) => {
+    if (draggingCurve) {
+      draggingCurve = null;
+      pushHistory();
+      window.dispatchEvent(new CustomEvent('canvas-changed'));
+      return;
+    }
     if (pendingWaypoint) {
       pendingWaypoint = null;
     }
     if (draggingWaypoint) {
       draggingWaypoint = null;
       pushHistory();
+      window.dispatchEvent(new CustomEvent('canvas-changed'));
       return;
     }
     
@@ -6735,6 +6821,8 @@ export function initModelCanvas() {
   function showContextMenu(e, id) {
     e.preventDefault();
     e.stopPropagation();
+    hideLatentHoverPopup(true);
+    if (contextMenu.style.display === 'block') { hideContextMenu(); return; }
     draggingNode = null;
     isMarquee = false;
     ctxTargetId = id;
@@ -6809,6 +6897,38 @@ export function initModelCanvas() {
           }
         }
       ];
+    } else if (selectedIds.size > 1 && selectedIds.has(id)) {
+      const selectedNodes = nodes.filter(node => selectedIds.has(node.id));
+      const latents = selectedNodes.filter(node => node.isLatent && !node.isText);
+      const allLatent = selectedNodes.length > 0 && latents.length === selectedNodes.length;
+      const allIndicators = selectedNodes.length > 0 && selectedNodes.every(node => !node.isLatent && !node.isText);
+      const allEdges = [...selectedIds].every(selected => edges.some(edge => edge.id === selected) || moderatingEffects.some(mod => mod.id === selected) || String(selected).startsWith('edge_ind_'));
+      const selectedParents = latents.filter(node => nodes.some(indicator => indicator.parentId === node.id && !indicator.isLatent));
+      const updateSelected = (update) => { update(); render(); pushHistory(); window.dispatchEvent(new CustomEvent('canvas-changed')); };
+      items = [
+        ...(selectedNodes.length ? [
+          { id: 'ctx-copy', label: 'Copy selection', icon: 'content_copy', action: () => copySelected() },
+          { id: 'ctx-duplicate', label: 'Duplicate selection', icon: 'control_point_duplicate', action: () => { copySelected(); pasteClipboard(); } },
+        ] : []),
+        ...(selectedNodes.length > 1 ? [
+          { divider: true },
+          ...['left', 'right', 'top', 'bottom'].map(direction => ({ id: `ctx-align-selected-${direction}`, label: `Align selected ${direction}`, icon: 'align_horizontal_left', action: () => alignIndicators(direction) })),
+        ] : []),
+        ...(allLatent || allIndicators ? [
+          { divider: true },
+          { id: 'ctx-names-inside', label: 'Move names inside', icon: 'vertical_align_center', action: () => updateSelected(() => selectedNodes.forEach(node => { node.textInside = true; })) },
+          { id: 'ctx-names-outside', label: 'Move names outside', icon: 'open_in_new', action: () => updateSelected(() => selectedNodes.forEach(node => { node.textInside = false; })) },
+        ] : []),
+        ...(allLatent && selectedParents.length ? [
+          { id: 'ctx-hide-selected-indicators', label: selectedParents.every(node => node.indicatorsHidden) ? 'Show indicators' : 'Hide indicators', icon: 'visibility_off', action: () => updateSelected(() => {
+            const hide = !selectedParents.every(node => node.indicatorsHidden);
+            selectedParents.forEach(node => { node.indicatorsHidden = hide; });
+            if (hide) nodes.filter(node => selectedParents.some(parent => parent.id === node.parentId)).forEach(node => { selectedIds.delete(node.id); selectedIds.delete(`edge_ind_${node.id}`); });
+          }) },
+        ] : []),
+        { divider: true },
+        { id: 'ctx-delete-selection', label: allEdges ? 'Delete connections' : 'Delete selection', icon: 'delete', danger: true, action: () => deleteSelected() },
+      ];
     } else if (isLatent) {
       // ─── Latent Variable Menu ───
       const isReflective = targetNode.type !== 'formative';
@@ -6876,18 +6996,6 @@ export function initModelCanvas() {
             pushHistory();
           }
         },
-        ...(childInds.length >= 2 ? [
-          {
-            id: 'ctx-redundancy-analysis',
-            label: 'Create redundancy analysis...',
-            icon: 'analytics',
-            action: () => {
-              if (window._openRedundancyWizard) {
-                window._openRedundancyWizard(targetNode.id);
-              }
-            }
-          }
-        ] : []),
         { divider: true },
         { id: 'ctx-hide-ind', label: areIndicatorsHidden ? 'Show Indicators' : 'Hide Indicators', icon: areIndicatorsHidden ? 'visibility' : 'visibility_off', disabled: !hasIndicators, action: () => {
             targetNode.indicatorsHidden = !targetNode.indicatorsHidden;
@@ -6904,11 +7012,13 @@ export function initModelCanvas() {
           }
         },
         { divider: true },
+        ...(!areIndicatorsHidden && hasIndicators ? [
         { id: 'ctx-align-left', label: 'Align Indicators Left', icon: 'align_horizontal_left', disabled: !hasIndicators, action: () => alignIndicators('left', targetNode.id) },
         { id: 'ctx-align-right', label: 'Align Indicators Right', icon: 'align_horizontal_right', disabled: !hasIndicators, action: () => alignIndicators('right', targetNode.id) },
         { id: 'ctx-align-top', label: 'Align Indicators Top', icon: 'align_vertical_top', disabled: !hasIndicators, action: () => alignIndicators('top', targetNode.id) },
         { id: 'ctx-align-bottom', label: 'Align Indicators Bottom', icon: 'align_vertical_bottom', disabled: !hasIndicators, action: () => alignIndicators('bottom', targetNode.id) },
         { divider: true },
+        ] : []),
         { id: 'ctx-delete', label: 'Delete', icon: 'delete', danger: true, shortcut: 'Del', action: () => deleteSelected() }
       ];
     } else if (isIndicator) {
@@ -7778,7 +7888,7 @@ export function initModelCanvas() {
     }
     const mod = moderatingEffects.find(m => m.id === selId);
     if (mod) {
-      const lineStyle = mod.curved ? 'curved' : (mod.strokeDasharray === '8 8' ? 'dashed' : (mod.strokeDasharray === '2 4' ? 'dotted' : (mod.strokeDasharray === '4 4' ? 'dashed' : 'solid')));
+      const lineStyle = mod.curved ? 'curved' : (mod.strokeDasharray === '8 8' ? 'dashed' : (mod.strokeDasharray === '2 4' ? 'dotted' : (mod.strokeDasharray === '4 4' ? 'dashed' : (mod.strokeDasharray === undefined ? 'dotted' : 'solid'))));
       const arrowhead = mod.arrowhead || 'open';
       const color = mod.color || (isDark ? '#cbd5e1' : 'rgba(107, 78, 230, 0.75)');
       const strokeWidth = mod.strokeWidth !== undefined ? mod.strokeWidth : 1.5;

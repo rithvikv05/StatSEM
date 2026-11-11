@@ -262,13 +262,6 @@ export function performAutoLayout(
     return { nodes, edges };
   }
 
-  // Ensure all latent constructs have textInside enabled by default for zero text/arrow collisions
-  latents.forEach(l => {
-    if (l.textInside === undefined) {
-      l.textInside = true;
-    }
-  });
-
   // Compact, professional indicator geometry constants with safe clearance for loading badges
   const IND_W = options.indicatorWidth || 64;
   const IND_H = options.indicatorHeight || 24;

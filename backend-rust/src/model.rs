@@ -37,7 +37,7 @@ pub fn settings(input: &Value) -> Result<Value, String> {
         ),
         (
             "missing_treatment",
-            vec!["mean", "listwise", "pairwise", "em", "knn"],
+            vec!["mean", "listwise", "none", "pairwise", "em", "knn"],
         ),
         ("sign_convention", vec!["dominant", "none"]),
         (
@@ -178,6 +178,9 @@ pub fn prepare_analysis_rows(
         })
     };
     let has_missing = rows.iter().any(|row| !valid(row));
+    if settings["missing_treatment"] == "none" && has_missing {
+        return Err("Missing values found in model indicators; choose a missing-data treatment or provide complete data.".into());
+    }
     if settings["missing_treatment"] == "listwise" {
         let retained: Vec<_> = rows
             .iter()

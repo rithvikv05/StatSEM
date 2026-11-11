@@ -402,7 +402,12 @@ impl Store {
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or("default");
-        db.execute("DELETE FROM results WHERE algorithm=? AND model_key=? AND (analysis_type=? OR analysis_type IS NULL)",&[json!(o.algorithm),json!(key),json!(o.analysis_type)])?;
+        let delete_query = if o.analysis_type == "pls" {
+            "DELETE FROM results WHERE algorithm=? AND model_key=? AND (analysis_type=? OR analysis_type IS NULL)"
+        } else {
+            "DELETE FROM results WHERE algorithm=? AND model_key=? AND analysis_type=?"
+        };
+        db.execute(delete_query, &[json!(o.algorithm), json!(key), json!(o.analysis_type)])?;
         db.execute("INSERT INTO results(algorithm,analysis_type,results_json,created_at,model_key,spec_json,diagram_layout_json,dataset_id,dataset_hash,spec_hash,params_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             &[json!(o.algorithm),json!(o.analysis_type),encoded(&o.results),json!(now),json!(key),optional_json(&o.spec),optional_json(&o.diagram_layout),json!(o.dataset_id),json!(o.dataset_hash),json!(python_json::spec_hash(&o.spec)),optional_json(&o.params)])?;
         modified(&db, &now)?;
@@ -431,7 +436,12 @@ impl Store {
             query.push_str(" AND (model_key IS NULL OR model_key='' OR model_key='default')");
         }
         if let Some(analysis) = analysis {
-            query.push_str(" AND analysis_type=?");
+            if analysis == "pls" {
+                // Older project files can have a NULL type for the base model.
+                query.push_str(" AND (analysis_type=? OR analysis_type IS NULL)");
+            } else {
+                query.push_str(" AND analysis_type=?");
+            }
             args.push(json!(analysis));
         }
         query.push_str(" ORDER BY id DESC LIMIT 1");
@@ -452,6 +462,18 @@ impl Store {
         Ok(
             json!({"algorithm":algorithm,"analysis_type":row[1],"results":decoded(&row[2])?,"created_at":row[3],"spec":decoded(&row[5])?,"diagram_layout":decoded(&row[6])?,"model_key":row[4],"dataset_id":row[7],"dataset_hash":row[8],"stale":stale,"params":decoded(&row[10])?}),
         )
+    }
+    pub fn list_analysis_types(&self, key: Option<&str>) -> Result<Vec<String>, String> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+        let db = self.connect()?;
+        let key = key.filter(|s| !s.is_empty()).unwrap_or("default");
+        let rows = db.query(
+            "SELECT DISTINCT analysis_type FROM results WHERE algorithm='pls' AND (model_key=? OR (?='default' AND (model_key IS NULL OR model_key=''))) AND analysis_type IS NOT NULL AND analysis_type<>'' AND analysis_type<>'pls' ORDER BY analysis_type",
+            &[json!(key), json!(key)],
+        )?;
+        Ok(rows.into_iter().filter_map(|row| row[0].as_str().map(str::to_owned)).collect())
     }
     pub fn save_snapshot(&self, o: Snapshot) -> Result<Value, String> {
         let db = self.connect()?;
@@ -586,6 +608,19 @@ impl Store {
         Ok(
             json!({"status":"success","dataset_id":id,"dataset_name":dataset.name,"row_count":values["rows"].as_array().unwrap().len(),"n_rows":values["rows"].as_array().unwrap().len(),"column_count":values["columns"].as_array().unwrap().len(),"n_cols":values["columns"].as_array().unwrap().len(),"hash":hash}),
         )
+    }
+    pub fn rename_dataset(&self, id: &str, name: &str) -> Result<Value, String> {
+        let name = name.trim();
+        if name.is_empty() { return Err("Dataset name cannot be empty".into()); }
+        let db = self.connect()?;
+        let tx = db.transaction()?;
+        if db.query("SELECT id FROM datasets WHERE id=?", &[json!(id)])?.is_empty() {
+            return Err("Dataset not found".into());
+        }
+        db.execute("UPDATE datasets SET name=? WHERE id=?", &[json!(name), json!(id)])?;
+        modified(&db, &self.now())?;
+        tx.commit()?;
+        Ok(json!({"status":"success","dataset_id":id,"dataset_name":name}))
     }
     pub fn dataset(&self, id: Option<&str>) -> Result<Value, String> {
         let db = self.connect()?;
@@ -869,6 +904,43 @@ pub fn scenario(timestamp: String, actions: Vec<Value>) -> Result<Value, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn renaming_dataset_preserves_values_and_metadata() {
+        let directory = std::env::temp_dir().join(format!("statsem-dataset-rename-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let store = Store::new(directory.join("model.pls"));
+        store.create("Test").unwrap();
+        store.save_dataset(Dataset { id: Some("grouped".into()), name: "Before".into(), columns: vec!["x".into()], rows: vec![vec![json!(3.5)]], parent_id: Some("parent".into()), kind: "derived".into(), derivation: json!({"operation":"filter"}), settings: json!({"key":"value"}) }).unwrap();
+        store.rename_dataset("grouped", "After").unwrap();
+        let saved = store.dataset(Some("grouped")).unwrap();
+        assert_eq!(saved["name"], "After");
+        assert_eq!(saved["rows"], json!([[3.5]]));
+        assert_eq!(saved["kind"], "derived");
+        assert_eq!(saved["derivation"]["operation"], "filter");
+        assert_eq!(saved["settings"]["key"], "value");
+        assert!(store.rename_dataset("missing", "Name").is_err());
+        assert!(store.rename_dataset("grouped", "  ").is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn saving_an_analysis_preserves_legacy_untyped_base_results() {
+        let directory = std::env::temp_dir().join(format!("statsem-result-legacy-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let store = Store::new(directory.join("model.pls"));
+        store.create("Test").unwrap();
+        let db = store.connect().unwrap();
+        db.execute(
+            "INSERT INTO results(algorithm,analysis_type,results_json,model_key) VALUES ('pls',NULL,?,'default')",
+            &[json!("{\"kind\":\"legacy-base\"}")],
+        ).unwrap();
+        drop(db);
+        store.save_results(Results { analysis_type: "predict".into(), results: json!({"kind":"prediction"}), ..Default::default() }).unwrap();
+        let base = store.load_results("pls", Some("default"), Some("pls")).unwrap();
+        assert_eq!(base["results"]["kind"], "legacy-base");
+        assert_eq!(store.list_analysis_types(Some("default")).unwrap(), vec!["predict"]);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn unsupported_legacy_conversion_does_not_modify_the_original_file() {
         let directory =

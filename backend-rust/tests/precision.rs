@@ -137,12 +137,38 @@ fn pipeline_fit_and_advanced_outputs_preserve_full_precision() {
         json!({}),
         predict::Options {
             k_folds: 4,
-            repetitions: 1,
+            repetitions: 2,
             seed: Some(42),
-            antecedents: "all".into(),
+            antecedents: "direct".into(),
+            ..predict::Options::default()
         },
     )
     .expect("predict should succeed");
+    assert_eq!(pred["cvpat"]["overall"]["versus_linear_model"]["n"], rows.len());
+    let early = predict::run(columns.clone(), rows.clone(), spec.clone(), json!({}), predict::Options {
+        k_folds: 4, repetitions: 2, seed: Some(42), antecedents: "early".into(), ..predict::Options::default()
+    }).expect("early antecedent prediction should succeed");
+    assert_eq!(early["antecedents"], "early");
+    let early_b = early["indicator_metrics"].as_array().unwrap().iter().find(|v| v["indicator"] == "b1").unwrap()["rmse_pls"].as_f64().unwrap();
+    let direct_b = pred["indicator_metrics"].as_array().unwrap().iter().find(|v| v["indicator"] == "b1").unwrap()["rmse_pls"].as_f64().unwrap();
+    assert!((early_b - direct_b).abs() > 1e-8);
+    let compared = predict::compare(columns.clone(), rows.clone(), [spec.clone(), spec.clone()], json!({}), predict::Options {
+        k_folds: 4, repetitions: 2, seed: Some(42), cvpat_resamples: 30, ..predict::Options::default()
+    }).expect("identical models should be comparable");
+    assert_eq!(compared["n_samples"], rows.len());
+    assert_eq!(compared["comparison"]["mean_difference"], 0.0);
+    assert!(compared["comparison"]["p_one_sided"].is_null());
+    let mut incompatible = spec.clone();
+    incompatible["paths"] = json!([{"from":"A","to":"B"}]);
+    assert!(predict::compare(columns.clone(), rows.clone(), [spec.clone(), incompatible], json!({}), predict::Options::default()).unwrap_err().contains("same outcome"));
+    let mut mediated = spec.clone();
+    mediated["paths"] = json!([{"from":"A","to":"M"},{"from":"M","to":"B"}]);
+    let all = analysis::ipma(columns.clone(), rows.clone(), mediated.clone(), "B".into(), Value::Null, "both".into(), json!({"ipma_predecessors":"all"})).unwrap();
+    let direct = analysis::ipma(columns.clone(), rows.clone(), mediated, "B".into(), Value::Null, "both".into(), json!({"ipma_predecessors":"direct"})).unwrap();
+    assert!(all["constructs"].as_array().unwrap().iter().any(|c| c["construct_id"] == "A"));
+    assert!(!direct["constructs"].as_array().unwrap().iter().any(|c| c["construct_id"] == "A"));
+    assert!(direct["constructs"].as_array().unwrap().iter().any(|c| c["construct_id"] == "M"));
+    assert!(pred["cvpat"]["overall"]["versus_linear_model"]["mean_difference"].is_number());
     let rmse_pls = pred["indicator_metrics"][0]["rmse_pls"]
         .as_f64()
         .expect("rmse_pls missing");
@@ -162,11 +188,20 @@ fn pipeline_fit_and_advanced_outputs_preserve_full_precision() {
             n_boot: 50,
             seed: Some(42),
             alpha: 0.05,
+            ..cta::Options::default()
         },
         &cancel,
         &noop,
     )
     .expect("CTA should succeed");
+    let cta_parallel = cta::run(columns.clone(), rows.clone(), spec.clone(), cta::Options { construct_id: None, n_boot: 50, seed: Some(42), alpha: 0.05, parallel: true, ..cta::Options::default() }, &cancel, &noop).unwrap();
+    assert_eq!(cta_res["constructs"], cta_parallel["constructs"]);
+    let cta_positive = cta::run(columns.clone(), rows.clone(), spec.clone(), cta::Options { construct_id: None, n_boot: 50, seed: Some(42), alpha: 0.05, tails: "one".into(), direction: "positive".into(), ..cta::Options::default() }, &cancel, &noop).unwrap();
+    let cta_negative = cta::run(columns.clone(), rows.clone(), spec.clone(), cta::Options { construct_id: None, n_boot: 50, seed: Some(42), alpha: 0.05, tails: "one".into(), direction: "negative".into(), ..cta::Options::default() }, &cancel, &noop).unwrap();
+    let plus = &cta_positive["constructs"][0]["tetrads"][0];
+    let minus = &cta_negative["constructs"][0]["tetrads"][0];
+    assert!((plus["p_value"].as_f64().unwrap() + minus["p_value"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+    assert!(plus["ci_upper_adjusted"].is_null() && minus["ci_lower_adjusted"].is_null());
     let tetrad_val = cta_res["constructs"][0]["tetrads"][0]["original_value"]
         .as_f64()
         .expect("CTA tetrad value missing");

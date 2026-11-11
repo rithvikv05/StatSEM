@@ -6,7 +6,7 @@ import { EditableCell } from '../components/EditableCell';
 import { Checkbox } from '../components/Checkbox';
 import { api } from '../utils/api';
 import AppSidebar from '../components/AppSidebar';
-import { DataScreeningPanel } from '../components/DataScreeningPanel';
+import './dataset-view.css';
 
 export const DatasetView: React.FC = () => {
   const {
@@ -16,11 +16,11 @@ export const DatasetView: React.FC = () => {
     activeWorkspaceId,
     studies,
     activeStudyId,
-    models,
     datasetsByStudy,
     setStudyDataset,
+    setStudyDatasets,
+    updateTabTitle,
     touchStudy,
-    openTab,
     settings
   } = useStore();
   const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
@@ -30,7 +30,6 @@ export const DatasetView: React.FC = () => {
   const currentStudyId = activeTab?.studyId || activeStudyId || '';
   const activeWorkspace = workspaces.find(w => w.id === (activeTab?.workspaceId || activeWorkspaceId));
   const activeStudy = studies.find(s => s.id === currentStudyId);
-  const studyModels = useMemo(() => models.filter(m => m.studyId === currentStudyId), [models, currentStudyId]);
 
   const studyDatasets = useMemo(() => getStudyDatasets(datasetsByStudy, currentStudyId), [datasetsByStudy, currentStudyId]);
   const activeDataset = useMemo(() => {
@@ -41,12 +40,16 @@ export const DatasetView: React.FC = () => {
   }, [studyDatasets, activeTab?.datasetId]);
 
   const [dataset, setDataset] = useState<ParsedDataset | null>(activeDataset);
-  const [currentView, setCurrentView] = useState<'variables' | 'data' | 'screening'>('variables');
+  const [currentView, setCurrentView] = useState<'variables' | 'data'>('variables');
   const [searchFilter, setSearchFilter] = useState('');
-  const [isVariableSearchOpen, setIsVariableSearchOpen] = useState(false);
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [saveToast, setSaveToast] = useState<string | null>(null);
+  const [isVariableSearchOpen, setIsVariableSearchOpen] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editName, setEditName] = useState('');
+  const cancelledRename = useRef(false);
+  const renameInProgress = useRef(false);
 
   useEffect(() => {
     if (activeDataset) setDataset(activeDataset);
@@ -72,10 +75,36 @@ export const DatasetView: React.FC = () => {
       touchStudy(currentStudyId);
       if (activeStudy?.path) {
         const headers = updated.variables.map(v => v.name);
-        api.saveProjectDataJson(activeStudy.path, updated.filename, headers, updated.rows, updated.id)
+        api.saveProjectDataJson(activeStudy.path, updated.filename, headers, updated.rows, undefined, undefined, updated.id)
           .catch(err => console.warn('Failed auto-saving dataset:', err));
       }
     }
+  };
+
+  const commitDatasetRename = async () => {
+    if (cancelledRename.current) { cancelledRename.current = false; return; }
+    if (!dataset || renameInProgress.current) return;
+    const name = editName.trim();
+    setIsEditingName(false);
+    if (!name || name === dataset.filename) return;
+    renameInProgress.current = true;
+    try {
+      if (activeStudy?.path) {
+        const response = await api.renameProjectDataset(activeStudy.path, dataset.id || '1', name);
+        if (response.error) throw new Error(response.error);
+      }
+      const updated = { ...dataset, filename: name };
+      setDataset(updated);
+      if (currentStudyId) {
+        setStudyDatasets(currentStudyId, studyDatasets.map(item => item === activeDataset || (!!dataset.id && item.id === dataset.id) ? updated : item));
+        touchStudy(currentStudyId);
+      }
+      tabs.filter(tab => tab.type === 'dataset' && tab.studyId === currentStudyId && (dataset.id ? tab.datasetId === dataset.id : tab.id === activeTabId)).forEach(tab => updateTabTitle(tab.id, name));
+      setSaveToast('Dataset renamed');
+      setTimeout(() => setSaveToast(null), 1800);
+    } catch (error) {
+      alert(`Could not rename dataset: ${error instanceof Error ? error.message : 'Please try again.'}`);
+    } finally { renameInProgress.current = false; }
   };
 
   const applyMissingSettings = (marker: string, treat: 'none' | 'listwise' | 'mean') => {
@@ -175,9 +204,9 @@ export const DatasetView: React.FC = () => {
   // ── Empty state ──────────────────────────────────────────────────────────
   if (!dataset) {
     return (
-      <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div className="dataset-layout">
         <AppSidebar activeNav="workspace" />
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'var(--color-bg-base)', color: 'var(--color-text-muted)' }}>
+        <div className="dataset-empty">
           <span className="material-symbols-outlined" style={{ fontSize: '36px' }}>dataset</span>
           <p style={{ fontSize: '13px', margin: 0, color: 'var(--color-text-secondary)' }}>No dataset loaded for this study.</p>
         </div>
@@ -200,72 +229,35 @@ export const DatasetView: React.FC = () => {
     whiteSpace: 'nowrap',
     borderBottom: '1px solid var(--color-border-subtle)',
     background: 'var(--color-bg-raised)',
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
   };
 
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
+    <div className="dataset-layout">
       <AppSidebar activeNav="workspace" />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--color-bg-base)' }}>
-
-        {/* ── Sub-header ── */}
-        <div className="subheader">
-          {/* Breadcrumb */}
-          <div className="subheader__breadcrumb">
-            <span className="subheader__breadcrumb-link" onClick={() => activeWorkspace && openTab({ type: 'workspace', title: activeWorkspace.name, workspaceId: activeWorkspace.id })}>
-              {activeWorkspace?.name || 'Workspace'}
-            </span>
-            <span className="subheader__breadcrumb-sep">/</span>
-            <span className="subheader__breadcrumb-link" onClick={() => activeWorkspace && openTab({ type: 'workspace', title: activeWorkspace.name, workspaceId: activeWorkspace.id })}>
-              {activeStudy?.name || 'Study'}
-            </span>
-            <span className="subheader__breadcrumb-sep">/</span>
-            <span className="subheader__breadcrumb-current">{dataset.filename}</span>
+      <main className="dataset-main">
+        <header className="ws-header dataset-header">
+          <div className="ws-header__left dataset-header__title">
+            {isEditingName ? <input className="ws-title-rename-input" aria-label="Dataset name" value={editName} size={Math.max(editName.length, 1)} autoFocus onFocus={e => e.currentTarget.select()} onChange={e => setEditName(e.target.value)} onBlur={() => void commitDatasetRename()} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { cancelledRename.current = true; setIsEditingName(false); } }} /> : <h1 className="ws-title-editable" title="Double-click to rename dataset" onDoubleClick={() => { cancelledRename.current = false; setEditName(dataset.filename); setIsEditingName(true); }}>{dataset.filename}</h1>}
           </div>
-
-          {/* Right: switcher + inline controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* Missing value inline control */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: 'var(--color-text-muted)' }}>
-              <span>Missing:</span>
-              <input
-                type="text"
-                value={missingMarker}
-                onChange={e => handleMissingMarkerChange(e.target.value)}
-                placeholder="—"
-                style={{ width: '44px', height: '24px', padding: '0 6px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)', background: 'var(--color-bg-raised)', fontSize: '11.5px', color: 'var(--color-text-primary)', outline: 'none', fontFamily: 'var(--font-mono)' }}
-              />
-            </div>
-            <div className="subheader__divider" />
-            <select
-              value={treatment}
-              onChange={e => handleTreatmentChange(e.target.value as any)}
-              style={{ height: '24px', padding: '0 6px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)', background: 'var(--color-bg-raised)', fontSize: '11.5px', color: 'var(--color-text-muted)', cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}
-            >
-              <option value="none">No treatment</option>
-              <option value="mean">Mean replacement</option>
-              <option value="listwise">Listwise deletion</option>
-            </select>
-            <div className="subheader__divider" />
-            {/* View switcher */}
-            <div className="subheader__switcher" style={{ marginRight: 0 }}>
-              <button type="button" className={`subheader__switcher-btn ${currentView === 'variables' ? 'active' : ''}`} onClick={() => setCurrentView('variables')}>
-                Variables <span style={{ opacity: 0.55, fontWeight: 400 }}>({dataset.variables.length})</span>
-              </button>
-              <button type="button" className={`subheader__switcher-btn ${currentView === 'data' ? 'active' : ''}`} onClick={() => setCurrentView('data')}>
-                Data <span style={{ opacity: 0.55, fontWeight: 400 }}>({dataset.rows.length})</span>
-              </button>
-              <button type="button" className={`subheader__switcher-btn ${currentView === 'screening' ? 'active' : ''}`} onClick={() => setCurrentView('screening')}>
-                Data Screening
-              </button>
+          <div className="ws-header__actions dataset-header__actions">
+            <label className="dataset-control dataset-control--inline"><span>Missing value</span><input type="text" value={missingMarker} onChange={e => handleMissingMarkerChange(e.target.value)} placeholder="—" aria-label="Missing value marker" /></label>
+            <label className="dataset-control dataset-control--inline"><span>Treatment</span><select value={treatment} onChange={e => handleTreatmentChange(e.target.value as 'none' | 'listwise' | 'mean')} aria-label="Missing value treatment"><option value="none">None</option><option value="mean">Mean replacement</option><option value="listwise">Listwise deletion</option></select></label>
+            <div className="subheader__switcher dataset-view-switcher" role="group" aria-label="Dataset views">
+              {([['variables', 'Variables'], ['data', 'Data']] as const).map(([view, label]) => <button key={view} type="button" className={`subheader__switcher-btn ${currentView === view ? 'active' : ''}`} aria-pressed={currentView === view} onClick={() => setCurrentView(view)}>{label}</button>)}
             </div>
           </div>
-        </div>
+        </header>
 
+        <section className="dataset-workspace" aria-label="Dataset workspace">
+          <div className="dataset-panel">
         {/* ── View content ── */}
-        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div className="dataset-content">
           {currentView === 'variables' ? (
-            <div style={{ flex: 1, overflow: 'auto' }}>
-              <table style={{ width: '100%', minWidth: '820px', borderCollapse: 'collapse', fontSize: '12.5px' }}>
+            <div className="dataset-table-scroll">
+              <table className="dataset-table dataset-table--variables" style={{ width: '100%', minWidth: '820px', borderCollapse: 'collapse', fontSize: '12.5px' }}>
                 <thead>
                   <tr>
                     <th style={{ ...th, width: '40px', padding: '0 12px' }}>
@@ -277,16 +269,9 @@ export const DatasetView: React.FC = () => {
                       />
                     </th>
                     <th style={{ ...th, width: '220px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        {isVariableSearchOpen ? (
-                          <div className="inline-search-wrap" style={{ maxWidth: '160px' }}>
-                            <input autoFocus className="studies-inline-search" value={searchFilter} onChange={e => setSearchFilter(e.target.value)} onBlur={() => { if (!searchFilter) setIsVariableSearchOpen(false); }} placeholder="Filter…" />
-                            {searchFilter && <button className="inline-search-clear" type="button" onMouseDown={e => e.preventDefault()} onClick={() => setSearchFilter('')}>×</button>}
-                          </div>
-                        ) : <span>Variable</span>}
-                        <button type="button" style={{ padding: '2px', borderRadius: 'var(--radius-sm)', color: isVariableSearchOpen ? 'var(--color-accent)' : 'var(--color-text-muted)', display: 'flex', alignItems: 'center', border: 'none', background: 'transparent', cursor: 'pointer' }} title="Filter variables" onClick={() => { setIsVariableSearchOpen(o => !o); if (isVariableSearchOpen) setSearchFilter(''); }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>search</span>
-                        </button>
+                      <div className="dataset-variable-heading">
+                        {isVariableSearchOpen ? <div className="inline-search-wrap"><input autoFocus className="studies-inline-search" value={searchFilter} onChange={e => setSearchFilter(e.target.value)} onBlur={() => { if (!searchFilter) setIsVariableSearchOpen(false); }} placeholder="Filter…" aria-label="Filter variables" />{searchFilter && <button className="inline-search-clear" type="button" onMouseDown={e => e.preventDefault()} onClick={() => setSearchFilter('')} aria-label="Clear filter">×</button>}</div> : <span>Variable</span>}
+                        <button type="button" className={`dataset-filter-button ${isVariableSearchOpen ? 'active' : ''}`} title="Filter variables" aria-label="Filter variables" onClick={() => { setIsVariableSearchOpen(open => !open); if (isVariableSearchOpen) setSearchFilter(''); }}><span className="material-symbols-outlined" aria-hidden="true">search</span></button>
                       </div>
                     </th>
                     <th style={{ ...th, width: '160px' }}>Scale</th>
@@ -347,12 +332,13 @@ export const DatasetView: React.FC = () => {
                       </tr>
                     );
                   })}
+                  {filteredVariables.length === 0 && <tr><td colSpan={9} className="dataset-table__empty">No variables match your search.</td></tr>}
                 </tbody>
               </table>
             </div>
-          ) : currentView === 'data' ? (
-            <div style={{ flex: 1, overflow: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+          ) : (
+            <div className="dataset-table-scroll">
+              <table className="dataset-table dataset-table--observations" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
                 <thead>
                   <tr>
                     <th style={{ ...th, width: '48px', textAlign: 'center', borderRight: '1px solid var(--color-border-subtle)' }}>#</th>
@@ -380,39 +366,19 @@ export const DatasetView: React.FC = () => {
                 </tbody>
               </table>
             </div>
-          ) : (
-            <DataScreeningPanel
-              projectPath={activeStudy?.path || ''}
-              datasetId={dataset.id || dataset.filename}
-              modelId={studyModels[0]?.id || undefined}
-              availableModels={studyModels}
-              datasetName={dataset.filename}
-              totalRows={dataset.rows.length}
-              variables={dataset.variables}
-              onDatasetUpdated={() => {
-                if (activeStudy?.path) {
-                  api.loadProjectData(activeStudy.path)
-                    .then(res => {
-                      if (res && res.columns && res.rows) {
-                        const reprocessed = processData(res.dataset_name || dataset.filename, res.columns, res.rows);
-                        persistChanges(reprocessed);
-                      }
-                    });
-                }
-              }}
-            />
+
           )}
         </div>
 
-        {/* ── Slim status footer ── */}
-        <div style={{ height: '24px', borderTop: '1px solid var(--color-border-subtle)', display: 'flex', alignItems: 'center', padding: '0 16px', gap: '16px', fontSize: '11px', color: 'var(--color-text-muted)', flexShrink: 0, background: 'var(--color-bg-base)' }}>
-          <span>{dataset.variables.length} variables</span>
-          <span style={{ width: '1px', height: '10px', background: 'var(--color-border-subtle)' }} />
-          <span>{dataset.rows.length} observations</span>
-          <span style={{ width: '1px', height: '10px', background: 'var(--color-border-subtle)' }} />
-          <span style={{ color: 'var(--color-accent)' }}>{selectedCount} active</span>
-        </div>
-      </div>
+            <div className="dataset-status">
+              <span className="dataset-status__path">{[activeWorkspace?.name || 'Workspace', activeStudy?.name || 'Study', dataset.filename].join(' / ')}</span>
+              <span>{dataset.variables.length.toLocaleString()} variables</span>
+              <span>{dataset.rows.length.toLocaleString()} observations</span>
+              <span>{selectedCount.toLocaleString()} selected</span>
+            </div>
+          </div>
+        </section>
+      </main>
 
       {/* Toast */}
       {saveToast && (

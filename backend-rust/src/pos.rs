@@ -14,6 +14,7 @@ pub struct Options {
     pub n_segments: usize,
     pub initial_separation: String,
     pub fimix_assignments: Option<Vec<usize>>,
+    pub fimix_options: Option<fimix::Options>,
     pub criterion: String,
     pub optimization_criterion: Option<String>,
     pub target_construct: Option<String>,
@@ -30,6 +31,7 @@ impl Default for Options {
             n_segments: 2,
             initial_separation: "random".into(),
             fimix_assignments: None,
+            fimix_options: None,
             criterion: "weighted_r2".into(),
             optimization_criterion: None,
             target_construct: None,
@@ -297,6 +299,9 @@ pub fn run(
     if o.n_segments < 2 {
         return Err("PLS-POS requires at least 2 segments.".into());
     }
+    if !["random", "fimix"].contains(&o.initial_separation.as_str()) {
+        return Err("Invalid POS initialization method".into());
+    }
     if let Some(criterion) = &o.optimization_criterion {
         let lower = criterion.to_lowercase();
         o.criterion = if lower.contains("weight") {
@@ -314,6 +319,12 @@ pub fn run(
     let rows = prepared.rows;
     let n = rows.len();
     let parsed = model::parse(&spec)?;
+    if !["weighted_r2", "sum_r2", "target_r2"].contains(&o.criterion.as_str()) {
+        return Err("Invalid POS optimization criterion".into());
+    }
+    if o.criterion == "target_r2" && !o.target_construct.as_ref().is_some_and(|id| parsed.paths.iter().any(|[_, to]| to == id)) {
+        return Err("Choose an endogenous construct for the POS target".into());
+    }
     let targets_set: BTreeSet<_> = parsed
         .paths
         .iter()
@@ -351,17 +362,16 @@ pub fn run(
         let assignments = if let Some(a) = o.fimix_assignments.as_ref().filter(|a| a.len() == n) {
             a.clone()
         } else {
+            let mut fimix_options = o.fimix_options.clone().unwrap_or_default();
+            fimix_options.min_segments = o.n_segments;
+            fimix_options.max_segments = o.n_segments;
+            fimix_options.seed = o.seed;
             let result = fimix::run(
                 columns.clone(),
                 rows.clone(),
                 spec.clone(),
                 cfg.clone(),
-                fimix::Options {
-                    min_segments: o.n_segments,
-                    max_segments: o.n_segments,
-                    seed: o.seed,
-                    ..fimix::Options::default()
-                },
+                fimix_options,
                 cancel,
                 &|_| {},
             )?;
@@ -374,7 +384,7 @@ pub fn run(
                     .ok_or("FIMIX assignments must be one-based")
             })
             .collect::<Result<_, _>>()?;
-        best = context.single(assignments, false)?;
+        best = context.single(assignments, o.pre_segmentation)?;
         objective = best["objective"].as_f64().unwrap_or(f64::NEG_INFINITY);
     } else {
         let reps = o.n_repetitions.max(1);

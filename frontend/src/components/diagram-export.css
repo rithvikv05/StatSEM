@@ -1,0 +1,12 @@
+.diagram-export-overlay { z-index: 9999; padding: 20px; }
+.diagram-export { width: 760px; max-width: 100%; max-height: 90vh; display: flex; flex-direction: column; }
+.diagram-export__close { border: 0; background: transparent; color: var(--color-text-muted); font-size: 22px; cursor: pointer; }
+.diagram-export__body { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 20px; padding: 20px 24px; min-height: 0; overflow-y: auto; }
+.diagram-export__preview { min-height: 240px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: #fff; }
+.diagram-export__preview[data-transparent="true"] { background-color: #fff; background-image: linear-gradient(45deg, #eee 25%, transparent 25%), linear-gradient(-45deg, #eee 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #eee 75%), linear-gradient(-45deg, transparent 75%, #eee 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
+.diagram-export__preview img { display: block; max-width: 100%; max-height: 340px; object-fit: contain; }
+.diagram-export__preview p, .diagram-export__hint { margin: 0; color: var(--color-text-muted); font-size: 12px; }
+.diagram-export__settings { display: flex; flex-direction: column; gap: 16px; }
+.diagram-export__settings .modal__input { box-sizing: border-box; height: 34px; padding-top: 0; padding-bottom: 0; line-height: normal; font-size: 12px; }
+.diagram-export__error { margin: 0 24px 12px; color: var(--color-danger, #b91c1c); font-size: 12px; }
+@media (max-width: 650px) { .diagram-export__body { grid-template-columns: 1fr; } .diagram-export__preview { min-height: 180px; } }

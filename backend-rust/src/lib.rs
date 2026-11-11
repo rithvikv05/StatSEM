@@ -24,6 +24,7 @@ pub mod moderation;
 pub mod nca;
 pub mod nonlinear;
 pub mod otg;
+pub mod pca;
 pub mod pipeline;
 pub mod pls;
 pub mod pos;
@@ -295,6 +296,7 @@ pub enum Request {
         rows: Vec<Vec<Value>>,
         spec: Value,
         target: String,
+        #[serde(default)]
         scale_bounds: Value,
         level: String,
         #[serde(default)]

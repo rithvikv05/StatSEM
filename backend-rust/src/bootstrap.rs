@@ -9,6 +9,10 @@ use std::sync::{
 };
 
 type Parameters = Vec<(String, f64)>;
+fn studentized_interval(original: f64, se: f64, pivots: &mut [f64], low: f64) -> [f64; 2] {
+    pivots.sort_by(f64::total_cmp);
+    [original - inference::percentile(pivots, 1.0 - low) * se, original - inference::percentile(pivots, low) * se]
+}
 fn put(params: &mut Parameters, key: String, value: f64) {
     if let Some((_, old)) = params.iter_mut().find(|(k, _)| k == &key) {
         *old = value;
@@ -221,6 +225,7 @@ pub struct Options {
     pub n_boot: usize,
     pub seed: Option<u64>,
     pub scheme: String,
+    pub consistent: bool,
     pub max_iter: usize,
     pub tol: f64,
     pub mode: String,
@@ -228,10 +233,13 @@ pub struct Options {
     pub test_distribution: String,
     pub significance_level: f64,
     pub tails: String,
+    pub direction: String,
     pub ci_method: String,
+    pub studentized_resamples: usize,
     pub n_workers: Option<usize>,
     pub sign_alignment: Option<bool>,
     pub alpha: Option<f64>,
+    pub model_settings: Value,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -239,6 +247,7 @@ impl Default for Options {
             n_boot: 5000,
             seed: Some(42),
             scheme: "path".into(),
+            consistent: false,
             max_iter: 300,
             tol: 1e-7,
             mode: "complete".into(),
@@ -246,10 +255,13 @@ impl Default for Options {
             test_distribution: "t".into(),
             significance_level: 0.05,
             tails: "two".into(),
-            ci_method: "bca".into(),
+            direction: "positive".into(),
+            ci_method: "percentile".into(),
+            studentized_resamples: 50,
             n_workers: None,
             sign_alignment: None,
             alpha: None,
+            model_settings: Value::Null,
         }
     }
 }
@@ -285,11 +297,30 @@ pub fn run_with_control(
     }
     if !(0.0..1.0).contains(&options.significance_level)
         || !["none", "individual", "construct"].contains(&options.sign_change.as_str())
+        || !["one", "two"].contains(&options.tails.as_str())
+        || !["positive", "negative"].contains(&options.direction.as_str())
+        || !["percentile", "bias_corrected", "bca", "studentized"].contains(&options.ci_method.as_str())
+        || (options.ci_method == "studentized" && options.studentized_resamples < 10)
     {
         return Err("Invalid bootstrap settings".into());
     }
-    let settings = json!({"inner_weighting":options.scheme,"max_iter":options.max_iter,"tolerance":options.tol,
+    let mut settings = json!({"inner_weighting":options.scheme,"max_iter":options.max_iter,"tolerance":options.tol,"consistent":options.consistent,
         "sign_convention":if options.sign_change == "none" { "none" } else { "dominant" },"missing_treatment":"mean"});
+    if let Some(input) = options.model_settings.as_object() { for (key, value) in input { settings[key] = value.clone(); } }
+    settings["consistent"] = json!(options.consistent);
+    let settings = model::settings(&settings)?;
+    if !["mean", "listwise", "none"].contains(&settings["missing_treatment"].as_str().unwrap_or("")) { return Err("Bootstrap supports mean replacement, complete cases or no missing data".into()); }
+    let prepared = model::prepare_analysis_rows(&columns, rows, &spec, &settings)?;
+    if options.ci_method == "bca" && (prepared.rows.len() > 500 || prepared.has_missing && settings["missing_treatment"] != "listwise") {
+        return Err("BCa currently requires complete data and at most 500 observations for jackknife estimation.".into());
+    }
+    let rows = prepared.rows;
+    if let Some(column) = settings["weight_column"].as_str() {
+        let index = columns.iter().position(|c| c == column).ok_or("Weight variable is not in the dataset")?;
+        if rows.iter().any(|row| row.get(index).map(model::numeric).is_none_or(|weight| !weight.is_finite() || weight <= 0.0)) {
+            return Err("Observation weights must be finite, positive numbers".into());
+        }
+    }
     let base = pipeline::run_without_fit(
         columns.clone(),
         rows.clone(),
@@ -313,7 +344,7 @@ pub fn run_with_control(
     if used.iter().enumerate().any(|(i, c)| used[..i].contains(c)) {
         return Err("Duplicate bootstrap dataset columns require compatibility handling".into());
     }
-    let positions: Vec<_> = used
+    let _positions: Vec<_> = used
         .iter()
         .map(|c| {
             columns
@@ -322,43 +353,15 @@ pub fn run_with_control(
                 .ok_or_else(|| format!("Missing bootstrap column: {c}"))
         })
         .collect::<Result<_, _>>()?;
-    let mut clean: Vec<Vec<f64>> = rows
-        .iter()
-        .map(|row| {
-            positions
-                .iter()
-                .map(|&i| {
-                    let value = model::numeric(&row[i]);
-                    if value == -99.0 {
-                        f64::NAN
-                    } else {
-                        value
-                    }
-                })
-                .collect()
-        })
-        .collect();
-    for j in 0..used.len() {
-        let observed: Vec<_> = clean.iter().map(|r| r[j]).filter(|v| !v.is_nan()).collect();
-        let mean = stats::mean(&observed, None);
-        if !mean.is_nan() {
-            for row in &mut clean {
-                if row[j].is_nan() {
-                    row[j] = mean;
-                }
-            }
-        }
-    }
-    let clean: Vec<Vec<Value>> = clean
-        .into_iter()
-        .filter(|r| r.iter().all(|v| !v.is_nan()))
-        .map(|r| r.into_iter().map(|v| json!(v)).collect())
-        .collect();
+    // Resample raw rows so missing values and observation weights are handled
+    // by each fitted model, using that resample rather than the full dataset.
+    let clean = rows;
+    let used = columns.clone();
     let n = clean.len();
     let entropy = rng::integer_entropy(options.seed.unwrap_or(42));
     let seeds = rng::seed_sequence(&entropy, options.n_boot);
     let next = AtomicUsize::new(0);
-    let samples: Mutex<Vec<Option<Parameters>>> = Mutex::new(vec![None; options.n_boot]);
+    let samples: Mutex<Vec<Option<(Parameters, Option<Parameters>)>>> = Mutex::new(vec![None; options.n_boot]);
     let completed = AtomicUsize::new(0);
     let workers = options
         .n_workers
@@ -383,7 +386,7 @@ pub fn run_with_control(
                     .collect();
                 let sample = pipeline::run_without_fit(
                     used.clone(),
-                    resampled,
+                    resampled.clone(),
                     spec.clone(),
                     settings.clone(),
                 )
@@ -391,7 +394,26 @@ pub fn run_with_control(
                 .ok()
                 .map(|mut params| {
                     align(&mut params, &original, &parsed, &options.sign_change);
-                    params
+                    let standard_errors = if options.ci_method == "studentized" {
+                        let mut inner = Vec::new();
+                        for _ in 0..options.studentized_resamples {
+                            if cancel.load(Ordering::Relaxed) { break; }
+                            let nested: Vec<_> = (0..n).map(|_| resampled[random.bounded(n as u64).unwrap() as usize].clone()).collect();
+                            if let Ok(mut estimate) = pipeline::run_without_fit(used.clone(), nested, spec.clone(), settings.clone()).and_then(|r| extract(&r, &spec, &options.mode)) {
+                                align(&mut estimate, &params, &parsed, &options.sign_change);
+                                inner.push(estimate);
+                            }
+                        }
+                        let mut ses = Vec::new();
+                        for (key, _) in &params {
+                            let values: Vec<_> = inner.iter().filter_map(|p| p.iter().find(|(k, _)| k == key).map(|(_, v)| *v)).collect();
+                            if values.len() >= (options.studentized_resamples * 4).div_ceil(5) {
+                                put(&mut ses, key.clone(), stats::std(&values, None, 1));
+                            }
+                        }
+                        Some(ses)
+                    } else { None };
+                    (params, standard_errors)
                 });
                 let mut results = samples.lock().unwrap();
                 results[i] = sample;
@@ -403,17 +425,19 @@ pub fn run_with_control(
     if cancel.load(Ordering::Relaxed) {
         return Err("Bootstrapping was cancelled by the user.".into());
     }
-    let samples: Vec<_> = samples
+    let sample_pairs: Vec<_> = samples
         .into_inner()
         .unwrap()
         .into_iter()
         .flatten()
         .collect();
+    let samples: Vec<_> = sample_pairs.iter().map(|(params, _)| params.clone()).collect();
+    if samples.len() < 2 {
+        return Err("Fewer than two bootstrap models succeeded; inference could not be calculated.".into());
+    }
     let names: Vec<_> = original.iter().map(|(k, _)| k.clone()).collect();
     let mut jack = Vec::<Parameters>::new();
-    if options.ci_method == "bca" && n <= 500 {
-        let mut settings = settings.clone();
-        settings["sign_convention"] = json!("dominant");
+    if options.ci_method == "bca" {
         for i in 0..n {
             if cancel.load(Ordering::Relaxed) {
                 return Err("Bootstrapping was cancelled by the user.".into());
@@ -424,12 +448,11 @@ pub fn run_with_control(
                 .filter(|(j, _)| *j != i)
                 .map(|(_, r)| r.clone())
                 .collect();
-            if let Ok(result) =
-                pipeline::run_without_fit(used.clone(), subset, spec.clone(), settings.clone())
-                    .and_then(|r| extract(&r, &spec, &options.mode))
-            {
-                jack.push(result);
-            }
+            let mut result = pipeline::run_without_fit(used.clone(), subset, spec.clone(), settings.clone())
+                .and_then(|r| extract(&r, &spec, &options.mode))
+                .map_err(|_| "A jackknife model failed; BCa intervals could not be calculated")?;
+            align(&mut result, &original, &parsed, &options.sign_change);
+            jack.push(result);
         }
     }
     let mut parameters = Map::new();
@@ -440,10 +463,7 @@ pub fn run_with_control(
             .filter_map(|sample| sample.iter().find(|(k, _)| k == key).map(|(_, v)| *v))
             .collect();
         samples_dict.insert(key.clone(), json!(distribution));
-        if distribution.is_empty() {
-            parameters.insert(key.clone(),json!({"original":original_value,"mean":original_value,"se":0.0,"t_stat":0.0,"p_value":1.0,"ci_low":original_value,"ci_high":original_value,"significance":"ns","df":n.saturating_sub(1)}));
-            continue;
-        }
+        if distribution.len() < 2 { return Err(format!("Fewer than two bootstrap estimates are available for {key}")); }
         let se = stats::std(&distribution, None, 1);
         let t = if se > 1e-9 { original_value / se } else { 0.0 };
         let df = if key.starts_with("path:") {
@@ -463,7 +483,7 @@ pub fn run_with_control(
         } else {
             n.saturating_sub(1).max(1)
         };
-        let statistic = if options.tails == "one" { t } else { t.abs() };
+        let statistic = if options.tails == "one" { if options.direction == "negative" { -t } else { t } } else { t.abs() };
         let cdf = if options.test_distribution == "t" {
             inference::student_t_cdf(statistic, df as f64)
         } else {
@@ -474,7 +494,10 @@ pub fn run_with_control(
             .iter()
             .filter_map(|sample| sample.iter().find(|(k, _)| k == key).map(|(_, v)| *v))
             .collect();
-        let intervals = inference::intervals(
+        if options.ci_method == "bca" && jackknife.len() != n {
+            return Err(format!("The jackknife estimate is missing for {key}; BCa intervals could not be calculated"));
+        }
+        let mut intervals = inference::intervals(
             original_value,
             &distribution,
             if jackknife.is_empty() {
@@ -485,6 +508,19 @@ pub fn run_with_control(
             options.significance_level,
             &options.tails,
         )?;
+        if options.ci_method != "bca" { intervals.as_object_mut().unwrap().remove("bca"); }
+        if options.ci_method == "studentized" {
+            let mut pivots: Vec<f64> = sample_pairs.iter().filter_map(|(params, errors)| {
+                let estimate = params.iter().find(|(k, _)| k == key)?.1;
+                let error = errors.as_ref()?.iter().find(|(k, _)| k == key)?.1;
+                if error > 1e-12 { Some((estimate - original_value) / error) } else { None }
+            }).filter(|x| x.is_finite()).collect();
+            let interval = if se > 1e-12 && pivots.len() >= (samples.len() * 4).div_ceil(5) && pivots.len() >= 2 {
+                let low = if options.tails == "one" { options.significance_level } else { options.significance_level / 2.0 };
+                json!(studentized_interval(original_value, se, &mut pivots, low))
+            } else { Value::Null };
+            intervals["studentized"] = interval;
+        }
         let chosen = intervals
             .get(&options.ci_method)
             .unwrap_or(&intervals["percentile"]);
@@ -574,7 +610,7 @@ pub fn run_with_control(
         .collect();
     Ok(
         json!({"n_boot":options.n_boot,"actual_samples":samples.len(),"settings":{"mode":options.mode,"sign_change":options.sign_change,
-        "test_distribution":options.test_distribution,"significance_level":options.significance_level,"tails":options.tails,"ci_method":options.ci_method},
+        "test_distribution":options.test_distribution,"significance_level":options.significance_level,"tails":options.tails,"direction":options.direction,"ci_method":options.ci_method,"studentized_resamples":options.studentized_resamples,"seed":options.seed,"consistent":options.consistent},
         "parameters":parameters,"parameter_summary":parameters,"paths":paths,"loadings":loadings,"weights":weights,"indirect_effects":indirect,
         "samples_matrix":matrix,"samples_dict":samples_dict,"parameter_names":names}),
     )
@@ -628,6 +664,12 @@ fn align(params: &mut Parameters, original: &Parameters, parsed: &model::ParsedM
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn studentized_pivot_interval_matches_hand_calculation() {
+        let interval = studentized_interval(2.0, 0.5, &mut [2.0, -2.0, 1.0, 0.0, -1.0], 0.1);
+        assert!((interval[0] - 1.2).abs() < 1e-12);
+        assert!((interval[1] - 2.8).abs() < 1e-12);
+    }
     fn fixture() -> (Vec<String>, Vec<Vec<Value>>, Value) {
         let rows = (0..24)
             .map(|i| {
@@ -655,6 +697,36 @@ mod tests {
         assert_eq!(serial, parallel);
     }
     #[test]
+    fn bootstrap_honors_model_settings_and_missing_data_policy() {
+        let (columns, mut rows, spec) = fixture();
+        rows[0][0] = Value::Null;
+        let listwise = json!({"missing_treatment":"listwise", "inner_weighting":"factor", "max_iter":400});
+        let retained: Vec<_> = rows.iter().skip(1).cloned().collect();
+        let expected = pipeline::run_without_fit(columns.clone(), retained, spec.clone(), listwise.clone()).unwrap();
+        let result = run(columns.clone(), rows.clone(), spec.clone(), Options { n_boot: 12, n_workers: Some(1), model_settings: listwise, ..Options::default() }).unwrap();
+        assert_eq!(result["parameters"]["path:X->Y"]["original"], expected["structural"]["path_coefficients"]["Y"]["X"]);
+        let err = run(columns.clone(), rows.clone(), spec.clone(), Options { n_boot: 5, model_settings: json!({"missing_treatment":"none"}), ..Options::default() }).unwrap_err();
+        assert!(err.contains("Missing values"));
+        let mean = run(columns, rows, spec, Options { n_boot: 12, n_workers: Some(1), model_settings: json!({"missing_treatment":"mean"}), ..Options::default() }).unwrap();
+        assert!(mean["parameters"]["path:X->Y"]["se"].is_number());
+    }
+    #[test]
+    fn studentized_intervals_are_reproducible_and_one_sided_tests_are_directional() {
+        let (columns, rows, spec) = fixture();
+        let opts = |workers, direction: &str| Options { n_boot: 30, n_workers: Some(workers), mode: "basic".into(), ci_method: "studentized".into(), studentized_resamples: 20, tails: "one".into(), direction: direction.into(), ..Options::default() };
+        let positive = run(columns.clone(), rows.clone(), spec.clone(), opts(1, "positive")).unwrap();
+        let parallel = run(columns.clone(), rows.clone(), spec.clone(), opts(3, "positive")).unwrap();
+        assert_eq!(positive, parallel);
+        let negative = run(columns, rows, spec, opts(2, "negative")).unwrap();
+        let path = &positive["parameters"]["path:X->Y"];
+        assert!(path["ci_low"].is_number() && path["ci_high"].is_number());
+        assert!(path["ci_low"].as_f64().unwrap() < path["ci_high"].as_f64().unwrap());
+        let p = path["p_value"].as_f64().unwrap();
+        let opposite = negative["parameters"]["path:X->Y"]["p_value"].as_f64().unwrap();
+        assert!((p + opposite - 1.0).abs() < 1e-12);
+        assert!(p < opposite);
+    }
+    #[test]
     fn cancellation_discards_partial_result() {
         let (columns, rows, spec) = fixture();
         let cancel = AtomicBool::new(false);
@@ -677,5 +749,32 @@ mod tests {
             result.unwrap_err(),
             "Bootstrapping was cancelled by the user."
         );
+    }
+    #[test]
+    fn consistent_bootstrap_uses_consistent_path_estimates() {
+        let columns: Vec<String> = ["a1", "a2", "a3", "b1", "b2", "b3"].iter().map(|s| s.to_string()).collect();
+        let rows: Vec<Vec<Value>> = (0..48).map(|i| {
+            let x = i as f64 * 0.13 - 3.0;
+            let noise = (i as f64 * 1.7).sin();
+            let y = 0.6 * x + 0.4 * noise;
+            vec![json!(x + 0.1 * noise), json!(x - 0.2 * noise), json!(0.9 * x + 0.07 * noise), json!(y + 0.1 * noise), json!(y - 0.08 * noise), json!(1.1 * y + 0.03 * noise)]
+        }).collect();
+        let spec = json!({"constructs":[{"id":"A","type":"reflective","indicators":["a1","a2","a3"]},{"id":"B","type":"reflective","indicators":["b1","b2","b3"]}],"paths":[{"from":"A","to":"B"}]});
+        let base = pipeline::run_without_fit(columns.clone(), rows.clone(), spec.clone(), json!({"consistent":true,"max_iter":300,"sign_convention":"none"})).unwrap();
+        let result = run(columns, rows, spec, Options { consistent: true, n_boot: 12, n_workers: Some(1), ci_method: "percentile".into(), ..Options::default() }).unwrap();
+        assert_eq!(result["settings"]["consistent"], true);
+        assert_eq!(result["parameters"]["path:A->B"]["original"], base["structural"]["path_coefficients"]["B"]["A"]);
+        assert!(result["actual_samples"].as_u64().unwrap() > 1);
+    }
+    #[test]
+    fn bca_uses_jackknife_and_rejects_missing_data() {
+        let (columns, mut rows, spec) = fixture();
+        let opts = || Options { n_boot: 16, n_workers: Some(1), ci_method: "bca".into(), ..Options::default() };
+        let result = run(columns.clone(), rows.clone(), spec.clone(), opts()).unwrap();
+        let path = &result["parameters"]["path:X->Y"];
+        assert_eq!(path["ci_low"], path["confidence_intervals"]["bca"][0]);
+        assert_eq!(path["ci_high"], path["confidence_intervals"]["bca"][1]);
+        rows[0][0] = Value::Null;
+        assert!(run(columns, rows, spec, opts()).unwrap_err().contains("complete data"));
     }
 }

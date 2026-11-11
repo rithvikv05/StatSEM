@@ -343,6 +343,18 @@ export const api = {
     }
   },
 
+  async renameProjectDataset(path: string, datasetId: string, name: string): Promise<{ status?: string; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/project/rename-data`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, dataset_id: datasetId, name }),
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { error: err?.message || 'Failed to rename dataset' };
+    }
+  },
+
   async treatMissing(
     path: string,
     method: 'listwise' | 'mean',
@@ -549,6 +561,8 @@ export const api = {
     spec?: ModelSpec,
     options?: {
       scheme?: string;
+      consistent?: boolean;
+      settings?: { inner_weighting?: string; missing_treatment?: string; max_iter?: number; tolerance?: number; initial_weights?: 'equal' | 'individual'; individual_initial_weights?: Record<string, number> | null; weight_column?: string | null; data_filter?: { column: string; value: string | number | boolean } | null };
       max_iter?: number;
       tol?: number;
       bootstrap?: boolean;
@@ -568,6 +582,8 @@ export const api = {
           project_path: projectPath,
           spec: spec || undefined,
           scheme: options?.scheme || 'path',
+          consistent: options?.consistent ?? false,
+          settings: options?.settings,
           max_iter: options?.max_iter || 300,
           tol: options?.tol || 1e-7,
           bootstrap: options?.bootstrap || false,
@@ -588,17 +604,31 @@ export const api = {
   async loadProjectResults(
     projectPath: string,
     algorithm: string = 'pls',
-    modelId?: string
-  ): Promise<{ algorithm?: string; results?: any; created_at?: string; spec?: any; diagram_layout?: any; error?: string }> {
+    modelId?: string,
+    analysisType?: string,
+  ): Promise<{ algorithm?: string; results?: any; created_at?: string; spec?: any; diagram_layout?: any; stale?: boolean; error?: string }> {
     try {
       let url = `${API_BASE}/project/load-results?path=${encodeURIComponent(projectPath)}&algorithm=${encodeURIComponent(algorithm)}`;
       if (modelId) {
         url += `&model_id=${encodeURIComponent(modelId)}`;
       }
+      if (analysisType) url += `&analysis_type=${encodeURIComponent(analysisType)}`;
       const res = await fetch(url);
       return await res.json();
     } catch (err: any) {
       return { error: err?.message || 'Failed to load calculation results' };
+    }
+  },
+
+  async listProjectAnalyses(projectPath: string, modelId?: string): Promise<string[]> {
+    try {
+      let url = `${API_BASE}/project/analysis-list?path=${encodeURIComponent(projectPath)}`;
+      if (modelId) url += `&model_id=${encodeURIComponent(modelId)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      return Array.isArray(data?.analyses) ? data.analyses : [];
+    } catch {
+      return [];
     }
   },
 
@@ -607,7 +637,15 @@ export const api = {
     spec?: ModelSpec,
     options?: {
       n_boot?: number;
+      consistent?: boolean;
       seed?: number;
+      mode?: 'basic' | 'complete';
+      ci_method?: 'percentile' | 'bias_corrected' | 'bca' | 'studentized';
+      studentized_resamples?: number;
+      significance_level?: number;
+      tails?: 'one' | 'two';
+      direction?: 'positive' | 'negative';
+      parallel?: boolean;
       scheme?: string;
       columns?: string[];
       rows?: any[][];
@@ -625,7 +663,15 @@ export const api = {
           project_path: projectPath,
           spec: spec || undefined,
           n_boot: options?.n_boot || 500,
+          consistent: options?.consistent ?? false,
           seed: options?.seed !== undefined ? options.seed : 42,
+          mode: options?.mode,
+          ci_method: options?.ci_method,
+          studentized_resamples: options?.studentized_resamples,
+          significance_level: options?.significance_level,
+          tails: options?.tails,
+          direction: options?.direction,
+          parallel: options?.parallel,
           scheme: options?.scheme || 'path',
           columns: options?.columns || undefined,
           rows: options?.rows || undefined,
@@ -988,154 +1034,6 @@ export const api = {
   },
 
   // --- Phase 3-6 Advanced PLS-SEM Analyses ---
-  async runBlindfolding(data: {
-    projectPath: string;
-    modelId?: string;
-    datasetId?: string;
-    omissionDistance?: number;
-    computeQ2Effects?: boolean;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/blindfolding/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          dataset_id: data.datasetId,
-          omission_distance: data.omissionDistance || 7,
-          compute_q2_effects: data.computeQ2Effects !== false,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run blindfolding' };
-    }
-  },
-
-  async analyzeMediation(data: {
-    projectPath: string;
-    modelId?: string;
-    source: string;
-    target: string;
-    datasetId?: string;
-    nBoot?: number;
-    seed?: number;
-    alpha?: number;
-    includeSobel?: boolean;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/mediation`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          source: data.source,
-          target: data.target,
-          dataset_id: data.datasetId,
-          n_boot: data.nBoot || 500,
-          seed: data.seed ?? 42,
-          alpha: data.alpha || 0.05,
-          include_sobel: !!data.includeSobel,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run mediation analysis' };
-    }
-  },
-
-  async analyzeModeration(data: {
-    projectPath: string;
-    modelId?: string;
-    source: string;
-    moderator: string;
-    target: string;
-    datasetId?: string;
-    method?: string;
-    nBoot?: number;
-    seed?: number;
-    alpha?: number;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/moderation`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          source: data.source,
-          moderator: data.moderator,
-          target: data.target,
-          dataset_id: data.datasetId,
-          method: data.method || 'two_stage',
-          n_boot: data.nBoot || 500,
-          seed: data.seed ?? 42,
-          alpha: data.alpha || 0.05,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run moderation analysis' };
-    }
-  },
-
-  async analyzeQuadratic(data: {
-    projectPath: string;
-    modelId?: string;
-    source: string;
-    target: string;
-    datasetId?: string;
-    nBoot?: number;
-    seed?: number;
-    alpha?: number;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/quadratic`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          source: data.source,
-          target: data.target,
-          dataset_id: data.datasetId,
-          n_boot: data.nBoot || 500,
-          seed: data.seed ?? 42,
-          alpha: data.alpha || 0.05,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run quadratic analysis' };
-    }
-  },
-
   async analyzeIpma(data: {
     projectPath: string;
     modelId?: string;
@@ -1143,6 +1041,7 @@ export const api = {
     datasetId?: string;
     scaleBounds?: Record<string, any>;
     level?: string;
+    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1158,6 +1057,7 @@ export const api = {
           dataset_id: data.datasetId,
           scale_bounds: data.scaleBounds,
           level: data.level || 'both',
+          settings: data.settings,
           spec: data.spec,
           columns: data.columns,
           rows: data.rows,
@@ -1169,41 +1069,6 @@ export const api = {
     }
   },
 
-  async analyzeHcm(data: {
-    projectPath: string;
-    modelId?: string;
-    hocId: string;
-    locIds: string[];
-    datasetId?: string;
-    hocType?: string;
-    approach?: string;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/hcm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          hoc_id: data.hocId,
-          loc_ids: data.locIds,
-          dataset_id: data.datasetId,
-          hoc_type: data.hocType || 'RR',
-          approach: data.approach || 'repeated_indicators',
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run HCM analysis' };
-    }
-  },
-
   async analyzeCta(data: {
     projectPath: string;
     modelId?: string;
@@ -1212,6 +1077,10 @@ export const api = {
     nBoot?: number;
     seed?: number;
     alpha?: number;
+    parallel?: boolean;
+    tails?: 'one' | 'two';
+    direction?: 'positive' | 'negative';
+    settings?: { data_filter?: { column: string; value: string | number | boolean } | null };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1228,6 +1097,10 @@ export const api = {
           n_boot: data.nBoot || 500,
           seed: data.seed ?? 42,
           alpha: data.alpha || 0.05,
+          parallel: data.parallel,
+          tails: data.tails,
+          direction: data.direction,
+          settings: data.settings,
           spec: data.spec,
           columns: data.columns,
           rows: data.rows,
@@ -1239,53 +1112,20 @@ export const api = {
     }
   },
 
-  async analyzeMicom(data: {
-    projectPath: string;
-    modelId?: string;
-    groupCol: string;
-    groupValues?: any[];
-    datasetId?: string;
-    nPermutations?: number;
-    alpha?: number;
-    seed?: number;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/micom`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          group_col: data.groupCol,
-          group_values: data.groupValues,
-          dataset_id: data.datasetId,
-          n_permutations: data.nPermutations || 500,
-          alpha: data.alpha || 0.05,
-          seed: data.seed ?? 42,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run MICOM' };
-    }
-  },
-
   async analyzeMga(data: {
     projectPath: string;
     modelId?: string;
     groupCol: string;
+    consistent?: boolean;
     groupValues?: any[];
     datasetId?: string;
     nBoot?: number;
     nPermutations?: number;
     seed?: number;
     alpha?: number;
+    tails?: 'one' | 'two';
+    direction?: 'positive' | 'negative';
+    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1298,12 +1138,15 @@ export const api = {
           project_path: data.projectPath,
           model_id: data.modelId || 'default',
           group_col: data.groupCol,
+          settings: { ...data.settings, consistent: data.consistent ?? false },
           group_values: data.groupValues,
           dataset_id: data.datasetId,
           n_boot: data.nBoot || 500,
           n_permutations: data.nPermutations || 500,
           seed: data.seed ?? 42,
           alpha: data.alpha || 0.05,
+          tails: data.tails,
+          direction: data.direction,
           spec: data.spec,
           columns: data.columns,
           rows: data.rows,
@@ -1320,8 +1163,12 @@ export const api = {
     modelId?: string;
     minSegments?: number;
     maxSegments?: number;
+    maxIter?: number;
+    tolerance?: number;
+    repetitions?: number;
     datasetId?: string;
     seed?: number;
+    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1334,9 +1181,13 @@ export const api = {
           project_path: data.projectPath,
           model_id: data.modelId || 'default',
           min_segments: data.minSegments || 1,
-          max_segments: data.maxSegments || 4,
+          max_segments: data.maxSegments ?? 4,
+          max_iter: data.maxIter,
+          tol: data.tolerance,
+          n_repetitions: data.repetitions,
           dataset_id: data.datasetId,
           seed: data.seed ?? 42,
+          settings: data.settings,
           spec: data.spec,
           columns: data.columns,
           rows: data.rows,
@@ -1353,9 +1204,16 @@ export const api = {
     modelId?: string;
     nSegments?: number;
     maxIter?: number;
+    searchDepth?: number;
+    initialSeparation?: 'random' | 'fimix';
+    criterion?: 'weighted_r2' | 'sum_r2' | 'target_r2';
+    targetConstruct?: string;
+    preSegmentation?: boolean;
+    fimixOptions?: { max_iter: number; tol: number; n_repetitions: number };
     minSegmentSize?: number;
     datasetId?: string;
     seed?: number;
+    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1368,10 +1226,17 @@ export const api = {
           project_path: data.projectPath,
           model_id: data.modelId || 'default',
           n_segments: data.nSegments || 2,
-          max_iter: data.maxIter || 50,
+          max_iter: data.maxIter ?? 50,
+          search_depth: data.searchDepth,
+          initial_separation: data.initialSeparation,
+          criterion: data.criterion,
+          target_construct: data.targetConstruct,
+          pre_segmentation: data.preSegmentation,
+          fimix_options: data.fimixOptions,
           min_segment_size: data.minSegmentSize || 15,
           dataset_id: data.datasetId,
           seed: data.seed ?? 42,
+          settings: data.settings,
           spec: data.spec,
           columns: data.columns,
           rows: data.rows,
@@ -1380,82 +1245,6 @@ export const api = {
       return await res.json();
     } catch (err: any) {
       return { error: err?.message || 'Failed to run PLS-POS' };
-    }
-  },
-
-  async analyzeOtg(data: {
-    projectPath: string;
-    modelId?: string;
-    groupCol: string;
-    groupValues?: any[];
-    nBoot?: number;
-    nPermutations?: number;
-    datasetId?: string;
-    seed?: number;
-    alpha?: number;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/otg`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          group_col: data.groupCol,
-          group_values: data.groupValues,
-          n_boot: data.nBoot || 500,
-          n_permutations: data.nPermutations || 1000,
-          dataset_id: data.datasetId,
-          seed: data.seed ?? 42,
-          alpha: data.alpha ?? 0.05,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run OTG analysis' };
-    }
-  },
-
-  async analyzeExPost(data: {
-    projectPath: string;
-    modelId?: string;
-    segmentCol: string;
-    explanatoryCols: string[];
-    crosstabCatCol?: string;
-    runPosComparison?: boolean;
-    minSampleSize?: number;
-    datasetId?: string;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/ex-post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          segment_col: data.segmentCol,
-          explanatory_cols: data.explanatoryCols,
-          crosstab_cat_col: data.crosstabCatCol,
-          run_pos_comparison: data.runPosComparison ?? true,
-          min_sample_size: data.minSampleSize ?? 54,
-          dataset_id: data.datasetId,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run Ex Post segmentation' };
     }
   },
 
@@ -1524,37 +1313,6 @@ export const api = {
     }
   },
 
-  async calculatePower(params: {
-    nSamples?: number;
-    nPredictors?: number;
-    rSquared?: number;
-    effectSizeF2?: number;
-    targetPower?: number;
-    alpha?: number;
-    maxFormativeIndicators?: number;
-    maxPathsIntoConstruct?: number;
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/power/calculate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          n_samples: params.nSamples,
-          n_predictors: params.nPredictors,
-          r_squared: params.rSquared,
-          effect_size_f2: params.effectSizeF2,
-          target_power: params.targetPower || 0.80,
-          alpha: params.alpha || 0.05,
-          max_formative_indicators: params.maxFormativeIndicators,
-          max_paths_into_construct: params.maxPathsIntoConstruct,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to calculate power' };
-    }
-  },
-
   async getPowerTable(targetPower: number = 0.80, alpha: number = 0.05): Promise<any> {
     try {
       const res = await fetch(`${API_BASE}/power/table?target_power=${targetPower}&alpha=${alpha}`);
@@ -1564,88 +1322,38 @@ export const api = {
     }
   },
 
-  async analyzeCopula(data: {
-    projectPath: string;
-    modelId: string;
-    candidatePredictor: string;
-    targetConstruct: string;
-    datasetId?: string;
-    nBoot?: number;
-    seed?: number;
-    alpha?: number;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
+  async analyzePca(data: { projectPath: string; modelId: string; datasetId?: string; spec?: ModelSpec; columns?: string[]; rows?: unknown[][]; settings?: { data_filter?: { column: string; value: string | number | boolean } | null } }): Promise<any> {
     try {
-      const res = await fetch(`${API_BASE}/analysis/copula`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId,
-          candidate_predictor: data.candidatePredictor,
-          target_construct: data.targetConstruct,
-          dataset_id: data.datasetId,
-          n_boot: data.nBoot || 200,
-          seed: data.seed ?? 42,
-          alpha: data.alpha || 0.05,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
+      const response = await fetch(`${API_BASE}/analysis/pca`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_path: data.projectPath, model_id: data.modelId, dataset_id: data.datasetId, spec: data.spec, columns: data.columns, rows: data.rows, settings: data.settings }),
       });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run Copula analysis' };
-    }
+      return await response.json();
+    } catch (err: any) { return { error: err?.message || 'Failed to run PCA' }; }
   },
 
-  async analyzeNca(data: {
-    projectPath: string;
-    modelId: string;
-    predictor: string;
-    outcome: string;
-    datasetId?: string;
-    nPermutations?: number;
-    seed?: number;
-    alpha?: number;
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
+  async predictionComparison(data: { projectPath: string; datasetId: string; snapshotIds: string[]; folds: number; repetitions: number; antecedents: 'direct' | 'early'; seed: number; resamples: number }): Promise<any> {
     try {
-      const res = await fetch(`${API_BASE}/analysis/nca`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId,
-          predictor: data.predictor,
-          outcome: data.outcome,
-          dataset_id: data.datasetId,
-          n_permutations: data.nPermutations || 500,
-          seed: data.seed ?? 42,
-          alpha: data.alpha || 0.05,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run NCA analysis' };
-    }
+      const response = await fetch(`${API_BASE}/analysis/compare-prediction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_path: data.projectPath, dataset_id: data.datasetId, snapshot_ids: data.snapshotIds, options: { k_folds: data.folds, repetitions: data.repetitions, antecedents: data.antecedents, seed: data.seed, cvpat_resamples: data.resamples } }) });
+      return await response.json();
+    } catch (error: any) { return { error: error?.message || 'Prediction comparison failed' }; }
   },
-
+  async comparisonDatasets(projectPath: string): Promise<any[]> {
+    const response = await fetch(`${API_BASE}/project/datasets?project_path=${encodeURIComponent(projectPath)}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    return data.datasets || [];
+  },
   async analyzePredict(data: {
     projectPath: string;
     modelId: string;
     datasetId?: string;
     kFolds?: number;
     repetitions?: number;
+    cvpatResamples?: number;
     seed?: number;
     antecedents?: string;
+    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1660,8 +1368,10 @@ export const api = {
           dataset_id: data.datasetId,
           k_folds: data.kFolds || 10,
           repetitions: data.repetitions || 10,
+          cvpat_resamples: data.cvpatResamples,
           seed: data.seed ?? 42,
           antecedents: data.antecedents || 'direct',
+          settings: data.settings,
           spec: data.spec,
           columns: data.columns,
           rows: data.rows,
@@ -1670,39 +1380,6 @@ export const api = {
       return await res.json();
     } catch (err: any) {
       return { error: err?.message || 'Failed to run PLSpredict' };
-    }
-  },
-
-  async exportReportPdf(data: {
-    projectPath: string;
-    modelId?: string;
-    datasetId?: string;
-    projectName?: string;
-    datasetName?: string;
-    modelName?: string;
-    author?: string;
-  }): Promise<Blob | { error: string }> {
-    try {
-      const res = await fetch(`${API_BASE}/export/report-pdf`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId,
-          dataset_id: data.datasetId,
-          project_name: data.projectName,
-          dataset_name: data.datasetName,
-          model_name: data.modelName,
-          author: data.author,
-        }),
-      });
-      if (!res.ok) {
-        const errJson = await res.json();
-        return { error: errJson.error || 'Failed to generate PDF report' };
-      }
-      return await res.blob();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to download PDF report' };
     }
   },
 

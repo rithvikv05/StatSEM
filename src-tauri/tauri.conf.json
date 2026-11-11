@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5185",
-    "beforeDevCommand": "node tools/prepare-sidecar.mjs && cd frontend && npm run dev",
+    "beforeDevCommand": "cd frontend && npm run dev",
     "beforeBuildCommand": "node tools/prepare-sidecar.mjs && cd frontend && npm run build"
   },
   "app": {
@@ -19,10 +19,7 @@
         "decorations": true,
         "fullscreen": false,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": {
-          "x": 12,
-          "y": 22
-        },
+        "trafficLightPosition": { "x": 12, "y": 22 },
         "hiddenTitle": true,
         "dragDropEnabled": false
       }

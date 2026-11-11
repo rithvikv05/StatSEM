@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useStore, LICENSE_INFO } from '../store';
 import { getTierLabel } from '../utils/license';
 import TabBar from './TabBar';
+import { startWindowDrag } from '../utils/window-drag';
 
 export const TitleBar: React.FC = () => {
   const {
@@ -35,19 +36,19 @@ export const TitleBar: React.FC = () => {
   };
 
   return (
-    <header className="titlebar window-drag" id="titlebar">
+    <header className="titlebar window-drag" id="titlebar" data-window-drag-surface onMouseDown={startWindowDrag}>
       {/* AppKit controls this space through native fullscreen notifications. */}
       <div className="titlebar__left no-drag">
         <div className="titlebar__traffic-light-space" aria-hidden="true" />
       </div>
 
       {/* ─── Center Section: Browser / VSCode Tabs ─── */}
-      <div className="titlebar__center no-drag">
+      <div className="titlebar__center no-drag" data-window-drag-surface>
         <TabBar />
       </div>
 
       {/* ─── Right Section: Actions & User ─── */}
-      <div className="titlebar__right no-drag">
+      <div className="titlebar__right no-drag" data-window-drag-surface>
         <button
           className="icon-btn"
           id="theme-toggle-btn"

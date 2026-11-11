@@ -27,6 +27,14 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [snapshotDetails, setSnapshotDetails] = useState<Record<string, any>>({});
   const [copied, setCopied] = useState<boolean>(false);
+  const [datasets, setDatasets] = useState<any[]>([]);
+  const [datasetId, setDatasetId] = useState('');
+  const [folds, setFolds] = useState(10);
+  const [repetitions, setRepetitions] = useState(10);
+  const [antecedents, setAntecedents] = useState<'direct' | 'early'>('direct');
+  const [prediction, setPrediction] = useState<any>(null);
+  const [predictionError, setPredictionError] = useState('');
+  const [predicting, setPredicting] = useState(false);
 
   // 1. Fetch snapshot list on open
   useEffect(() => {
@@ -34,6 +42,7 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
 
     let active = true;
     setLoading(true);
+    api.comparisonDatasets(projectPath).then(items => { if (active) { setDatasets(items); setDatasetId(items[0]?.id || ''); } }).catch(error => { if (active) setPredictionError(error.message); });
 
     api.listSnapshots(projectPath).then(async (snaps) => {
       if (!active) return;
@@ -77,6 +86,8 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
       active = false;
     };
   }, [isOpen, projectPath, initialSnapshotId]);
+
+  useEffect(() => { setPrediction(null); setPredictionError(''); }, [selectedIds, datasetId, folds, repetitions, antecedents]);
 
   // Toggle snapshot selection
   const handleToggleSnapshot = async (id: string) => {
@@ -207,6 +218,17 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
     }
   };
 
+  const comparePrediction = async () => {
+    if (selectedIds.length !== 2 || !datasetId || folds < 2 || repetitions < 1) return;
+    setPredicting(true); setPredictionError(''); setPrediction(null);
+    try {
+      const result = await api.predictionComparison({ projectPath, datasetId, snapshotIds: selectedIds, folds, repetitions, antecedents, seed: 42, resamples: 500 });
+      if (result.error) throw new Error(result.error);
+      setPrediction(result.results);
+    } catch (error) { setPredictionError(error instanceof Error ? error.message : 'Prediction comparison failed'); }
+    finally { setPredicting(false); }
+  };
+
   return (
     <div style={{
       position: 'fixed',
@@ -311,6 +333,7 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
               <button
                 key={s.id}
                 type="button"
+                disabled={predicting}
                 onClick={() => handleToggleSnapshot(s.id)}
                 style={{
                   display: 'flex',
@@ -336,6 +359,19 @@ export const ModelComparisonModal: React.FC<ModelComparisonModalProps> = ({
 
         {/* Body Matrix Table */}
         <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
+          <section style={{ marginBottom: 24 }}>
+            <h4 style={{ margin: '0 0 8px' }}>Predictive comparison</h4>
+            <p className="calculation-note">Compare two saved models on the same dataset and cross-validation splits. Both must predict the same outcome indicators.</p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
+              <label className="modal__field"><span className="modal__label">Dataset</span><select className="modal__input" value={datasetId} onChange={e => setDatasetId(e.target.value)} disabled={predicting}><option value="">Select dataset</option>{datasets.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+              <label className="modal__field"><span className="modal__label">Folds</span><input className="modal__input" type="number" min="2" value={folds} onChange={e => setFolds(Number(e.target.value))} disabled={predicting}/></label>
+              <label className="modal__field"><span className="modal__label">Repetitions</span><input className="modal__input" type="number" min="1" value={repetitions} onChange={e => setRepetitions(Number(e.target.value))} disabled={predicting}/></label>
+              <label className="modal__field"><span className="modal__label">Prediction inputs</span><select className="modal__input" value={antecedents} onChange={e => setAntecedents(e.target.value as 'direct' | 'early')} disabled={predicting}><option value="direct">Direct antecedents</option><option value="early">Earliest antecedents</option></select></label>
+              <button className="modal__btn-create" disabled={predicting || selectedIds.length !== 2 || !datasetId || !Number.isInteger(folds) || folds < 2 || !Number.isInteger(repetitions) || repetitions < 1} onClick={() => void comparePrediction()}>{predicting ? 'Comparing…' : 'Compare predictions'}</button>
+            </div>
+            {predictionError && <p role="alert" className="calculation-error">{predictionError}</p>}
+            {prediction && <p className="calculation-note">{comparedModels[0]?.name} minus {comparedModels[1]?.name}: average loss difference <strong>{fmt(prediction.comparison.mean_difference)}</strong>, one-sided p <strong>{fmt(prediction.comparison.p_one_sided)}</strong> ({prediction.n_samples} cases). A negative difference favors the first model.</p>}
+          </section>
           {loading ? (
             <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--color-text-muted, #94a3b8)' }}>
               Loading model snapshots...

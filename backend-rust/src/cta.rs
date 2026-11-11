@@ -2,7 +2,7 @@
 use crate::{inference, linalg, matrix, model, rng, stats};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Mutex};
 
 #[derive(Clone, Serialize)]
 pub struct Tetrad {
@@ -156,6 +156,9 @@ pub struct Options {
     pub n_boot: usize,
     pub seed: Option<u64>,
     pub alpha: f64,
+    pub parallel: bool,
+    pub tails: String,
+    pub direction: String,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -164,6 +167,9 @@ impl Default for Options {
             n_boot: 5000,
             seed: Some(42),
             alpha: 0.10,
+            parallel: false,
+            tails: "two".into(),
+            direction: "positive".into(),
         }
     }
 }
@@ -176,6 +182,7 @@ pub fn run(
     cancel: &AtomicBool,
     progress: &(dyn Fn(usize) + Sync),
 ) -> Result<Value, String> {
+    if o.n_boot < 2 || !(0.0..0.5).contains(&o.alpha) || o.alpha == 0.0 || !["one", "two"].contains(&o.tails.as_str()) || !["positive", "negative"].contains(&o.direction.as_str()) { return Err("Invalid CTA settings".into()); }
     if rows.iter().any(|r| r.len() != columns.len()) {
         return Err("Dataset row width differs from columns".into());
     }
@@ -213,7 +220,7 @@ pub fn run(
             .collect();
         let x: Vec<Vec<f64>> = rows
             .iter()
-            .filter(|r| positions.iter().all(|&j| !r[j].is_null()))
+            .filter(|r| positions.iter().all(|&j| { let value = model::numeric(&r[j]); value.is_finite() && value != -99.0 }))
             .map(|r| positions.iter().map(|&j| model::numeric(&r[j])).collect())
             .collect();
         let cov = covariance(&x, false)?;
@@ -235,62 +242,67 @@ pub fn run(
             }
         }
         let alpha = o.alpha / r.max(1) as f64;
+        let seed = o.seed.unwrap_or(42);
+        let seeds = rng::seed_sequence(&rng::integer_entropy(seed), o.n_boot);
+        let next = AtomicUsize::new(0);
+        let completed = AtomicUsize::new(0);
+        let bootstrap_results = Mutex::new(vec![None; o.n_boot]);
+        let workers = if o.parallel { std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1)) } else { 1 }.min(o.n_boot);
+        std::thread::scope(|scope| { for _ in 0..workers { scope.spawn(|| loop {
+            if cancel.load(Ordering::Relaxed) { break; }
+            let b = next.fetch_add(1, Ordering::Relaxed);
+            if b >= seeds.len() { break; }
+            let mut random = rng::Pcg64::new(&[seeds[b]]);
+            let sample: Vec<_> = (0..x.len()).map(|_| x[random.bounded(x.len() as u64).unwrap() as usize].clone()).collect();
+            let value = covariance(&sample, true).map(|cov| values(&cov, &defs));
+            bootstrap_results.lock().unwrap()[b] = Some(value);
+            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            if done % 100 == 0 || done == o.n_boot { progress(done * 100 / o.n_boot); }
+        }); }});
+        if cancel.load(Ordering::Relaxed) { return Err("CTA-PLS cancelled by user.".into()); }
         let mut draws = vec![Vec::with_capacity(o.n_boot); r];
-        let seed = o.seed.filter(|s| *s != 0).unwrap_or(42);
-        for (b, seed) in rng::seed_sequence(&rng::integer_entropy(seed), o.n_boot)
-            .into_iter()
-            .enumerate()
-        {
-            if cancel.load(Ordering::Relaxed) {
-                return Err("CTA-PLS cancelled by user.".into());
-            }
-            let mut random = rng::Pcg64::new(&[seed]);
-            let sample: Vec<_> = (0..x.len())
-                .map(|_| {
-                    random
-                        .bounded(x.len() as u64)
-                        .map(|i| x[i as usize].clone())
-                })
-                .collect::<Result<_, _>>()?;
-            let vals = values(&covariance(&sample, true)?, &defs);
-            for (draw, value) in draws.iter_mut().zip(vals) {
-                draw.push(value);
-            }
-            if b % 100 == 0 {
-                progress(b * 100 / o.n_boot);
-            }
+        for result in bootstrap_results.into_inner().unwrap() {
+            let vals = result.ok_or("CTA bootstrap was incomplete")??;
+            for (draw, value) in draws.iter_mut().zip(vals) { draw.push(value); }
         }
         let mut tetrads = Vec::new();
         let mut significant = Vec::new();
         for ((def, draw), original) in defs.iter().zip(draws).zip(original) {
             let sd = stats::std(&draw, None, 1);
             let statistic = if sd > 1e-12 { original / sd } else { 0.0 };
-            let pvalue = 2.0 * (1.0 - inference::normal_cdf(statistic.abs()));
+            let pvalue = if o.tails == "two" { 2.0 * (1.0 - inference::normal_cdf(statistic.abs())) } else if o.direction == "positive" { 1.0 - inference::normal_cdf(statistic) } else { inference::normal_cdf(statistic) };
             let below = (draw.iter().filter(|&&v| v < original).count() as f64 / draw.len() as f64)
                 .clamp(1e-5, 1.0 - 1e-5);
             let z0 = inference::normal_ppf(below);
-            let low = (inference::normal_cdf(2.0 * z0 + inference::normal_ppf(alpha / 2.0))
+            let tail_alpha = if o.tails == "two" { alpha / 2.0 } else { alpha };
+            let low = (inference::normal_cdf(2.0 * z0 + inference::normal_ppf(tail_alpha))
                 * 100.0)
                 .clamp(0.01, 99.99);
-            let high = (inference::normal_cdf(2.0 * z0 + inference::normal_ppf(1.0 - alpha / 2.0))
+            let high = (inference::normal_cdf(2.0 * z0 + inference::normal_ppf(1.0 - tail_alpha))
                 * 100.0)
                 .clamp(0.01, 99.99);
             let mut sorted = draw.clone();
             sorted.sort_by(f64::total_cmp);
             let low = inference::percentile(&sorted, low / 100.0);
             let high = inference::percentile(&sorted, high / 100.0);
-            let includes = low <= 0.0 && high >= 0.0;
+            let includes = if o.tails == "two" { low <= 0.0 && high >= 0.0 } else if o.direction == "positive" { low <= 0.0 } else { high >= 0.0 };
             if !includes {
                 significant.push(def.original_index);
             }
-            tetrads.push(json!({"tetrad_number":def.original_index,"tetrad_name":def.tetrad_name,"tetrad_label":def.label,"indicators":def.names,"original_value":original,"bootstrap_mean":stats::mean(&draw,None),"standard_error":sd,"t_statistic":statistic,"p_value":pvalue,"ci_lower_adjusted":low,"ci_upper_adjusted":high,"includes_zero":includes,"is_significant":!includes}));
+            tetrads.push(json!({"tetrad_number":def.original_index,"tetrad_name":def.tetrad_name,"tetrad_label":def.label,"indicators":def.names,"original_value":original,"bootstrap_mean":stats::mean(&draw,None),"standard_error":sd,"t_statistic":statistic,"p_value":pvalue,"ci_lower_adjusted":if o.tails == "one" && o.direction == "negative" { None } else { Some(low) },"ci_upper_adjusted":if o.tails == "one" && o.direction == "positive" { None } else { Some(high) },"includes_zero":includes,"is_significant":!includes}));
         }
-        let verdict = if significant.is_empty() {
+        let verdict = if o.tails == "one" && significant.is_empty() {
+            "No tetrads significant in the selected direction"
+        } else if o.tails == "one" {
+            "Directional tetrad deviation detected"
+        } else if significant.is_empty() {
             "Reflective specification supported"
         } else {
             "Formative specification supported (reflective rejected)"
         };
-        let interpretation = if significant.is_empty() {
+        let interpretation = if o.tails == "one" {
+            format!("Directional {} tests were applied to {r} tetrads using Bonferroni-adjusted one-sided bounds. Significant tetrads: {significant:?}. This does not test deviations in the opposite direction.", o.direction)
+        } else if significant.is_empty() {
             format!("All {r} nonredundant vanishing tetrads hold (none of the Bonferroni-adjusted {confidence}% CIs exclude zero). The empirical data support a reflective measurement model (Hair et al. 2018).")
         } else {
             format!("Significant vanishing tetrad(s) detected: {significant:?}. At least one nonredundant tetrad statistically differs from zero at the adjusted {confidence}% level. The reflective null is rejected, supporting a formative specification (Hair et al. 2018; Gudergan et al. 2008).")
@@ -298,7 +310,7 @@ pub fn run(
         results.push(json!({"construct_id":block.id,"construct_name":name,"drawn_type":block.measurement_type,"applicable":true,"n_indicators":p,"total_possible_tetrads":all.len(),"n_nonredundant_tetrads":r,"min_indicator_correlation":minimum,"indicator_correlations_adequate":minimum>0.10,"bonferroni_alpha":alpha,"verdict":verdict,"interpretation":interpretation,"has_significant_tetrads":!significant.is_empty(),"significant_tetrad_numbers":significant,"tetrads":tetrads}));
     }
     Ok(
-        json!({"constructs":results,"n_boot":o.n_boot,"nominal_alpha":o.alpha,"confidence_level":format!("{confidence}%"),"decision_rules_help":{
+        json!({"constructs":results,"n_boot":o.n_boot,"nominal_alpha":o.alpha,"confidence_level":format!("{confidence}%"),"tails":o.tails,"direction":o.direction,"parallel":o.parallel,"decision_rules_help":{
         "causality_direction":"Do indicators define the construct (formative) or are they consequences of the construct (reflective)?","interchangeability":"Are indicators interchangeable with identical content (reflective) or each capturing a unique facet (formative)?","covariation":"Are indicators expected to covary strongly (reflective) or can they vary independently (formative)?","nomological_net":"Do indicators share the same antecedents and consequences (reflective) or distinct ones (formative)?","source":"Jarvis, MacKenzie & Podsakoff (2003) & Bollen & Diamantopoulos (2017)."},
         "note":"CTA-PLS empirically evaluates vanishing tetrads. Any non-vanishing tetrad rejects reflective measurement in favor of formative, provided theory aligns (Hair et al. 2018)."}),
     )

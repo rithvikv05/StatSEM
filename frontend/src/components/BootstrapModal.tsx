@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
+import { Checkbox } from './Checkbox';
 import type { ModelSpec } from '../utils/api';
+import { ModelCalculationModal } from './ModelCalculationModal';
+import type { ModelCalculationSettings } from './ModelCalculationModal';
 
 interface BootstrapModalProps {
   isOpen: boolean;
+  consistent?: boolean;
   projectPath: string;
   spec?: ModelSpec;
   datasetHeaders?: string[];
@@ -11,12 +15,14 @@ interface BootstrapModalProps {
   datasetName?: string;
   modelId?: string;
   diagramLayout?: any;
+  initialSettings?: Partial<ModelCalculationSettings>;
   onComplete: (results: any) => void;
   onClose: () => void;
 }
 
 export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   isOpen,
+  consistent = false,
   projectPath,
   spec,
   datasetHeaders,
@@ -24,14 +30,23 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   datasetName,
   modelId,
   diagramLayout,
+  initialSettings,
   onComplete,
   onClose,
 }) => {
   const [stage, setStage] = useState<'config' | 'running' | 'completed' | 'cancelled' | 'error'>('config');
   const [nBoot, setNBoot] = useState<number>(500);
   const [seed, setSeed] = useState<number>(42);
-  const [ecdfMethod, setEcdfMethod] = useState<'F4' | 'F3'>('F4');
-  const [copulaTransform, setCopulaTransform] = useState<'raw' | 'eq17'>('raw');
+  const [randomSeed, setRandomSeed] = useState(false);
+  const [parallel, setParallel] = useState(true);
+  const [mode, setMode] = useState<'basic' | 'complete'>('complete');
+  const [ciMethod, setCiMethod] = useState<'percentile' | 'bias_corrected' | 'bca' | 'studentized'>('percentile');
+  const [studentizedResamples, setStudentizedResamples] = useState(50);
+  const [alpha, setAlpha] = useState(0.05);
+  const [tails, setTails] = useState<'one' | 'two'>('two');
+  const [direction, setDirection] = useState<'positive' | 'negative'>('positive');
+  const [modelSettings, setModelSettings] = useState<Partial<ModelCalculationSettings>>({});
+  const [editModelSettings, setEditModelSettings] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
 
   const gcList = (spec as any)?.gaussian_copulas || (spec as any)?.gaussianCopulas || [];
@@ -47,6 +62,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   const hasCompletedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    if (isOpen) setModelSettings(initialSettings || {});
     if (!isOpen) {
       // Reset modal state on close
       setStage('config');
@@ -68,6 +84,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
 
   const handleStart = async () => {
     try {
+      if (!Number.isInteger(nBoot) || nBoot < 2 || !Number.isSafeInteger(seed) || seed < 0 || alpha <= 0 || alpha >= 0.5 || (ciMethod === 'studentized' && (!Number.isInteger(studentizedResamples) || studentizedResamples < 10))) { setStage('error'); setErrorMsg('Enter valid resampling counts, seed, and significance level. Studentized intervals require at least 10 inner resamples.'); return; }
       hasCompletedRef.current = false;
       setStage('running');
       setCurrent(0);
@@ -78,19 +95,17 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
 
       const startRes = await api.startBootstrap(projectPath, spec, {
         n_boot: nBoot,
-        seed: seed,
+        consistent,
+        seed: randomSeed ? crypto.getRandomValues(new Uint32Array(1))[0] : seed,
+        parallel, mode, ci_method: ciMethod, studentized_resamples: studentizedResamples, significance_level: alpha, tails, direction,
+        settings: modelSettings,
         scheme: 'path',
         columns: datasetHeaders,
         rows: datasetRows,
         dataset_name: datasetName,
         model_id: modelId,
         diagram_layout: diagramLayout,
-        settings: hasGcTerms ? {
-          gc: {
-            ecdf: ecdfMethod,
-            copula_transform: copulaTransform,
-          }
-        } : undefined,
+
       });
 
       if (startRes.error || !startRes.job_id) {
@@ -223,7 +238,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div style={{
+    <div className="calculation-overlay calculation-existing" style={{
       position: 'fixed',
       inset: 0,
       backgroundColor: 'rgba(15, 23, 42, 0.65)',
@@ -255,10 +270,10 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
         }}>
           <div>
             <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
-              PLS-SEM Bootstrapping
+              {consistent ? 'Consistent bootstrap' : 'Bootstrap inference'}
             </h3>
             <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--color-text-muted, #64748b)' }}>
-              Multi-core significance testing for path coefficients &amp; loadings
+              Estimate uncertainty in model results
             </p>
           </div>
           {stage !== 'running' && (
@@ -282,187 +297,23 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
         {/* Content Body */}
         <div style={{ padding: '24px' }}>
           {stage === 'config' && (
-            <div>
-              <div style={{ marginBottom: '18px' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary, #334155)', marginBottom: '6px' }}>
-                  Bootstrap Subsamples
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
-                  {[500, 1000, 2500, 5000].map((count) => (
-                    <button
-                      key={count}
-                      type="button"
-                      onClick={() => setNBoot(count)}
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        border: nBoot === count ? '2px solid var(--color-accent)' : '1px solid var(--color-border-subtle, #e2e8f0)',
-                        backgroundColor: nBoot === count ? 'var(--color-accent-subtle)' : 'var(--color-bg-base, #ffffff)',
-                        color: nBoot === count ? 'var(--color-accent)' : 'var(--color-text-secondary, #475569)',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      {count.toLocaleString()}
-                    </button>
-                  ))}
-                </div>
-                <span style={{ fontSize: '11px', color: 'var(--color-text-muted, #64748b)', marginTop: '4px', display: 'block' }}>
-                  500 is ideal for quick checks; 5,000 is recommended for final academic publishing.
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', gap: '16px', marginBottom: '18px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary, #334155)', marginBottom: '6px' }}>
-                    Random Seed
-                  </label>
-                  <input
-                    type="number"
-                    value={seed}
-                    onChange={(e) => setSeed(parseInt(e.target.value) || 42)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      borderRadius: '8px',
-                      border: '1px solid var(--color-border-subtle, #cbd5e1)',
-                      backgroundColor: 'var(--color-bg-base, #ffffff)',
-                      color: 'var(--color-text-primary, #0f172a)',
-                      fontSize: '13px',
-                      boxSizing: 'border-box',
-                      outline: 'none',
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--color-accent)';
-                      e.currentTarget.style.boxShadow = '0 0 0 2px var(--color-accent-subtle)';
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--color-border-subtle, #cbd5e1)';
-                      e.currentTarget.style.boxShadow = 'none';
-                    }}
-                  />
-                  <span style={{ fontSize: '11px', color: 'var(--color-text-muted, #64748b)', marginTop: '2px', display: 'block' }}>
-                    Ensures reproducible bootstrap distributions.
-                  </span>
-                </div>
-
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary, #334155)', marginBottom: '6px' }}>
-                    Test Type &amp; Scheme
-                  </label>
-                  <div style={{
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    backgroundColor: 'var(--color-bg-surface, #f8fafc)',
-                    border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                    fontSize: '12px',
-                    color: 'var(--color-text-secondary, #475569)',
-                    lineHeight: '1.4',
-                  }}>
-                    Two-tailed test (α = 0.05)<br />
-                    <strong>Path Weighting</strong>
-                  </div>
-                </div>
-              </div>
-
-              {hasGcTerms && (
-                <div style={{
-                  marginBottom: '16px',
-                  padding: '12px 14px',
-                  borderRadius: '8px',
-                  backgroundColor: 'var(--color-bg-surface, #f8fafc)',
-                  border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
-                      Gaussian Copula ({gcList.length} active)
-                    </span>
-                    <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(107,78,230,0.12)', color: 'var(--color-accent)', fontWeight: 600 }}>
-                      Endogeneity
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
-                    {gcList.map((gc: any, idx: number) => {
-                      const src = gc.source_construct || gc.source;
-                      const tgt = gc.target_construct || gc.target;
-                      return (
-                        <span key={gc.id || idx} style={{
-                          fontSize: '11px',
-                          fontFamily: 'monospace',
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                          backgroundColor: 'var(--color-bg-base, #ffffff)',
-                          border: '1px solid var(--color-border-subtle, #cbd5e1)',
-                          color: 'var(--color-text-primary, #1e293b)'
-                        }}>
-                          GC ({src} → {tgt})
-                        </span>
-                      );
-                    })}
-                  </div>
-                  <div style={{ display: 'flex', gap: '14px' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--color-text-secondary, #475569)', marginBottom: '4px' }}>
-                        ECDF Method
-                      </label>
-                      <select
-                        value={ecdfMethod}
-                        onChange={(e) => setEcdfMethod(e.target.value as any)}
-                        style={{
-                          width: '100%',
-                          padding: '6px 8px',
-                          fontSize: '12px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--color-border-subtle, #cbd5e1)',
-                          backgroundColor: 'var(--color-bg-base, #ffffff)',
-                          color: 'var(--color-text-primary, #0f172a)'
-                        }}
-                      >
-                        <option value="F4">F4 (Adjusted - Recommended)</option>
-                        <option value="F3">F3 (Endpoint-adjusted)</option>
-                      </select>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--color-text-secondary, #475569)', marginBottom: '4px' }}>
-                        Copula Transform
-                      </label>
-                      <select
-                        value={copulaTransform}
-                        onChange={(e) => setCopulaTransform(e.target.value as any)}
-                        style={{
-                          width: '100%',
-                          padding: '6px 8px',
-                          fontSize: '12px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--color-border-subtle, #cbd5e1)',
-                          backgroundColor: 'var(--color-bg-base, #ffffff)',
-                          color: 'var(--color-text-primary, #0f172a)'
-                        }}
-                      >
-                        <option value="raw">Raw C(P) (SmartPLS 4 calibrated)</option>
-                        <option value="eq17">Eq. 17 (Sigma^-1 Inv)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div style={{
-                backgroundColor: '#f0fdf4',
-                border: '1px solid #bbf7d0',
-                borderRadius: '8px',
-                padding: '10px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-              }}>
-                <span style={{ fontSize: '16px' }}>⚡</span>
-                <span style={{ fontSize: '12px', color: '#166534', lineHeight: '1.4' }}>
-                  Parallel CPU acceleration enabled. Resamples are distributed across all available CPU cores.
-                </span>
-              </div>
+            <div className="calculation-fields">
+              <label className="modal__field"><span className="modal__label">Resamples</span><input className="modal__input" type="number" min="2" step="1" value={nBoot} onChange={e => setNBoot(Number(e.target.value))}/></label>
+              <button type="button" className="modal__btn-cancel" onClick={() => setEditModelSettings(true)}>Model and data settings</button>
+              <label className="modal__field"><span className="modal__label">Confidence interval</span><select className="modal__input" value={ciMethod} onChange={e => setCiMethod(e.target.value as typeof ciMethod)}><option value="percentile">Percentile</option><option value="bias_corrected">Bias corrected</option><option value="bca">Bias corrected and accelerated (BCa)</option><option value="studentized">Studentized</option></select></label>
+              {ciMethod === 'studentized' && <><label className="modal__field"><span className="modal__label">Inner resamples</span><input className="modal__input" type="number" min="10" step="1" value={studentizedResamples} onChange={e => setStudentizedResamples(Number(e.target.value))}/></label><p className="calculation-note">Each resample is bootstrapped again to estimate its standard error. This can take substantially longer. Intervals are unavailable for estimates with too few successful or nonzero standard errors.</p></>}
+              <details className="calculation-more"><summary>More options</summary><div className="calculation-more__fields">
+                <label className="modal__field"><span className="modal__label">Results</span><select className="modal__input" value={mode} onChange={e => setMode(e.target.value as 'basic' | 'complete')}><option value="complete">All supported estimates</option><option value="basic">Essential estimates</option></select></label>
+                <label className="modal__field"><span className="modal__label">Significance level</span><input className="modal__input" type="number" min="0.001" max="0.499" step="0.01" value={alpha} onChange={e => setAlpha(Number(e.target.value))}/></label>
+                <label className="modal__field"><span className="modal__label">Hypothesis test</span><select className="modal__input" value={tails} onChange={e => setTails(e.target.value as 'one' | 'two')}><option value="two">Two-sided</option><option value="one">One-sided</option></select></label>
+                {tails === 'one' && <label className="modal__field"><span className="modal__label">Expected direction</span><select className="modal__input" value={direction} onChange={e => setDirection(e.target.value as 'positive' | 'negative')}><option value="positive">Positive</option><option value="negative">Negative</option></select></label>}
+                <div className="calculation-check"><Checkbox id="bootstrap-parallel" checked={parallel} onChange={setParallel}/><label htmlFor="bootstrap-parallel">Use parallel processing</label></div>
+                <div className="calculation-check"><Checkbox id="bootstrap-random-seed" checked={randomSeed} onChange={setRandomSeed}/><label htmlFor="bootstrap-random-seed">Generate a random seed</label></div>
+                {!randomSeed && <label className="modal__field"><span className="modal__label">Seed</span><input className="modal__input" type="number" min="0" step="1" value={seed} onChange={e => setSeed(Number(e.target.value))}/></label>}
+              </div></details>
+              {ciMethod === 'bca' && <p className="calculation-note">BCa requires complete data and at most 500 observations.</p>}
+              <p className="calculation-note">Uses {consistent ? 'consistent' : 'standard'} PLS with the selected model and data settings. A one-sided direction applies to all estimates. Running it replaces the current model results.</p>
+              {hasGcTerms && <p className="calculation-note">Copula options use the engine defaults.</p>}
             </div>
           )}
 
@@ -631,7 +482,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent-hover)')}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent)')}
               >
-                Start Bootstrapping
+                Run bootstrapping
               </button>
             </>
           )}
@@ -679,6 +530,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
           )}
         </div>
       </div>
+      {editModelSettings && <ModelCalculationModal isOpen consistent={consistent} submitLabel="Use settings" initialSettings={modelSettings} spec={spec} datasetHeaders={datasetHeaders} datasetRows={datasetRows} onClose={() => setEditModelSettings(false)} onRun={settings => { setModelSettings(settings); setEditModelSettings(false); }} />}
     </div>
   );
 };

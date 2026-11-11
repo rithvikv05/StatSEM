@@ -336,6 +336,11 @@ fn route(
             store.delete_dataset(text(&body, query, "dataset_id").as_deref().unwrap_or("1"))?;
             Ok(json!({"status":"success"}))
         }
+        ("POST", "/project/rename-data") => {
+            let id = text(&body, query, "dataset_id").ok_or("dataset_id required")?;
+            let name = text(&body, query, "name").ok_or("name required")?;
+            project(&body, query)?.rename_dataset(&id, &name)
+        }
         ("POST", "/project/save-model") => {
             let store = project(&body, query)?;
             let spec = body["spec"].clone();
@@ -381,8 +386,9 @@ fn route(
         ("GET", "/project/load-results") => Ok(project(&body, query)?.load_results(
             query.get("algorithm").map(String::as_str).unwrap_or("pls"),
             query.get("model_id").map(String::as_str),
-            None,
+            Some(query.get("analysis_type").map(String::as_str).unwrap_or("pls")),
         )?),
+        ("GET", "/project/analysis-list") => Ok(json!({"analyses":project(&body,query)?.list_analysis_types(query.get("model_id").map(String::as_str))?})),
         ("POST", "/project/save-snapshot") => {
             let store = project(&body, query)?;
             let item:Snapshot=serde_json::from_value(json!({"name":body["name"],"description":body["description"],"algorithm":body["algorithm"],"results":body["results"],"spec":body["spec"],"diagram_layout":body["diagram_layout"],"source_model_id":body["source_model_id"]})).map_err(|e|e.to_string())?;
@@ -416,6 +422,18 @@ fn route(
                     .ok_or("new_model_name required")?,
             ),
         ("POST", "/data/derive") => derive(&body, query),
+        ("POST", "/analysis/compare-prediction") => {
+            let (columns, rows, _) = dataset(&body, query)?;
+            let ids = body["snapshot_ids"].as_array().ok_or("Select two saved models")?;
+            if ids.len() != 2 || ids[0] == ids[1] { return Err("Select two different saved models".into()); }
+            let store = project(&body, query)?;
+            let first = store.snapshot(ids[0].as_str().ok_or("Invalid snapshot")?)?;
+            let second = store.snapshot(ids[1].as_str().ok_or("Invalid snapshot")?)?;
+            if first.is_null() || second.is_null() { return Err("Saved model not found".into()); }
+            let options: crate::predict::Options = serde_json::from_value(body["options"].clone()).map_err(|e| e.to_string())?;
+            let results = crate::predict::compare(columns, rows, [first["spec"].clone(), second["spec"].clone()], json!({}), options)?;
+            Ok(json!({"status":"success","results":results}))
+        }
         ("POST", "/data/groups/generate") => {
             let (columns, rows, _) = dataset(&body, query)?;
             crate::data_groups::categorical(
@@ -706,14 +724,51 @@ fn validate(spec: &Value, columns: Option<&Vec<Value>>) -> Value {
     json!({"is_valid":errors.is_empty(),"errors":errors,"warnings":[],"exogenous_constructs":ids.iter().filter(|id|!incoming.contains_key(**id)).collect::<Vec<_>>(),"endogenous_constructs":ids.iter().filter(|id|incoming.contains_key(**id)).collect::<Vec<_>>(),"isolated_constructs":[]})
 }
 fn run_pls(body: &Value, query: &HashMap<String, String>) -> Result<Value, String> {
-    let (columns, rows, dataset_id) = dataset(body, query)?;
+    let (columns, mut rows, dataset_id) = dataset(body, query)?;
     let spec = spec(body, query)?;
     let validation = validate(&spec, Some(&columns.iter().map(|s| json!(s)).collect()));
     if validation["is_valid"] != true {
         return Ok(json!({"status":"error","validation":validation,"error":"Model is invalid"}));
     };
-    let settings = json!({"inner_weighting":body["scheme"].as_str().unwrap_or("path"),"max_iter":number(body,"max_iter",300),"tolerance":body["tol"].as_f64().unwrap_or(1e-7)});
-    let results = pipeline::run(columns, rows, spec.clone(), settings)?;
+    let mut settings = json!({"inner_weighting":body["scheme"].as_str().unwrap_or("path"),"max_iter":number(body,"max_iter",300),"tolerance":body["tol"].as_f64().unwrap_or(1e-7),"consistent":body["consistent"].as_bool().unwrap_or(false)});
+    if let Some(input) = body.get("settings").and_then(Value::as_object) {
+        for key in ["inner_weighting", "missing_treatment", "max_iter", "tolerance", "initial_weights", "individual_initial_weights", "weight_column"] {
+            if let Some(value) = input.get(key) { settings[key] = value.clone(); }
+        }
+    }
+    if !["mean", "listwise", "none"].contains(&settings["missing_treatment"].as_str().unwrap_or("mean")) {
+        return Err("This missing-data treatment is not available for model estimation".into());
+    }
+    if settings["initial_weights"] == "individual" {
+        let weights = settings["individual_initial_weights"].as_object().ok_or("Provide initial indicator weights")?;
+        let parsed = crate::model::parse(&spec)?;
+        for block in parsed.blocks {
+            if block.indicators.iter().any(|id| !weights.get(id).is_some_and(|v| v.as_f64().is_some_and(f64::is_finite))) ||
+                !block.indicators.iter().any(|id| weights[id].as_f64().unwrap_or(0.0) != 0.0) {
+                return Err(format!("Provide finite initial weights with at least one nonzero weight for {}", block.id));
+            }
+        }
+    }
+    let data_filter = body.pointer("/settings/data_filter").filter(|v| !v.is_null()).cloned();
+    if let Some(filter) = &data_filter {
+        let column = filter["column"].as_str().ok_or("Group variable is required")?;
+        let value = filter.get("value").filter(|v| v.is_string() || v.is_number() || v.is_boolean()).ok_or("Invalid group value")?;
+        let index = columns.iter().position(|c| c == column).ok_or("Group variable is not in the dataset")?;
+        rows.retain(|row| row.get(index).is_some_and(|v| crate::grouping::equal(v, value)));
+        if rows.is_empty() { return Err("The selected group has no observations".into()); }
+    }
+    if let Some(column) = settings["weight_column"].as_str() {
+        let index = columns.iter().position(|c| c == column).ok_or("Weight variable is not in the dataset")?;
+        let mut sum = 0.0;
+        for row in &rows {
+            let weight = row.get(index).map(crate::model::numeric).unwrap_or(f64::NAN);
+            if !weight.is_finite() || weight <= 0.0 { return Err("Observation weights must be finite, positive numbers".into()); }
+            sum += weight;
+        }
+        if !sum.is_finite() || sum <= 0.0 { return Err("At least one observation weight must be positive".into()); }
+    }
+    let mut results = pipeline::run(columns, rows, spec.clone(), settings)?;
+    if let Some(filter) = data_filter { results["settings"]["data_filter"] = filter; }
     let store = project(body, query)?;
     let layout = body.get("diagram_layout").cloned().unwrap_or(Value::Null);
     store.save_model(&spec, &layout, text(body, query, "model_id").as_deref())?;
@@ -728,13 +783,22 @@ fn run_pls(body: &Value, query: &HashMap<String, String>) -> Result<Value, Strin
     Ok(json!({"status":"success","algorithm":"pls","results":results,"validation":validation}))
 }
 fn bootstrap_start(body: &Value, query: &HashMap<String, String>) -> Result<Value, String> {
-    let (columns, rows, dataset_id) = dataset(body, query)?;
+    let (columns, mut rows, dataset_id) = dataset(body, query)?;
     let model = spec(body, query)?;
     let validation = validate(&model, Some(&columns.iter().map(|s| json!(s)).collect()));
     if validation["is_valid"] != true {
         return Err("Model validation failed".into());
     }
     let total = number(body, "n_boot", 500);
+    if total < 2 { return Err("At least two bootstrap samples are required".into()); }
+    let mode = body["mode"].as_str().unwrap_or("complete");
+    let ci = body["ci_method"].as_str().unwrap_or("percentile");
+    let alpha = body["significance_level"].as_f64().unwrap_or(0.05);
+    let tails = body["tails"].as_str().unwrap_or("two");
+    let direction = body["direction"].as_str().unwrap_or("positive");
+    if !["basic", "complete"].contains(&mode) || !["percentile", "bias_corrected", "bca", "studentized"].contains(&ci) || (ci == "studentized" && number(body, "studentized_resamples", 50) < 10) || !["one", "two"].contains(&tails) || !["positive", "negative"].contains(&direction) || !(0.0..0.5).contains(&alpha) || alpha == 0.0 {
+        return Err("Invalid bootstrap settings".into());
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     let job = Arc::new(Mutex::new(BootstrapJob {
@@ -756,12 +820,31 @@ fn bootstrap_start(body: &Value, query: &HashMap<String, String>) -> Result<Valu
         .transpose()?;
     let model_id = text(body, query, "model_id");
     let layout = body.get("diagram_layout").cloned().unwrap_or(Value::Null);
+    let mut model_settings = json!({"inner_weighting":body["scheme"].as_str().unwrap_or("path"),"max_iter":number(body,"max_iter",300),"tolerance":body["tol"].as_f64().unwrap_or(1e-7),"missing_treatment":"mean"});
+    if let Some(input) = body.get("settings").and_then(Value::as_object) { for (key, value) in input { model_settings[key] = value.clone(); } }
+    if let Some(filter) = model_settings.get("data_filter").filter(|v| !v.is_null()) {
+        let column = filter["column"].as_str().ok_or("Group variable is required")?;
+        let value = filter.get("value").filter(|v| v.is_string() || v.is_number() || v.is_boolean()).ok_or("Invalid group value")?;
+        let index = columns.iter().position(|c| c == column).ok_or("Group variable is not in the dataset")?;
+        rows.retain(|row| row.get(index).is_some_and(|v| crate::grouping::equal(v, value)));
+        if rows.is_empty() { return Err("The selected group has no observations".into()); }
+    }
+    model_settings["consistent"] = json!(body["consistent"].as_bool().unwrap_or(false));
     let options = bootstrap::Options {
         n_boot: total,
         seed: body["seed"].as_u64().or(Some(42)),
         scheme: body["scheme"].as_str().unwrap_or("path").into(),
+        consistent: body["consistent"].as_bool().unwrap_or(false),
         max_iter: number(body, "max_iter", 300),
         tol: body["tol"].as_f64().unwrap_or(1e-7),
+        mode: mode.into(),
+        ci_method: ci.into(),
+        studentized_resamples: number(body, "studentized_resamples", 50),
+        significance_level: alpha,
+        tails: tails.into(),
+        direction: direction.into(),
+        n_workers: if body["parallel"].as_bool() == Some(false) { Some(1) } else { None },
+        model_settings: model_settings.clone(),
         ..Default::default()
     };
     thread::spawn(move || {
@@ -780,8 +863,16 @@ fn bootstrap_start(body: &Value, query: &HashMap<String, String>) -> Result<Valu
         );
         match result {
             Ok(bootstrap_result) => {
-                let mut results = pipeline::run(columns, rows, model.clone(), json!({}))
-                    .unwrap_or_else(|_| json!({}));
+                let mut results = match pipeline::run(columns, rows, model.clone(), model_settings) {
+                    Ok(results) => results,
+                    Err(error) => {
+                        if let Ok(mut job) = job.lock() {
+                            job.status = "failed".into();
+                            job.error = Some(format!("Could not calculate the reference model: {error}"));
+                        }
+                        return;
+                    }
+                };
                 if results.is_object() {
                     results["bootstrap"] = bootstrap_result.clone();
                     results["significance"] = bootstrap_result;
@@ -867,8 +958,27 @@ fn power_route(body: &Value) -> Result<Value, String> {
     )
 }
 fn analysis(path: &str, body: &Value, query: &HashMap<String, String>) -> Result<Value, String> {
-    let (columns, rows, dataset_id) = dataset(body, query)?;
+    let (columns, mut rows, dataset_id) = dataset(body, query)?;
+    if let Some(filter) = body.pointer("/settings/data_filter").filter(|v| !v.is_null()) {
+        let column = filter["column"].as_str().ok_or("Group variable is required")?;
+        let value = filter.get("value").filter(|v| v.is_string() || v.is_number() || v.is_boolean()).ok_or("Invalid group value")?;
+        let index = columns.iter().position(|c| c == column).ok_or("Group variable is not in the dataset")?;
+        rows.retain(|row| row.get(index).is_some_and(|v| crate::grouping::equal(v, value)));
+        if rows.is_empty() { return Err("The selected group has no observations".into()); }
+    }
     let spec = spec(body, query)?;
+    if body.pointer("/settings/weight_column").is_some_and(|v| !v.is_null()) { return Err("Observation weights are not yet supported for this analysis".into()); }
+    if body.pointer("/settings/initial_weights").and_then(Value::as_str) == Some("individual") {
+        let weights = body.pointer("/settings/individual_initial_weights").and_then(Value::as_object).ok_or("Provide individual starting weights")?;
+        for block in crate::model::parse(&spec)?.blocks {
+            if block.indicators.iter().any(|id| !weights.get(id).and_then(Value::as_f64).is_some_and(f64::is_finite)) || !block.indicators.iter().any(|id| weights[id].as_f64().unwrap_or(0.0) != 0.0) { return Err(format!("Provide finite initial weights with at least one nonzero weight for {}", block.id)); }
+        }
+    }
+    if path == "/analysis/pca" {
+        let results = crate::pca::run(&columns, &rows, &spec)?;
+        project(body, query)?.save_results(Results { results: results.clone(), spec, model_id: text(body, query, "model_id"), dataset_id: dataset_id.as_str().map(str::to_owned), analysis_type: "pca".into(), ..Default::default() })?;
+        return Ok(json!({"status":"success","results":results}));
+    }
     let op = match path {
         "/analysis/mediation" => "mediation",
         "/analysis/ipma" => "ipma",
@@ -905,7 +1015,16 @@ fn analysis(path: &str, body: &Value, query: &HashMap<String, String>) -> Result
         }
     }
     let request: crate::Request = serde_json::from_value(request).map_err(|e| e.to_string())?;
-    let results = crate::evaluate(request)?;
+    let mut results = crate::evaluate(request)?;
+    if results.is_object() {
+        let mut run_settings = serde_json::Map::new();
+        for key in ["seed", "n_boot", "n_permutations", "alpha", "n_segments", "min_segments", "max_segments", "max_iter", "tol", "n_repetitions", "search_depth", "initial_separation", "criterion", "target_construct", "pre_segmentation", "fimix_options", "k_folds", "repetitions", "cvpat_resamples", "antecedents"] {
+            if let Some(value) = body.get(key).filter(|v| !v.is_null()) { run_settings.insert(key.into(), value.clone()); }
+        }
+        if let Some(settings) = body.get("settings").filter(|v| v.is_object()) { run_settings.insert("model".into(), settings.clone()); }
+        for key in ["parallel", "tails", "direction"] { if let Some(value) = body.get(key).filter(|v| !v.is_null()) { run_settings.insert(key.into(), value.clone()); } }
+        results["run_settings"] = Value::Object(run_settings);
+    }
     let store = project(body, query)?;
     store.save_results(Results {
         results: results.clone(),
@@ -921,6 +1040,111 @@ fn analysis(path: &str, body: &Value, query: &HashMap<String, String>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pca_analysis_is_saved_as_a_distinct_result() {
+        let base = std::env::temp_dir().join(format!("statsem-pca-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("model.pls");
+        let store = Store::new(&path);
+        store.create("Test").unwrap();
+        let body = json!({"project_path":path,"model_id":"default","columns":["x","y"],"rows":[[1,2],[2,4],[3,6],[4,8]],"spec":{"constructs":[{"id":"A","name":"Alpha","indicators":["x","y"]}],"paths":[]}});
+        let output = analysis("/analysis/pca", &body, &HashMap::new()).unwrap();
+        assert_eq!(output["results"]["constructs"][0]["n_samples"], 4);
+        assert!(store.list_analysis_types(Some("default")).unwrap().contains(&"pca".to_string()));
+        let saved = store.load_results("pls", Some("default"), Some("pca")).unwrap();
+        assert_eq!(saved["results"]["method"], "standardized_pca");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn result_lookup_keeps_base_and_analysis_results_separate() {
+        let base = std::env::temp_dir().join(format!("statsem-results-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("model.pls");
+        let store = Store::new(&path);
+        store.create("Test").unwrap();
+        store.save_results(Results { results: json!({"kind":"base"}), ..Default::default() }).unwrap();
+        store.save_results(Results { analysis_type: "predict".into(), results: json!({"kind":"prediction"}), ..Default::default() }).unwrap();
+        let mut query = HashMap::new();
+        query.insert("path".into(), path.to_string_lossy().into_owned());
+        let base_result = route("GET", "/project/load-results", &query, json!({})).unwrap();
+        assert_eq!(base_result["results"]["kind"], "base");
+        let list = route("GET", "/project/analysis-list", &query, json!({})).unwrap();
+        assert_eq!(list["analyses"], json!(["predict"]));
+        query.insert("analysis_type".into(), "predict".into());
+        let prediction = route("GET", "/project/load-results", &query, json!({})).unwrap();
+        assert_eq!(prediction["results"]["kind"], "prediction");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn run_pls_uses_consistent_estimation_when_requested() {
+        let base = std::env::temp_dir().join(format!("statsem-consistent-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("model.pls");
+        Store::new(&path).create("Test").unwrap();
+        let columns = vec!["a1", "a2", "a3", "b1", "b2", "b3"];
+        let rows: Vec<Vec<f64>> = (0..48).map(|i| {
+            let x = i as f64 * 0.13 - 3.0;
+            let noise = (i as f64 * 1.7).sin();
+            let y = 0.6 * x + 0.4 * noise;
+            vec![x + 0.1 * noise, x - 0.2 * noise, 0.9 * x + 0.07 * noise,
+                 y + 0.1 * noise, y - 0.08 * noise, 1.1 * y + 0.03 * noise]
+        }).collect();
+        let spec = json!({
+            "constructs": [
+                {"id":"A","name":"A","type":"reflective","indicators":["a1","a2","a3"]},
+                {"id":"B","name":"B","type":"reflective","indicators":["b1","b2","b3"]}
+            ],
+            "indicators": columns.iter().map(|id| json!({"id":id,"column":id})).collect::<Vec<_>>(),
+            "paths":[{"from":"A","to":"B"}]
+        });
+        let mut body = json!({"project_path":path,"columns":columns,"rows":rows,"spec":spec});
+        let standard = run_pls(&body, &HashMap::new()).unwrap();
+        assert_ne!(standard["results"]["is_consistent"], true);
+        body["columns"].as_array_mut().unwrap().push(json!("group"));
+        for (i, row) in body["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
+            row.as_array_mut().unwrap().push(json!(if i < 24 { 1 } else { 2 }));
+        }
+        body["settings"] = json!({"data_filter":{"column":"group","value":2}});
+        let group = run_pls(&body, &HashMap::new()).unwrap();
+        assert_eq!(group["results"]["n_samples"], 24);
+        assert_eq!(group["results"]["settings"]["data_filter"]["value"], 2);
+        body["settings"] = json!({"initial_weights":"individual", "individual_initial_weights":{"a1":1,"a2":2,"a3":1,"b1":1,"b2":1,"b3":1}});
+        let weighted = run_pls(&body, &HashMap::new()).unwrap();
+        assert_eq!(weighted["results"]["settings"]["individual_initial_weights"]["a2"], 2);
+        body["k_folds"] = json!(4);
+        body["repetitions"] = json!(1);
+        body["cvpat_resamples"] = json!(10);
+        let prediction = analysis("/analysis/predict", &body, &HashMap::new()).unwrap();
+        assert_eq!(prediction["results"]["run_settings"]["model"]["individual_initial_weights"]["a2"], 2);
+        body["settings"]["individual_initial_weights"]["a2"] = Value::Null;
+        assert!(run_pls(&body, &HashMap::new()).is_err());
+        assert!(analysis("/analysis/predict", &body, &HashMap::new()).is_err());
+        body["settings"] = json!({"weight_column":"group"});
+        let weighted = run_pls(&body, &HashMap::new()).unwrap();
+        assert_eq!(weighted["results"]["settings"]["weight_column"], "group");
+        body["rows"][0][6] = json!(0);
+        assert!(run_pls(&body, &HashMap::new()).unwrap_err().contains("weights"));
+        body["rows"][0][0] = Value::Null;
+        body["settings"] = json!({"inner_weighting":"factor", "missing_treatment":"listwise", "max_iter":200, "tolerance":1e-6});
+        let configured = run_pls(&body, &HashMap::new()).unwrap();
+        assert_eq!(configured["results"]["settings"]["inner_weighting"], "factor");
+        assert_eq!(configured["results"]["settings"]["missing_treatment"], "listwise");
+        assert_eq!(configured["results"]["n_samples"], 47);
+        body["settings"]["missing_treatment"] = json!("none");
+        assert!(run_pls(&body, &HashMap::new()).unwrap_err().contains("Missing values"));
+        body["settings"]["missing_treatment"] = json!("pairwise");
+        assert!(run_pls(&body, &HashMap::new()).is_err());
+        body["settings"] = json!({});
+        body["consistent"] = json!(true);
+        let consistent = run_pls(&body, &HashMap::new()).unwrap();
+        assert_eq!(consistent["results"]["is_consistent"], true);
+        assert!(consistent["results"]["structural"]["path_coefficients"]["B"]["A"].is_number());
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn health_and_workspace_routes_return_canonical_paths() {

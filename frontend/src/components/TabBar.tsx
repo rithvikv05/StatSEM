@@ -854,7 +854,7 @@ export const TabBar: React.FC = () => {
 
   return (
     <>
-      <div className="tabbar-root no-drag">
+      <div className="tabbar-root no-drag" data-window-drag-surface>
         {canScrollLeft && (
           <button
             className="tab-overflow-indicator tab-overflow-indicator--left"
@@ -879,6 +879,7 @@ export const TabBar: React.FC = () => {
               : ''
           }`}
           ref={scrollRef}
+          data-window-drag-surface
         >
           {stripItems.map((item, itemIndex) => {
             if (item.kind === 'standalone') {

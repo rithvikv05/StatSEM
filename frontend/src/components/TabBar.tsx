@@ -271,6 +271,8 @@ export const TabBar: React.FC = () => {
         return 'feedback';
       case 'snapshot':
         return 'history';
+      case 'mga-report':
+        return tab.reportType === 'permutation' ? 'shuffle' : 'compare_arrows';
       default:
         return null;
     }

@@ -31,7 +31,12 @@ const AnalysisDetail: React.FC<AnalysisDetailProps> = ({ id, data, results, init
     }}>
       <summary>{labels[id] || id.replaceAll('_', ' ')}</summary>
       {open && stale && <p className="results-empty-note">This analysis was calculated for a previous version of the model.</p>}
-      {open && error && <p className="results-empty-note">{error} <button type="button" onClick={() => onLoad(id)}>Retry</button></p>}
+      {open && error && (
+        <div className="results-empty-note" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>{error}</span>
+          <button type="button" className="results-tool-btn" onClick={() => onLoad(id)}>Retry</button>
+        </div>
+      )}
       {open && !error && data == null && <p className="results-empty-note">Loading analysis output...</p>}
       {open && data != null && (id === 'moderation'
         ? <ModerationDetails data={data as ModerationData} results={results} />

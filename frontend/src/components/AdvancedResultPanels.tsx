@@ -2004,11 +2004,17 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
   if (activeTab === 'mga') {
     if (!analysisData) return <p className="results-empty-note">No group comparison is available.</p>;
     const rows = analysisData.path_comparisons || [];
+    const warnings: string[] = Array.isArray(analysisData.warnings) ? analysisData.warnings : [];
     const group1 = analysisData.group_1 ?? analysisData.groups?.[0] ?? 'Group 1';
     const group2 = analysisData.group_2 ?? analysisData.groups?.[1] ?? 'Group 2';
     return <div className="results-content-pane">
       <h3>{analysisData.is_consistent ? 'Consistent group comparison' : 'Group comparison'}</h3>
       <p className="results-empty-note">{group1}: {analysisData.n_group_1 ?? '—'} observations · {group2}: {analysisData.n_group_2 ?? '—'} observations</p>
+      {warnings.length > 0 && (
+        <div className="results-notice results-notice--warn" style={{ marginBottom: 12, flexDirection: 'column', gap: 4 }}>
+          {warnings.map((w, i) => <div key={i}>{w}</div>)}
+        </div>
+      )}
       <table className="results-table"><thead><tr><th>Path</th><th>{group1} β</th><th>{group2} β</th><th>Difference</th><th>Bootstrap p</th><th>Permutation p</th><th>Welch p</th></tr></thead><tbody>
         {rows.map((row: any, idx: number) => <tr key={idx}><td>{row.path}</td><td>{fmt(row.beta_group_1)}</td><td>{fmt(row.beta_group_2)}</td><td>{fmt(row.difference)}</td><td>{fmtP(row.henseler_pls_mga?.p_value ?? row.henseler_pls_mga?.p_value_two_tailed)}</td><td>{fmtP(row.permutation_test?.p_value)}</td><td>{fmtP(row.welch_test?.p_value)}</td></tr>)}
       </tbody></table>

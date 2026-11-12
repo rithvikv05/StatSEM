@@ -321,7 +321,8 @@ export const api = {
     rows: any[][],
     missingValue?: string,
     treatment?: string,
-    datasetId?: string
+    datasetId?: string,
+    dataGroups?: any[]
   ): Promise<{ status?: string; row_count?: number; dataset_name?: string; dataset_id?: string; error?: string }> {
     try {
       const res = await fetch(`${API_BASE}/project/save-data-json`, {
@@ -334,7 +335,8 @@ export const api = {
           columns,
           rows,
           missing_value: missingValue,
-          treatment: treatment && treatment !== 'none' ? treatment : undefined
+          treatment: treatment && treatment !== 'none' ? treatment : undefined,
+          data_groups: dataGroups,
         })
       });
       return await res.json();
@@ -379,7 +381,7 @@ export const api = {
     }
   },
 
-  async loadProjectData(path: string, datasetId?: string): Promise<{ id?: string; columns?: string[]; rows?: any[][]; dataset_name?: string; error?: string }> {
+  async loadProjectData(path: string, datasetId?: string): Promise<{ id?: string; columns?: string[]; rows?: any[][]; dataset_name?: string; dataGroups?: any[]; data_groups?: any[]; error?: string }> {
     try {
       const query = datasetId ? `&dataset_id=${encodeURIComponent(datasetId)}` : '';
       const res = await fetch(`${API_BASE}/project/load-data?path=${encodeURIComponent(path)}${query}`);
@@ -1041,7 +1043,16 @@ export const api = {
     datasetId?: string;
     scaleBounds?: Record<string, any>;
     level?: string;
-    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
+    settings?: {
+      inner_weighting: string;
+      max_iter: number;
+      tolerance: number;
+      missing_treatment?: string;
+      initial_weights?: string;
+      individual_initial_weights?: Record<string, number> | null;
+      data_filter?: { column: string; value: unknown } | null;
+      ipma_predecessors?: string;
+    };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1125,7 +1136,16 @@ export const api = {
     alpha?: number;
     tails?: 'one' | 'two';
     direction?: 'positive' | 'negative';
-    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
+    settings?: {
+      inner_weighting: string;
+      max_iter: number;
+      tolerance: number;
+      missing_treatment?: string;
+      initial_weights?: string;
+      individual_initial_weights?: Record<string, number> | null;
+      data_filter?: { column: string; value: unknown } | null;
+      ipma_predecessors?: string;
+    };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1168,7 +1188,16 @@ export const api = {
     repetitions?: number;
     datasetId?: string;
     seed?: number;
-    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
+    settings?: {
+      inner_weighting: string;
+      max_iter: number;
+      tolerance: number;
+      missing_treatment?: string;
+      initial_weights?: string;
+      individual_initial_weights?: Record<string, number> | null;
+      data_filter?: { column: string; value: unknown } | null;
+      ipma_predecessors?: string;
+    };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1213,7 +1242,16 @@ export const api = {
     minSegmentSize?: number;
     datasetId?: string;
     seed?: number;
-    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
+    settings?: {
+      inner_weighting: string;
+      max_iter: number;
+      tolerance: number;
+      missing_treatment?: string;
+      initial_weights?: string;
+      individual_initial_weights?: Record<string, number> | null;
+      data_filter?: { column: string; value: unknown } | null;
+      ipma_predecessors?: string;
+    };
     spec?: any;
     columns?: string[];
     rows?: any[][];
@@ -1353,7 +1391,16 @@ export const api = {
     cvpatResamples?: number;
     seed?: number;
     antecedents?: string;
-    settings?: { inner_weighting: string; max_iter: number; tolerance: number };
+    settings?: {
+      inner_weighting: string;
+      max_iter: number;
+      tolerance: number;
+      missing_treatment?: string;
+      initial_weights?: string;
+      individual_initial_weights?: Record<string, number> | null;
+      data_filter?: { column: string; value: unknown } | null;
+      ipma_predecessors?: string;
+    };
     spec?: any;
     columns?: string[];
     rows?: any[][];

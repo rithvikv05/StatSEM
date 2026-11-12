@@ -15,6 +15,7 @@ import FeedbackView from './pages/FeedbackView';
 import ChangelogView from './pages/ChangelogView';
 const ModelEditor = React.lazy(() => import('./pages/ModelEditor'));
 const SnapshotView = React.lazy(() => import('./pages/SnapshotView'));
+const MgaReportPage = React.lazy(() => import('./mga/MgaReportPage'));
 
 import { api } from './utils/api';
 import { applyAccentColor } from './utils/theme';
@@ -153,6 +154,9 @@ function App() {
     }
     if (activeTab.type === 'snapshot') {
       return <React.Suspense fallback={null}><SnapshotView key={activeTab.id} /></React.Suspense>;
+    }
+    if (activeTab.type === 'mga-report') {
+      return <React.Suspense fallback={null}><MgaReportPage key={activeTab.id} /></React.Suspense>;
     }
     return <GetStarted />;
   };

@@ -352,7 +352,11 @@ fn expanded(
             }
         }
     }
-    if quads.is_empty()
+    let mut all_scales = scales.clone();
+    for (k, v) in &int_scales {
+        all_scales.insert(k.clone(), v.clone());
+    }
+    if quads.iter().all(|q| q["method"] == "two_stage")
         && mods
             .iter()
             .all(|moderation| moderation["method"] == "two_stage")
@@ -364,7 +368,7 @@ fn expanded(
             &expanded_spec,
             &columns,
             &rows,
-            &int_scales,
+            &all_scales,
             settings,
         )?;
         result["structural"] = fixed["structural"].clone();

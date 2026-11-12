@@ -149,7 +149,7 @@ fn decode(s: &str) -> String {
 fn value<'a>(body: &'a Value, _query: &HashMap<String, String>, key: &str) -> Option<&'a Value> {
     body.get(key)
 }
-fn text(body: &Value, query: &HashMap<String, String>, key: &str) -> Option<String> {
+pub(crate) fn text(body: &Value, query: &HashMap<String, String>, key: &str) -> Option<String> {
     value(body, query, key)
         .and_then(Value::as_str)
         .map(str::to_owned)
@@ -170,14 +170,14 @@ fn resolved_text_path(
 fn workspace_folder(body: &Value, query: &HashMap<String, String>) -> Result<PathBuf, String> {
     resolved_text_path(body, query, "folder_path", "folder_path required")
 }
-fn project(body: &Value, query: &HashMap<String, String>) -> Result<Store, String> {
+pub(crate) fn project(body: &Value, query: &HashMap<String, String>) -> Result<Store, String> {
     let raw = text(body, query, "project_path")
         .or_else(|| text(body, query, "path"))
         .ok_or("project path is required")?;
     Ok(Store::new(resolve_user_path(&raw)?))
 }
 type DatasetRows = (Vec<String>, Vec<Vec<Value>>, Value);
-fn dataset(body: &Value, query: &HashMap<String, String>) -> Result<DatasetRows, String> {
+pub(crate) fn dataset(body: &Value, query: &HashMap<String, String>) -> Result<DatasetRows, String> {
     if let (Some(columns), Some(rows)) = (body["columns"].as_array(), body["rows"].as_array()) {
         return Ok((
             columns
@@ -212,7 +212,7 @@ fn dataset(body: &Value, query: &HashMap<String, String>) -> Result<DatasetRows,
         data["id"].clone(),
     ))
 }
-fn spec(body: &Value, query: &HashMap<String, String>) -> Result<Value, String> {
+pub(crate) fn spec(body: &Value, query: &HashMap<String, String>) -> Result<Value, String> {
     if body["spec"].is_object() {
         return Ok(body["spec"].clone());
     }
@@ -328,7 +328,12 @@ fn route(
         }
         ("POST", "/project/save-data-json") => {
             let store = project(&body, query)?;
-            let parsed:Dataset=serde_json::from_value(json!({"id":body["dataset_id"],"name":body["dataset_name"].as_str().unwrap_or("Imported data"),"columns":body["columns"],"rows":body["rows"],"kind":"imported"})).map_err(|e|e.to_string())?;
+            let data_groups = body
+                .get("data_groups")
+                .or_else(|| body.get("dataGroups"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let parsed:Dataset=serde_json::from_value(json!({"id":body["dataset_id"],"name":body["dataset_name"].as_str().unwrap_or("Imported data"),"columns":body["columns"],"rows":body["rows"],"kind":"imported","data_groups":data_groups})).map_err(|e|e.to_string())?;
             store.save_dataset(parsed)
         }
         ("POST", "/project/delete-data") => {
@@ -448,6 +453,7 @@ fn route(
         ("GET", "/power/table") => Ok(
             json!({"status":"success","results":power::table(query.get("alpha").and_then(|v|v.parse().ok()).unwrap_or(0.05),query.get("target_power").and_then(|v|v.parse().ok()).unwrap_or(0.8))?}),
         ),
+        _ if path.starts_with("/mga/") => crate::mga::routes::handle(path, &body, query),
         _ if path.starts_with("/analysis/") => analysis(path, &body, query),
         _ => Err(format!(
             "Native backend route not implemented: {method} {path}"
@@ -946,7 +952,7 @@ fn derive(body: &Value, query: &HashMap<String, String>) -> Result<Value, String
         .map(str::to_owned)
         .unwrap_or_else(|| format!("derived-{}", uuid::Uuid::new_v4()));
     let name = body["name"].as_str().unwrap_or("Derived dataset");
-    store.save_dataset(Dataset{id:Some(id),name:name.into(),columns:result["columns"].as_array().unwrap().iter().filter_map(Value::as_str).map(str::to_owned).collect(),rows:result["rows"].as_array().unwrap().iter().filter_map(Value::as_array).cloned().collect(),parent_id:parent.as_str().map(str::to_owned),kind:"derived".into(),derivation:json!({"operation":body["operation"],"params":body["params"],"meta":result["meta"]}),settings:Value::Null})
+    store.save_dataset(Dataset{id:Some(id),name:name.into(),columns:result["columns"].as_array().unwrap().iter().filter_map(Value::as_str).map(str::to_owned).collect(),rows:result["rows"].as_array().unwrap().iter().filter_map(Value::as_array).cloned().collect(),parent_id:parent.as_str().map(str::to_owned),kind:"derived".into(),derivation:json!({"operation":body["operation"],"params":body["params"],"meta":result["meta"]}),settings:Value::Null,data_groups:Value::Null})
 }
 fn power_route(body: &Value) -> Result<Value, String> {
     let target = body["target_power"].as_f64().unwrap_or(0.8);

@@ -601,8 +601,14 @@ impl Store {
             "INSERT OR REPLACE INTO dataset_values(dataset_id,values_json) VALUES (?,?)",
             &[json!(id), encoded(&values)],
         )?;
-        db.execute("INSERT OR REPLACE INTO datasets(id,name,parent_id,kind,derivation_json,n_rows,n_cols,hash,settings_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,COALESCE((SELECT created_at FROM datasets WHERE id=?),?))",&[
-            json!(id),json!(dataset.name),json!(dataset.parent_id),json!(dataset.kind),optional_json(&dataset.derivation),json!(values["rows"].as_array().unwrap().len()),json!(values["columns"].as_array().unwrap().len()),json!(hash),optional_json(&dataset.settings),json!(id),json!(now)])?;
+        let data_groups_param = if dataset.data_groups.is_null() {
+            let existing = db.query("SELECT data_groups_json FROM datasets WHERE id=?", &[json!(id)])?;
+            existing.first().and_then(|r| r.first()).cloned().unwrap_or(Value::Null)
+        } else {
+            optional_json(&dataset.data_groups)
+        };
+        db.execute("INSERT OR REPLACE INTO datasets(id,name,parent_id,kind,derivation_json,n_rows,n_cols,hash,settings_json,created_at,data_groups_json) VALUES (?,?,?,?,?,?,?,?,?,COALESCE((SELECT created_at FROM datasets WHERE id=?),?),?)",&[
+            json!(id),json!(dataset.name),json!(dataset.parent_id),json!(dataset.kind),optional_json(&dataset.derivation),json!(values["rows"].as_array().unwrap().len()),json!(values["columns"].as_array().unwrap().len()),json!(hash),optional_json(&dataset.settings),json!(id),json!(now),data_groups_param])?;
         modified(&db, &now)?;
         tx.commit()?;
         Ok(
@@ -622,16 +628,31 @@ impl Store {
         tx.commit()?;
         Ok(json!({"status":"success","dataset_id":id,"dataset_name":name}))
     }
+    pub fn update_dataset_groups(&self, id: Option<&str>, data_groups: &Value) -> Result<Value, String> {
+        let db = self.connect()?;
+        let tx = db.transaction()?;
+        let id = id.filter(|s| !s.is_empty()).unwrap_or("1");
+        let now = self.now();
+        db.execute(
+            "UPDATE datasets SET data_groups_json=? WHERE id=?",
+            &[optional_json(data_groups), json!(id)],
+        )?;
+        modified(&db, &now)?;
+        tx.commit()?;
+        Ok(json!({"status":"success","dataset_id":id,"dataGroups":data_groups}))
+    }
     pub fn dataset(&self, id: Option<&str>) -> Result<Value, String> {
         let db = self.connect()?;
         let id = id.unwrap_or("1");
-        let rows=db.query("SELECT d.id,d.name,d.parent_id,d.kind,d.derivation_json,d.n_rows,d.n_cols,d.hash,d.settings_json,d.created_at,v.values_json FROM datasets d JOIN dataset_values v ON d.id=v.dataset_id WHERE d.id=?",&[json!(id)])?;
+        let rows=db.query("SELECT d.id,d.name,d.parent_id,d.kind,d.derivation_json,d.n_rows,d.n_cols,d.hash,d.settings_json,d.created_at,v.values_json,d.data_groups_json FROM datasets d JOIN dataset_values v ON d.id=v.dataset_id WHERE d.id=?",&[json!(id)])?;
         let Some(row) = rows.first() else {
             return Ok(Value::Null);
         };
         let values = decoded(&row[10])?;
+        let raw_groups = decoded(&row[11])?;
+        let data_groups = if raw_groups.is_array() { raw_groups } else { json!([]) };
         Ok(
-            json!({"id":row[0],"name":row[1],"dataset_name":row[1],"parent_id":row[2],"kind":row[3],"derivation":decoded(&row[4])?,"n_rows":row[5],"n_cols":row[6],"hash":row[7],"settings":decoded(&row[8])?,"created_at":row[9],"columns":values["columns"],"rows":values["rows"]}),
+            json!({"id":row[0],"name":row[1],"dataset_name":row[1],"parent_id":row[2],"kind":row[3],"derivation":decoded(&row[4])?,"n_rows":row[5],"n_cols":row[6],"hash":row[7],"settings":decoded(&row[8])?,"created_at":row[9],"columns":values["columns"],"rows":values["rows"],"data_groups":data_groups,"dataGroups":data_groups}),
         )
     }
     pub fn datasets(&self) -> Result<Value, String> {
@@ -650,6 +671,95 @@ impl Store {
             &[json!(id)],
         )?;
         db.execute("DELETE FROM datasets WHERE id=?", &[json!(id)])?;
+        modified(&db, &self.now())?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_mga_report(
+        &self,
+        id: &str,
+        report_type: &str,
+        title: &str,
+        model_key: Option<&str>,
+        dataset_id: Option<&str>,
+        spec: &Value,
+        result: &Value,
+        created_at: &str,
+    ) -> Result<Value, String> {
+        let db = self.connect()?;
+        let tx = db.transaction()?;
+        let key = model_key.filter(|s| !s.is_empty()).unwrap_or("default");
+        db.execute(
+            "INSERT OR REPLACE INTO mga_reports(id,report_type,title,model_key,dataset_id,spec_json,result_json,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            &[
+                json!(id),
+                json!(report_type),
+                json!(title),
+                json!(key),
+                json!(dataset_id),
+                optional_json(spec),
+                encoded(result),
+                json!(created_at),
+            ],
+        )?;
+        modified(&db, &self.now())?;
+        tx.commit()?;
+        Ok(json!({"status": "saved", "id": id, "createdAt": created_at}))
+    }
+
+    pub fn list_mga_reports(&self, model_key: Option<&str>) -> Result<Value, String> {
+        if !self.path.exists() {
+            return Ok(json!([]));
+        }
+        let db = self.connect()?;
+        let rows = if let Some(key) = model_key.filter(|s| !s.is_empty()) {
+            db.query(
+                "SELECT id,report_type,title,model_key,dataset_id,created_at FROM mga_reports WHERE model_key=? ORDER BY created_at DESC",
+                &[json!(key)],
+            )?
+        } else {
+            db.query(
+                "SELECT id,report_type,title,model_key,dataset_id,created_at FROM mga_reports ORDER BY created_at DESC",
+                &[],
+            )?
+        };
+        Ok(json!(rows
+            .into_iter()
+            .map(|r| json!({
+                "id": r[0],
+                "reportType": r[1],
+                "title": r[2],
+                "modelKey": r[3],
+                "datasetId": r[4],
+                "createdAt": r[5],
+            }))
+            .collect::<Vec<_>>()))
+    }
+
+    pub fn get_mga_report(&self, id: &str) -> Result<Value, String> {
+        if !self.path.exists() {
+            return Ok(Value::Null);
+        }
+        let db = self.connect()?;
+        let rows = db.query(
+            "SELECT result_json FROM mga_reports WHERE id=?",
+            &[json!(id)],
+        )?;
+        let Some(row) = rows.first() else {
+            return Ok(Value::Null);
+        };
+        decoded(&row[0])
+    }
+
+    pub fn delete_mga_report(&self, id: &str) -> Result<bool, String> {
+        if !self.path.exists() {
+            return Ok(false);
+        }
+        let db = self.connect()?;
+        let tx = db.transaction()?;
+        db.execute("DELETE FROM mga_reports WHERE id=?", &[json!(id)])?;
         modified(&db, &self.now())?;
         tx.commit()?;
         Ok(true)
@@ -741,6 +851,8 @@ pub struct Dataset {
     pub kind: String,
     pub derivation: Value,
     pub settings: Value,
+    #[serde(alias = "dataGroups")]
+    pub data_groups: Value,
 }
 impl Default for Dataset {
     fn default() -> Self {
@@ -753,6 +865,7 @@ impl Default for Dataset {
             kind: "imported".into(),
             derivation: Value::Null,
             settings: Value::Null,
+            data_groups: Value::Null,
         }
     }
 }
@@ -815,10 +928,15 @@ pub fn schema(db: &Connection) -> Result<(), String> {
         "CREATE TABLE IF NOT EXISTS model_spec (id INTEGER PRIMARY KEY,spec_json TEXT,diagram_layout_json TEXT,updated_at TEXT,model_key TEXT UNIQUE)",
         "CREATE TABLE IF NOT EXISTS results (id INTEGER PRIMARY KEY,algorithm TEXT,analysis_type TEXT,results_json TEXT,created_at TEXT,model_key TEXT,spec_json TEXT,diagram_layout_json TEXT,dataset_id TEXT,dataset_hash TEXT,spec_hash TEXT,params_json TEXT)",
         "CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT,algorithm TEXT NOT NULL,results_json TEXT NOT NULL,model_spec_json TEXT NOT NULL,diagram_layout_json TEXT NOT NULL,created_at TEXT NOT NULL,source_model_id TEXT)",
-        "CREATE TABLE IF NOT EXISTS datasets (id TEXT PRIMARY KEY,name TEXT NOT NULL,parent_id TEXT,kind TEXT NOT NULL DEFAULT 'imported',derivation_json TEXT,n_rows INTEGER NOT NULL,n_cols INTEGER NOT NULL,hash TEXT NOT NULL,settings_json TEXT,created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS datasets (id TEXT PRIMARY KEY,name TEXT NOT NULL,parent_id TEXT,kind TEXT NOT NULL DEFAULT 'imported',derivation_json TEXT,n_rows INTEGER NOT NULL,n_cols INTEGER NOT NULL,hash TEXT NOT NULL,settings_json TEXT,created_at TEXT NOT NULL,data_groups_json TEXT)",
         "CREATE TABLE IF NOT EXISTS dataset_columns (dataset_id TEXT NOT NULL,name TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'indicator',scale_min REAL,scale_max REAL,reverse_coded INTEGER NOT NULL DEFAULT 0,label TEXT,PRIMARY KEY(dataset_id,name))",
         "CREATE TABLE IF NOT EXISTS dataset_values (dataset_id TEXT PRIMARY KEY,values_json TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS mga_reports (id TEXT PRIMARY KEY,report_type TEXT NOT NULL,title TEXT NOT NULL,model_key TEXT,dataset_id TEXT,spec_json TEXT,result_json TEXT NOT NULL,created_at TEXT NOT NULL)",
     ] {db.execute(sql,&[])?;}
+    let ds_cols = db.query("PRAGMA table_info(datasets)", &[])?;
+    if !ds_cols.iter().any(|row| row[1] == "data_groups_json") {
+        db.execute("ALTER TABLE datasets ADD COLUMN data_groups_json TEXT", &[])?;
+    }
     let cols = db.query("PRAGMA table_info(results)", &[])?;
     for column in [
         "analysis_type",
@@ -910,7 +1028,7 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         let store = Store::new(directory.join("model.pls"));
         store.create("Test").unwrap();
-        store.save_dataset(Dataset { id: Some("grouped".into()), name: "Before".into(), columns: vec!["x".into()], rows: vec![vec![json!(3.5)]], parent_id: Some("parent".into()), kind: "derived".into(), derivation: json!({"operation":"filter"}), settings: json!({"key":"value"}) }).unwrap();
+        store.save_dataset(Dataset { id: Some("grouped".into()), name: "Before".into(), columns: vec!["x".into()], rows: vec![vec![json!(3.5)]], parent_id: Some("parent".into()), kind: "derived".into(), derivation: json!({"operation":"filter"}), settings: json!({"key":"value"}), data_groups: Value::Null }).unwrap();
         store.rename_dataset("grouped", "After").unwrap();
         let saved = store.dataset(Some("grouped")).unwrap();
         assert_eq!(saved["name"], "After");

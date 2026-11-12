@@ -17,6 +17,8 @@ import { InlineAnalysisResults } from '../components/InlineAnalysisResults';
 import RedundancyWizardModal from '../components/RedundancyWizardModal';
 import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { DiagramExportModal } from '../components/DiagramExportModal';
+import { PermutationDialog } from '../mga/PermutationDialog';
+import { MgaDialog } from '../mga/MgaDialog';
 import type { ParsedDataset } from '../utils/dataset-parser';
 import { parseDatasetFile, processData } from '../utils/dataset-parser';
 import { api, type ValidationResponse } from '../utils/api';
@@ -151,6 +153,8 @@ const ModelEditor = () => {
     touchStudy,
     openTab,
     addStudySnapshot,
+    addStudyMgaReport,
+    cacheMgaReport,
     addModel,
     setActiveModel,
     theme,
@@ -212,6 +216,8 @@ const ModelEditor = () => {
   const [bootstrapConsistent, setBootstrapConsistent] = useState(false);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [modelSettingsConsistent, setModelSettingsConsistent] = useState(false);
+  const [isPermutationModalOpen, setIsPermutationModalOpen] = useState(false);
+  const [isMgaModalOpen, setIsMgaModalOpen] = useState(false);
   const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [analysisModalType, setAnalysisModalType] = useState<string>('predict');
@@ -258,6 +264,8 @@ const ModelEditor = () => {
   const [variableFilter, setVariableFilter] = useState('');
   const [isVarSearchOpen, setIsVarSearchOpen] = useState(false);
   const [isCalcMenuOpen, setIsCalcMenuOpen] = useState(false);
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
   const [areCategoriesCollapsed, setAreCategoriesCollapsed] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [selectedVarNames, setSelectedVarNames] = useState<Set<string>>(new Set());
@@ -304,6 +312,9 @@ const ModelEditor = () => {
       if (calcDropdownRef.current && !calcDropdownRef.current.contains(e.target as Node)) {
         setIsCalcMenuOpen(false);
       }
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target as Node)) {
+        setIsExportMenuOpen(false);
+      }
       if (
         datasetDropdownRef.current &&
         !datasetDropdownRef.current.contains(e.target as Node) &&
@@ -313,13 +324,13 @@ const ModelEditor = () => {
         setIsDatasetMenuOpen(false);
       }
     };
-    if (isCalcMenuOpen || isDatasetMenuOpen) {
+    if (isCalcMenuOpen || isDatasetMenuOpen || isExportMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isCalcMenuOpen, isDatasetMenuOpen]);
+  }, [isCalcMenuOpen, isDatasetMenuOpen, isExportMenuOpen]);
 
   useEffect(() => {
     // Default to collapsed sidebar in canvas/results page to maximize space if not locked
@@ -615,6 +626,7 @@ const ModelEditor = () => {
               if (dataRes && Array.isArray(dataRes.columns) && Array.isArray(dataRes.rows)) {
                 const parsed = processData(dataRes.dataset_name || summary.name || 'Dataset', dataRes.columns, dataRes.rows);
                 parsed.id = summary.id;
+                parsed.dataGroups = dataRes.dataGroups || dataRes.data_groups || [];
                 loaded.push(parsed);
               }
             } catch (err) {
@@ -646,6 +658,7 @@ const ModelEditor = () => {
               const datasetName = dataRes.dataset_name || `${activeStudy.name} Data`;
               const parsed = processData(datasetName, dataRes.columns, dataRes.rows);
               parsed.id = (dataRes as any).dataset_id || dataRes.id || `ds_${Date.now()}`;
+              parsed.dataGroups = dataRes.dataGroups || dataRes.data_groups || [];
               setStudyDatasets(effectiveStudyId, [parsed]);
               setActiveDataset(parsed);
               activeDatasetRef.current = parsed;
@@ -1010,7 +1023,8 @@ const ModelEditor = () => {
             activeDataset.rows,
             undefined,
             undefined,
-            activeDataset.id
+            activeDataset.id,
+            activeDataset.dataGroups
           );
         } catch (err) {
           console.warn('Failed auto-saving active dataset before calculate:', err);
@@ -1894,6 +1908,7 @@ const ModelEditor = () => {
                 if (dataRes && Array.isArray(dataRes.columns) && Array.isArray(dataRes.rows)) {
                   matching = processData(dataRes.dataset_name || 'Dataset', dataRes.columns, dataRes.rows);
                   matching.id = boundDsId;
+                  matching.dataGroups = dataRes.dataGroups || dataRes.data_groups || [];
                   addStudyDataset(effectiveStudyId, matching);
                 }
               } catch (e) {
@@ -2144,6 +2159,7 @@ const ModelEditor = () => {
         </button>
         {isCalcMenuOpen && (
           <CalculationMenu
+            dataGroupsCount={activeDataset?.dataGroups?.length ?? 0}
             onSelect={(id) => {
               setIsCalcMenuOpen(false);
               if (id === 'pls' || id === 'consistent_pls') {
@@ -2154,6 +2170,10 @@ const ModelEditor = () => {
                 setIsBootstrapModalOpen(true);
               } else if (id === 'compare') {
                 setIsCompareModalOpen(true);
+              } else if (id === 'permutation') {
+                setIsPermutationModalOpen(true);
+              } else if (id === 'mga_groups') {
+                setIsMgaModalOpen(true);
               } else {
                 setAnalysisModalType(id);
                 setIsAnalysisModalOpen(true);
@@ -3492,27 +3512,29 @@ const ModelEditor = () => {
             <GitCompare size={13} />
             <span>Compare</span>
           </button>
-          <select
-            className="results-tool-btn results-export-select"
-            aria-label="Export results"
-            value=""
-            onChange={(event) => {
-              switch (event.target.value) {
-                case 'csv': handleExportCurrentTable(); break;
-                case 'excel': void handleExportExcel(); break;
-                case 'html': handleExportHtml(); break;
-                case 'scores': handleCreateDataFile(); break;
-                case 'print': handleCreateReport(); break;
-              }
-            }}
-          >
-            <option value="" disabled>Export</option>
-            <option value="csv">Current table as CSV</option>
-            <option value="excel">Current table as Excel</option>
-            <option value="html">Current table as HTML</option>
-            <option value="scores">Construct scores as CSV</option>
-            <option value="print">Print / save as PDF</option>
-          </select>
+          <div className="subheader__dropdown-container" ref={exportDropdownRef}>
+            <button
+              className="results-tool-btn"
+              type="button"
+              aria-expanded={isExportMenuOpen}
+              aria-haspopup="menu"
+              onClick={() => setIsExportMenuOpen(prev => !prev)}
+            >
+              <Download size={13} />
+              <span>Export</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 14, marginLeft: -2 }}>expand_more</span>
+            </button>
+            {isExportMenuOpen && (
+              <div className="subheader__dropdown-menu" role="menu" style={{ left: 0, right: 'auto', minWidth: 190 }}>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportCurrentTable(); }}>Current table as CSV</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); void handleExportExcel(); }}>Current table as Excel</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportHtml(); }}>Current table as HTML</button>
+                <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleCreateDataFile(); }}>Construct scores as CSV</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleCreateReport(); }}>Print / save as PDF</button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Outdated Calculation Notice Banner */}
@@ -4796,6 +4818,80 @@ const ModelEditor = () => {
     }}
     onClose={() => setIsAnalysisModalOpen(false)}
   />}
+
+  <PermutationDialog
+    isOpen={isPermutationModalOpen}
+    onClose={() => setIsPermutationModalOpen(false)}
+    projectPath={activeStudy?.path || undefined}
+    modelId={effectiveModelId || undefined}
+    datasetId={activeDataset?.id || undefined}
+    spec={exportModelSpec()}
+    columns={activeDataset?.variables?.map(v => v.name) || []}
+    rows={activeDataset?.rows || []}
+    dataGroups={activeDataset?.dataGroups || []}
+    initialSettings={plsResults?.settings}
+    onComplete={(report) => {
+      setIsPermutationModalOpen(false);
+      cacheMgaReport(report);
+      const studyKey = activeStudy?.path || effectiveStudyId || '';
+      if (studyKey) {
+        addStudyMgaReport(studyKey, {
+          id: report.id,
+          reportType: report.reportType,
+          title: report.title,
+          modelKey: report.modelId,
+          datasetId: report.datasetId,
+          createdAt: report.createdAt,
+        });
+      }
+      openTab({
+        type: 'mga-report',
+        title: report.title,
+        reportId: report.id,
+        reportType: report.reportType,
+        modelId: effectiveModelId,
+        studyId: effectiveStudyId,
+        workspaceId: currentTab?.workspaceId || activeWorkspaceId,
+      });
+    }}
+  />
+
+  <MgaDialog
+    isOpen={isMgaModalOpen}
+    onClose={() => setIsMgaModalOpen(false)}
+    projectPath={activeStudy?.path || undefined}
+    modelId={effectiveModelId || undefined}
+    datasetId={activeDataset?.id || undefined}
+    spec={exportModelSpec()}
+    columns={activeDataset?.variables?.map(v => v.name) || []}
+    rows={activeDataset?.rows || []}
+    dataGroups={activeDataset?.dataGroups || []}
+    initialSettings={plsResults?.settings}
+    onComplete={(report) => {
+      setIsMgaModalOpen(false);
+      cacheMgaReport(report);
+      const studyKey = activeStudy?.path || effectiveStudyId || '';
+      if (studyKey) {
+        addStudyMgaReport(studyKey, {
+          id: report.id,
+          reportType: report.reportType,
+          title: report.title,
+          modelKey: report.modelId,
+          datasetId: report.datasetId,
+          createdAt: report.createdAt,
+        });
+      }
+      openTab({
+        type: 'mga-report',
+        title: report.title,
+        reportId: report.id,
+        reportType: report.reportType,
+        modelId: effectiveModelId,
+        studyId: effectiveStudyId,
+        workspaceId: currentTab?.workspaceId || activeWorkspaceId,
+      });
+    }}
+  />
 
   <RedundancyWizardModal
     isOpen={isRedundancyWizardOpen}

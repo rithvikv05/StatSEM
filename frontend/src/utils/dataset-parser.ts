@@ -2,6 +2,7 @@ import Papa from 'papaparse';
 import ExcelJS from 'exceljs';
 import { SavBufferReader as SavReader } from 'sav-reader';
 import { Buffer } from 'buffer';
+import type { DataGroup } from '../mga/types';
 
 export interface ParsedVariable {
   name: string;
@@ -19,6 +20,7 @@ export interface ParsedDataset {
   filename: string;
   variables: ParsedVariable[];
   rows: any[][]; // array of arrays (rows)
+  dataGroups?: DataGroup[];
 }
 
 function guessCategory(name: string): string {

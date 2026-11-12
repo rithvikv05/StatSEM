@@ -99,6 +99,8 @@ export async function promptOpenWorkspaceFolder(targetType: 'folder' | 'zip' = '
             const dRes = await api.loadProjectData(s.path);
             if (dRes?.rows && dRes?.columns) {
               const parsed = processData(dRes.dataset_name || s.name, dRes.columns, dRes.rows);
+              parsed.id = dRes.id;
+              parsed.dataGroups = dRes.dataGroups || dRes.data_groups || [];
               state.setStudyDataset(s.id, parsed);
             }
           } catch (e) {
@@ -190,6 +192,8 @@ export async function promptOpenWorkspaceFolder(targetType: 'folder' | 'zip' = '
             const dRes = await api.loadProjectData(s.path);
             if (dRes?.rows && dRes?.columns) {
               const parsed = processData(dRes.dataset_name || s.name, dRes.columns, dRes.rows);
+              parsed.id = dRes.id;
+              parsed.dataGroups = dRes.dataGroups || dRes.data_groups || [];
               state.setStudyDataset(s.id, parsed);
             }
           } catch (e) {

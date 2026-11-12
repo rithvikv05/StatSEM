@@ -3,6 +3,7 @@ import { persist, type PersistStorage } from 'zustand/middleware';
 import type { ParsedDataset } from './utils/dataset-parser';
 import { api } from './utils/api';
 import { DEFAULT_DECIMAL_DIGITS, normalizeDecimalDigits } from './utils/number-format';
+import type { MgaReport, MgaReportSummary, PermutationReport } from './mga/types';
 import {
   type LicenseStatus,
   getLicenseStatus,
@@ -149,13 +150,15 @@ export interface StudySnapshot {
 
 export interface AppTab {
   id: string;
-  type: 'get-started' | 'workspace' | 'model' | 'archive' | 'dataset' | 'docs' | 'samples' | 'feedback' | 'changelog' | 'snapshot';
+  type: 'get-started' | 'workspace' | 'model' | 'archive' | 'dataset' | 'docs' | 'samples' | 'feedback' | 'changelog' | 'snapshot' | 'mga-report';
   title: string;
   workspaceId?: string | null;
   studyId?: string | null;
   modelId?: string | null;
   datasetId?: string | null;
   snapshotId?: string | null;
+  reportId?: string | null;
+  reportType?: 'permutation' | 'mga';
 }
 
 interface AppState {
@@ -209,6 +212,12 @@ interface AppState {
   setStudySnapshots: (studyId: string, snapshots: StudySnapshot[]) => void;
   addStudySnapshot: (studyId: string, snapshot: StudySnapshot) => void;
   removeStudySnapshot: (studyId: string, snapshotId: string) => void;
+  mgaReportsByStudy: Record<string, MgaReportSummary[]>;
+  mgaReportCache: Record<string, PermutationReport | MgaReport>;
+  setStudyMgaReports: (studyId: string, reports: MgaReportSummary[]) => void;
+  addStudyMgaReport: (studyId: string, report: MgaReportSummary) => void;
+  removeStudyMgaReport: (studyId: string, reportId: string) => void;
+  cacheMgaReport: (report: PermutationReport | MgaReport) => void;
   activeModelId: string | null;
   addModel: (model: Model) => void;
   removeModel: (id: string) => void;
@@ -584,6 +593,34 @@ export const useStore = create<AppState>()(
           };
         }
 
+        if (tabInput.type === 'mga-report' && tabInput.reportId) {
+          const existing = state.tabs.find(t => t.type === 'mga-report' && t.reportId === tabInput.reportId);
+          if (existing) {
+            return {
+              activeTabId: existing.id,
+              activeStudyId: tabInput.studyId ?? state.activeStudyId,
+              activeWorkspaceId: tabInput.workspaceId ?? state.activeWorkspaceId,
+            };
+          }
+          const id = tabInput.id || `tab-mga-${tabInput.reportId}`;
+          const newTab: AppTab = {
+            id,
+            type: 'mga-report',
+            title: tabInput.title || 'MGA Report',
+            workspaceId: tabInput.workspaceId,
+            studyId: tabInput.studyId,
+            modelId: tabInput.modelId,
+            reportId: tabInput.reportId,
+            reportType: tabInput.reportType,
+          };
+          return {
+            tabs: [...state.tabs, newTab],
+            activeTabId: id,
+            activeStudyId: tabInput.studyId ?? state.activeStudyId,
+            activeWorkspaceId: tabInput.workspaceId ?? state.activeWorkspaceId,
+          };
+        }
+
         const id = tabInput.id || `tab-${Date.now()}`;
         const newTab: AppTab = { ...tabInput, id };
         return { tabs: [...state.tabs, newTab], activeTabId: id };
@@ -612,7 +649,7 @@ export const useStore = create<AppState>()(
             nextModelId = nextTab.modelId ?? null;
             nextStudyId = nextTab.studyId ?? null;
             nextWsId = nextTab.workspaceId ?? null;
-          } else if (nextTab.type === 'dataset') {
+          } else if (nextTab.type === 'dataset' || nextTab.type === 'snapshot' || nextTab.type === 'mga-report') {
             nextStudyId = nextTab.studyId ?? null;
             nextWsId = nextTab.workspaceId ?? null;
           }
@@ -657,7 +694,7 @@ export const useStore = create<AppState>()(
             nextModelId = nextTab.modelId ?? null;
             nextStudyId = nextTab.studyId ?? null;
             nextWsId = nextTab.workspaceId ?? null;
-          } else if (nextTab.type === 'dataset') {
+          } else if (nextTab.type === 'dataset' || nextTab.type === 'snapshot' || nextTab.type === 'mga-report') {
             nextStudyId = nextTab.studyId ?? null;
             nextWsId = nextTab.workspaceId ?? null;
           } else {
@@ -687,7 +724,7 @@ export const useStore = create<AppState>()(
           if (tab.workspaceId) nextWs = tab.workspaceId;
           if (tab.studyId) nextStudy = tab.studyId;
           if (tab.modelId) nextModel = tab.modelId;
-        } else if (tab.type === 'dataset') {
+        } else if (tab.type === 'dataset' || tab.type === 'snapshot' || tab.type === 'mga-report') {
           if (tab.workspaceId) nextWs = tab.workspaceId;
           if (tab.studyId) nextStudy = tab.studyId;
         }
@@ -737,6 +774,39 @@ export const useStore = create<AppState>()(
             ...state.snapshotsByStudy,
             [studyId]: (state.snapshotsByStudy[studyId] || []).filter((s) => s.id !== snapshotId),
           },
+        })),
+      mgaReportsByStudy: {},
+      mgaReportCache: {},
+      setStudyMgaReports: (studyId, reports) =>
+        set((state) => ({
+          mgaReportsByStudy: { ...state.mgaReportsByStudy, [studyId]: reports },
+        })),
+      addStudyMgaReport: (studyId, report) =>
+        set((state) => {
+          const current = state.mgaReportsByStudy[studyId] || [];
+          return {
+            mgaReportsByStudy: {
+              ...state.mgaReportsByStudy,
+              [studyId]: [report, ...current.filter((r) => r.id !== report.id)],
+            },
+          };
+        }),
+      removeStudyMgaReport: (studyId, reportId) =>
+        set((state) => {
+          const nextCache = { ...state.mgaReportCache };
+          delete nextCache[reportId];
+          return {
+            mgaReportsByStudy: {
+              ...state.mgaReportsByStudy,
+              [studyId]: (state.mgaReportsByStudy[studyId] || []).filter((r) => r.id !== reportId),
+            },
+            mgaReportCache: nextCache,
+            tabs: state.tabs.filter((t) => !(t.type === 'mga-report' && t.reportId === reportId)),
+          };
+        }),
+      cacheMgaReport: (report) =>
+        set((state) => ({
+          mgaReportCache: { ...state.mgaReportCache, [report.id]: report },
         })),
       activeModelId: null,
       addModel: (model) => set((state) => ({ models: [...state.models, model] })),

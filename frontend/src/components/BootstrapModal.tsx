@@ -5,7 +5,7 @@ import type { ModelSpec } from '../utils/api';
 import type { DataGroup } from '../mga/types';
 import type { ModelCalculationSettings } from './ModelCalculationModal';
 import { getGroupRows } from '../mga/groupUtils';
-import { PlsSetupTab, DataSetupTab, type PlsSetupSettings, type DataSetupSettings } from './CalculationCommonTabs';
+import { PlsSetupTab, DataSetupTab, CalculationTabSlider, type PlsSetupSettings, type DataSetupSettings } from './CalculationCommonTabs';
 
 interface BootstrapModalProps {
   isOpen: boolean;
@@ -333,14 +333,9 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
         style={{ maxWidth: 540, width: '92vw' }}
       >
         <div className="modal__header">
-          <div>
-            <h3 className="modal__title" id="bootstrap-title">
-              {consistent ? 'Consistent Bootstrapping (PLSc)' : 'Bootstrapping Algorithm'}
-            </h3>
-            <p className="modal__subtitle">
-              Resampling procedure for significance testing and confidence intervals
-            </p>
-          </div>
+          <h2 className="modal__title" id="bootstrap-title" style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>
+            {consistent ? 'Consistent Bootstrapping (PLSc)' : 'Bootstrapping'}
+          </h2>
           {stage !== 'running' && (
             <button className="calculation-close" aria-label="Close" onClick={onClose}>
               ×
@@ -385,35 +380,15 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
             <>
               {errorMsg && <div className="results-notice results-notice--danger">{errorMsg}</div>}
 
-              <div className="view-toggle" role="tablist" style={{ alignSelf: 'flex-start' }}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'bootstrap'}
-                  className={`view-toggle__btn ${activeTab === 'bootstrap' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('bootstrap')}
-                >
-                  Bootstrapping
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'pls'}
-                  className={`view-toggle__btn ${activeTab === 'pls' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('pls')}
-                >
-                  PLS setup
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'data'}
-                  className={`view-toggle__btn ${activeTab === 'data' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('data')}
-                >
-                  Data setup
-                </button>
-              </div>
+              <CalculationTabSlider
+                tabs={[
+                  { id: 'bootstrap', label: 'Bootstrapping' },
+                  { id: 'pls', label: 'PLS setup' },
+                  { id: 'data', label: 'Data setup' },
+                ]}
+                activeTab={activeTab}
+                onChange={t => setActiveTab(t as any)}
+              />
 
               {activeTab === 'bootstrap' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>

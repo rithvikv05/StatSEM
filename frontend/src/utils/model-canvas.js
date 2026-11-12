@@ -2286,6 +2286,14 @@ export function initModelCanvas() {
         return cid;
       }
     }
+    if (struct.path_coefficients) {
+      if (struct.path_coefficients[node.id] || Object.values(struct.path_coefficients).some(p => p && p[node.id] !== undefined)) {
+        return node.id;
+      }
+      if (node.label && (struct.path_coefficients[node.label] || Object.values(struct.path_coefficients).some(p => p && p[node.label] !== undefined))) {
+        return node.label;
+      }
+    }
     return null;
   }
 
@@ -2332,6 +2340,19 @@ export function initModelCanvas() {
         for (const s of sCandidates) {
           if (paths[t][s] !== undefined) {
             return Number(paths[t][s]);
+          }
+        }
+      }
+    }
+
+    // Fallback: case-insensitive match across all targets and sources
+    for (const [t, sMap] of Object.entries(paths)) {
+      const matchT = tCandidates.some(tc => tc && tc.toLowerCase() === t.toLowerCase());
+      if (matchT && sMap) {
+        for (const [s, val] of Object.entries(sMap)) {
+          const matchS = sCandidates.some(sc => sc && sc.toLowerCase() === s.toLowerCase());
+          if (matchS && val !== undefined && val !== null) {
+            return Number(val);
           }
         }
       }

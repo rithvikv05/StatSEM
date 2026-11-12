@@ -51,12 +51,15 @@ const Dashboard = () => {
     if (!activeWorkspaceId) return;
     const wsStudies = studies.filter(s => s.workspaceId === activeWorkspaceId);
     wsStudies.forEach(study => {
-      if (study.path && !snapshotsByStudy[study.path] && !snapshotsInFlight.current.has(study.path)) {
+      if (study.path && !snapshotsInFlight.current.has(study.path)) {
         const path = study.path;
         snapshotsInFlight.current.add(path);
         api.listSnapshots(path).then(snaps => {
           if (Array.isArray(snaps)) {
             setStudySnapshots(path, snaps);
+            if (study.id) {
+              setStudySnapshots(study.id, snaps);
+            }
           }
         }).catch(() => {}).finally(() => snapshotsInFlight.current.delete(path));
       }
@@ -70,7 +73,7 @@ const Dashboard = () => {
         }).catch(() => {}).finally(() => mgaReportsInFlight.current.delete(path));
       }
     });
-  }, [activeWorkspaceId, studies, snapshotsByStudy, setStudySnapshots, mgaReportsByStudy, setStudyMgaReports]);
+  }, [activeWorkspaceId, studies, setStudySnapshots, mgaReportsByStudy, setStudyMgaReports]);
 
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
   const [isWorkspaceSearchOpen, setIsWorkspaceSearchOpen] = useState(false);
@@ -716,8 +719,7 @@ const Dashboard = () => {
                   const studyModels = models.filter(m => m.studyId === study.id);
                   const studyDatasets = getStudyDatasets(datasetsByStudy, study.id);
                   const studySnapshots = (study.path ? snapshotsByStudy[study.path] : null) || snapshotsByStudy[study.id] || [];
-                  const studyMgaReports = (study.path ? mgaReportsByStudy[study.path] : null) || mgaReportsByStudy[study.id] || [];
-                  const totalItems = studyModels.length + studyDatasets.length + studySnapshots.length + studyMgaReports.length;
+                  const totalItems = studyModels.length + studyDatasets.length + studySnapshots.length;
                   const isEmpty = totalItems === 0;
                   const isExpanded = expandedStudies.has(study.id);
                   
@@ -1198,6 +1200,7 @@ const Dashboard = () => {
                                             if (study.path) {
                                               await api.deleteSnapshot(study.path, snapshot.id);
                                               removeStudySnapshot(study.path, snapshot.id);
+                                              if (study.id) removeStudySnapshot(study.id, snapshot.id);
                                             }
                                           }
                                         });
@@ -1213,82 +1216,6 @@ const Dashboard = () => {
                                 </div>
                                 <div className="file-row__meta">
                                   <span className="file-row__time">{new Date(snapshot.created_at).toLocaleDateString()}</span>
-                                  <span style={{ width: '16px' }}></span>
-                                </div>
-                              </div>
-                            ))}
-                            {studyMgaReports.map(report => (
-                              <div
-                                key={report.id}
-                                className="file-row"
-                                onClick={() => {
-                                  setActiveStudy(study.id);
-                                  openTab({
-                                    type: 'mga-report',
-                                    title: report.title,
-                                    reportId: report.id,
-                                    reportType: report.reportType,
-                                    modelId: report.modelKey,
-                                    studyId: study.id,
-                                    workspaceId: activeWorkspaceId,
-                                  });
-                                }}
-                                onContextMenu={e => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  useStore.getState().openContextMenu(e.clientX, e.clientY, [
-                                    {
-                                      id: 'open-mga-report',
-                                      label: 'Open Report',
-                                      icon: 'visibility',
-                                      action: () => {
-                                        setActiveStudy(study.id);
-                                        openTab({
-                                          type: 'mga-report',
-                                          title: report.title,
-                                          reportId: report.id,
-                                          reportType: report.reportType,
-                                          modelId: report.modelKey,
-                                          studyId: study.id,
-                                          workspaceId: activeWorkspaceId,
-                                        });
-                                      }
-                                    },
-                                    {
-                                      id: 'delete-mga-report',
-                                      label: 'Delete Report',
-                                      icon: 'delete',
-                                      danger: true,
-                                      action: () => {
-                                        requestDelete({
-                                          title: 'Delete Multigroup Report',
-                                          itemName: report.title,
-                                          message: 'Are you sure? This report will be permanently deleted.',
-                                          onConfirm: async () => {
-                                            if (study.path) {
-                                              await mgaApi.deleteReport(study.path, report.id);
-                                              removeStudyMgaReport(study.path, report.id);
-                                            } else {
-                                              removeStudyMgaReport(study.id, report.id);
-                                            }
-                                          }
-                                        });
-                                      }
-                                    }
-                                  ]);
-                                }}
-                              >
-                                <div className="file-row__left">
-                                  <span className="material-symbols-outlined" style={{ color: 'var(--color-accent)' }}>
-                                    {report.reportType === 'permutation' ? 'shuffle' : 'compare_arrows'}
-                                  </span>
-                                  <span>{report.title}</span>
-                                  <span className="file-badge file-badge--accent" style={{ fontSize: '10px' }}>
-                                    {report.reportType === 'permutation' ? 'Permutation' : 'MGA'}
-                                  </span>
-                                </div>
-                                <div className="file-row__meta">
-                                  <span className="file-row__time">{new Date(report.createdAt).toLocaleString()}</span>
                                   <span style={{ width: '16px' }}></span>
                                 </div>
                               </div>

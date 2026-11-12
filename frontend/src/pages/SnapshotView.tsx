@@ -26,6 +26,8 @@ import { hasRunDetails } from '../utils/run-details';
 import { ModelFitResults } from '../components/ModelFitResults';
 import { DiagramExportModal } from '../components/DiagramExportModal';
 import { ModelComparisonModal } from '../components/ModelComparisonModal';
+import { MgaActiveTableView } from '../mga/MgaActiveTableView';
+import { getMgaCanvasResultForMode } from '../mga/mgaToCanvas';
 import { performAutoLayout, resolveBadgePositions } from '../utils/semLayoutEngine';
 import '../model-canvas.css';
 import '../results.css';
@@ -203,7 +205,15 @@ export const SnapshotView: React.FC = () => {
     };
   }, [activeStudy?.path, activeTab?.snapshotId]);
 
-  const results = snapshot?.results;
+  const [mgaCanvasMode, setMgaCanvasMode] = useState<'group_a' | 'group_b' | 'difference'>('group_a');
+  const rawResults = snapshot?.results;
+  const results = useMemo(() => {
+    if (!rawResults) return null;
+    if (rawResults.is_mga) {
+      return getMgaCanvasResultForMode(rawResults, mgaCanvasMode);
+    }
+    return rawResults;
+  }, [rawResults, mgaCanvasMode]);
   const spec = snapshot?.spec || snapshot?.model_spec;
   const layout = snapshot?.diagram_layout;
 
@@ -626,6 +636,40 @@ export const SnapshotView: React.FC = () => {
     formatPValue(val, decimals, decimalSystem);
 
   const reportTabDetails = useMemo(() => {
+    if (results?.is_mga) {
+      const rep = results.mga_report;
+      const gA = rep?.groupAName || 'Group A';
+      const gB = rep?.groupBName || 'Group B';
+      const sub = `${gA} (n=${rep?.nA ?? '?'}) vs ${gB} (n=${rep?.nB ?? '?'})`;
+      const [baseTab, subKey] = activeResultTab.includes('__')
+        ? activeResultTab.split('__')
+        : [activeResultTab, 'bootstrap_mga'];
+      const subLabel =
+        subKey === 'parametric' ? 'Parametric Test'
+        : subKey === 'welch' ? 'Welch-Satterthwaite Test'
+        : subKey === 'confidence_intervals' ? 'Confidence Intervals (Bias-Corrected)'
+        : subKey === 'bootstrapping_results' ? 'Bootstrapping Results'
+        : results.mga_type === 'permutation' ? 'Permutation' : 'Bootstrap MGA';
+      const badge = subLabel;
+      switch (baseTab) {
+        case 'path_coefficients':
+          return { title: 'Path Coefficients', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'total_effects':
+          return { title: 'Total Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'total_indirect_effects':
+          return { title: 'Total Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'specific_indirect_effects':
+          return { title: 'Specific Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'outer_loadings':
+          return { title: 'Outer Loadings', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'outer_weights':
+          return { title: 'Outer Weights', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'micom':
+          return { title: 'MICOM Measurement Invariance', badge: 'Permutation', subtitle: 'Step 1: Configural, Step 2: Compositional, Step 3: Mean & Variance Invariance' };
+        case 'run_details':
+          return { title: 'Run Details & Settings', badge: 'MGA', subtitle: 'Algorithm configuration, data group specifications, and sample counts.' };
+      }
+    }
     switch (activeResultTab) {
       case 'path_coefficients':
         return {
@@ -975,6 +1019,33 @@ export const SnapshotView: React.FC = () => {
           </div>
 
           <div className="subheader__actions">
+            {/* MGA Canvas Group Selector (SmartPLS parity, docked in subheader) */}
+            {rawResults?.is_mga && currentView === 'diagram' && (
+              <div className="subheader__switcher" style={{ marginRight: '4px' }}>
+                <button
+                  type="button"
+                  className={`subheader__switcher-btn ${mgaCanvasMode === 'group_a' ? 'active' : ''}`}
+                  onClick={() => setMgaCanvasMode('group_a')}
+                >
+                  {rawResults.groupAName || 'Group A'}
+                </button>
+                <button
+                  type="button"
+                  className={`subheader__switcher-btn ${mgaCanvasMode === 'group_b' ? 'active' : ''}`}
+                  onClick={() => setMgaCanvasMode('group_b')}
+                >
+                  {rawResults.groupBName || 'Group B'}
+                </button>
+                <button
+                  type="button"
+                  className={`subheader__switcher-btn ${mgaCanvasMode === 'difference' ? 'active' : ''}`}
+                  onClick={() => setMgaCanvasMode('difference')}
+                >
+                  Difference
+                </button>
+              </div>
+            )}
+
             {/* View Switcher: Diagram vs Results */}
             <div className="subheader__switcher">
               <button
@@ -1018,7 +1089,9 @@ export const SnapshotView: React.FC = () => {
                 onSelect={setActiveResultTab}
                 hasRedundancy={!!results?.convergent_validity_redundancy}
                 hasRunDetails={hasRunDetails(results)}
-                hasSpecificIndirect={!!(results?.effects_decomposition?.specific_indirect?.length || results?.structural?.specific_indirect?.length)}
+                hasSpecificIndirect={results?.is_mga ? !!(results?.mga_report?.specificIndirectEffects?.length) : !!(results?.effects_decomposition?.specific_indirect?.length || results?.structural?.specific_indirect?.length)}
+                isMga={!!results?.is_mga}
+                hasMicom={results?.is_mga && results?.mga_type === 'permutation'}
               />
 
               {/* Main Content Area */}
@@ -1075,25 +1148,31 @@ export const SnapshotView: React.FC = () => {
                       </p>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                      <button
-                        className="results-tool-btn"
-                        type="button"
-                        onClick={handleCopyTable}
-                        title="Copy table to clipboard"
-                      >
-                        <Copy size={13} />
-                        <span>Copy Table</span>
-                      </button>
-
-                    </div>
+                    {!results?.is_mga && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                        <button
+                          className="results-tool-btn"
+                          type="button"
+                          onClick={handleCopyTable}
+                          title="Copy table to clipboard"
+                        >
+                          <Copy size={13} />
+                          <span>Copy Table</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Table Container */}
                 <div className="table-container">
                   <div className="scientific-table-wrap">
-                    {activeResultTab === 'specific_indirect_effects' ? (
+                    {results?.is_mga && results?.mga_report ? (
+                      <MgaActiveTableView
+                        report={results.mga_report}
+                        activeTab={activeResultTab}
+                      />
+                    ) : activeResultTab === 'specific_indirect_effects' ? (
                       <SpecificIndirectResults results={results} />
                     ) : activeResultTab === 'run_details' ? (
                       <RunDetails results={results} />

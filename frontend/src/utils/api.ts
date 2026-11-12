@@ -622,6 +622,37 @@ export const api = {
     }
   },
 
+  async saveProjectResults(data: {
+    projectPath: string;
+    modelId?: string;
+    datasetId?: string;
+    algorithm?: string;
+    analysisType?: string;
+    results: any;
+    spec?: any;
+    diagramLayout?: any;
+  }): Promise<{ status?: string; created_at?: string; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/project/save-results`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: data.projectPath,
+          model_id: data.modelId,
+          dataset_id: data.datasetId,
+          algorithm: data.algorithm || 'pls',
+          analysis_type: data.analysisType || 'pls',
+          results: data.results,
+          spec: data.spec,
+          diagram_layout: data.diagramLayout,
+        }),
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { error: err?.message || 'Failed to save calculation results' };
+    }
+  },
+
   async listProjectAnalyses(projectPath: string, modelId?: string): Promise<string[]> {
     try {
       let url = `${API_BASE}/project/analysis-list?path=${encodeURIComponent(projectPath)}`;

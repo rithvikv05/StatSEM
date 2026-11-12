@@ -158,19 +158,6 @@ pub fn start_permutation(body: &Value, query: &HashMap<String, String>) -> Resul
                     return;
                 }
                 let report_json = json!(report);
-                if let Some(path) = project_path {
-                    let store = Store::new(path);
-                    let _ = store.save_mga_report(
-                        &report.id,
-                        "permutation",
-                        &report.title,
-                        Some(&model_id),
-                        dataset_id.as_deref(),
-                        &spec,
-                        &report_json,
-                        &report.created_at,
-                    );
-                }
                 if let Ok(mut j) = job.lock() {
                     j.status = "completed".into();
                     j.current = j.total;
@@ -345,19 +332,6 @@ pub fn start_bootstrap_mga(body: &Value, query: &HashMap<String, String>) -> Res
                     return;
                 }
                 let report_json = json!(report);
-                if let Some(path) = project_path {
-                    let store = Store::new(path);
-                    let _ = store.save_mga_report(
-                        &report.id,
-                        "mga",
-                        &report.title,
-                        Some(&model_id),
-                        dataset_id.as_deref(),
-                        &spec,
-                        &report_json,
-                        &report.created_at,
-                    );
-                }
                 if let Ok(mut j) = job.lock() {
                     j.status = "completed".into();
                     j.current = j.total;

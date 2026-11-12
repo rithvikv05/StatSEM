@@ -5,7 +5,7 @@ import { Checkbox } from './Checkbox';
 import type { DataGroup } from '../mga/types';
 import { getGroupRows } from '../mga/groupUtils';
 import type { ModelCalculationSettings } from './ModelCalculationModal';
-import { PlsSetupTab, DataSetupTab, type PlsSetupSettings, type DataSetupSettings } from './CalculationCommonTabs';
+import { PlsSetupTab, DataSetupTab, CalculationTabSlider, type PlsSetupSettings, type DataSetupSettings } from './CalculationCommonTabs';
 
 export interface AnalysisModalProps {
   isOpen: boolean;
@@ -362,12 +362,9 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
         style={{ maxWidth: 580, width: '94vw' }}
       >
         <div className="modal__header">
-          <div>
-            <h3 className="modal__title" id="analysis-modal-title">
-              {titles[analysisType] || 'Calculation'}
-            </h3>
-            <p className="modal__subtitle">Configure settings and run estimation</p>
-          </div>
+          <h2 className="modal__title" id="analysis-modal-title" style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>
+            {titles[analysisType] || 'Calculation'}
+          </h2>
           {!running && (
             <button className="calculation-close" aria-label="Close" onClick={onClose}>
               ×
@@ -379,20 +376,11 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
           {error && <div className="results-notice results-notice--danger">{error}</div>}
 
           {tabs.length > 1 && (
-            <div className="view-toggle" role="tablist" style={{ alignSelf: 'flex-start' }}>
-              {tabs.map(t => (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === t.id}
-                  className={`view-toggle__btn ${activeTab === t.id ? 'active' : ''}`}
-                  onClick={() => setActiveTab(t.id)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            <CalculationTabSlider
+              tabs={tabs}
+              activeTab={activeTab}
+              onChange={setActiveTab}
+            />
           )}
 
           {/* CTA setup */}

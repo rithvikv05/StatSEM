@@ -19,6 +19,8 @@ import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { DiagramExportModal } from '../components/DiagramExportModal';
 import { PermutationDialog } from '../mga/PermutationDialog';
 import { MgaDialog } from '../mga/MgaDialog';
+import { MgaActiveTableView } from '../mga/MgaActiveTableView';
+import { createMgaPlsResults, getMgaCanvasResultForMode } from '../mga/mgaToCanvas';
 import { getGroupRows } from '../mga/groupUtils';
 import type { ParsedDataset } from '../utils/dataset-parser';
 import { parseDatasetFile, processData } from '../utils/dataset-parser';
@@ -154,8 +156,9 @@ const ModelEditor = () => {
     touchStudy,
     openTab,
     addStudySnapshot,
-    addStudyMgaReport,
-    cacheMgaReport,
+    setStudySnapshots,
+    modelResultsCache,
+    setModelResultCache,
     addModel,
     setActiveModel,
     theme,
@@ -221,6 +224,7 @@ const ModelEditor = () => {
   const [permutationConsistent, setPermutationConsistent] = useState(false);
   const [isMgaModalOpen, setIsMgaModalOpen] = useState(false);
   const [mgaConsistent, setMgaConsistent] = useState(false);
+  const [mgaCanvasMode, setMgaCanvasMode] = useState<'group_a' | 'group_b' | 'difference'>('group_a');
   const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [analysisModalType, setAnalysisModalType] = useState<string>('predict');
@@ -880,7 +884,7 @@ const ModelEditor = () => {
       } else {
         setAutoSaveError(null);
         setAutoSaveStatus('saved');
-        if (hasCalculatedOnceRef.current) {
+        if (hasCalculatedOnceRef.current && !plsResultsRef.current?.is_mga && !plsResultsRef.current?.is_bootstrap) {
           performSilentRecalculate();
         }
       }
@@ -893,6 +897,7 @@ const ModelEditor = () => {
 
   const performSilentRecalculate = async () => {
     if (!hasCalculatedOnceRef.current || isAutoCalculatingRef.current || !activeStudy?.path) return;
+    if (plsResultsRef.current?.is_mga || plsResultsRef.current?.is_bootstrap) return;
     if (hasInvalidLatentVariables()) {
       setIsModelOutdated(true);
       return;
@@ -961,8 +966,13 @@ const ModelEditor = () => {
       if (view === 'model') {
         (viewModel as HTMLElement).style.display = 'flex';
         (viewResults as HTMLElement).style.display = 'none';
-        if (plsResults) {
-          setCanvasResults(plsResults);
+        const res = plsResultsRef.current || plsResults;
+        if (res) {
+          if (res.is_mga) {
+            setCanvasResults(getMgaCanvasResultForMode(res, mgaCanvasMode));
+          } else {
+            setCanvasResults(res);
+          }
         }
         if (sliderBg && sliderBtns && sliderBtns.length >= 2) {
           (sliderBg as HTMLElement).style.transform = 'translateX(0)';
@@ -1097,11 +1107,35 @@ const ModelEditor = () => {
   };
 
   useEffect(() => {
+    if (!effectiveModelId) return;
+    const cached = modelResultsCache[effectiveModelId];
+    if (cached) {
+      setPlsResults(cached);
+      plsResultsRef.current = cached;
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      const toApply = cached.is_mga
+        ? getMgaCanvasResultForMode(cached, mgaCanvasMode)
+        : cached;
+      setCanvasResults(toApply);
+      setIsModelOutdated(false);
+      const viewSlider = document.getElementById('main-view-slider');
+      if (viewSlider) {
+        (viewSlider as HTMLElement).style.display = 'flex';
+      }
+    }
+  }, [effectiveModelId]);
+
+  useEffect(() => {
     if (activeStudy?.path) {
       api.loadProjectResults(activeStudy.path, 'pls', effectiveModelId || undefined).then((res) => {
         if (res && res.results) {
-          setPlsResults(res.results);
-          plsResultsRef.current = res.results;
+          const finalResults = res.results;
+          setPlsResults(finalResults);
+          plsResultsRef.current = finalResults;
+          if (effectiveModelId) {
+            setModelResultCache(effectiveModelId, finalResults);
+          }
           setHasCalculatedOnce(true);
           hasCalculatedOnceRef.current = true;
           const calculatedSpec = res.spec || exportModelSpec();
@@ -1110,23 +1144,27 @@ const ModelEditor = () => {
           setLastCalculatedModel(calculatedSnapshot);
           lastCalculatedModelRef.current = calculatedSnapshot;
 
+          const toApply = finalResults.is_mga
+            ? getMgaCanvasResultForMode(finalResults, mgaCanvasMode)
+            : finalResults;
+
           // Only compare if canvas is fully loaded; otherwise wait for canvas loader to complete
           if (!isCanvasLoadingRef.current && res.spec) {
             try {
               const currentSpec = exportModelSpec();
               if (!isModelTopologyEqual(currentSpec, calculatedSpec)) {
                 setIsModelOutdated(true);
-                setCanvasResults(res.results);
+                setCanvasResults(toApply);
               } else {
-                setCanvasResults(res.results);
+                setCanvasResults(toApply);
                 setIsModelOutdated(false);
               }
             } catch (e) {
-              setCanvasResults(res.results);
+              setCanvasResults(toApply);
               setIsModelOutdated(false);
             }
           } else {
-            setCanvasResults(res.results);
+            setCanvasResults(toApply);
             setIsModelOutdated(false);
           }
 
@@ -1135,6 +1173,8 @@ const ModelEditor = () => {
             (viewSlider as HTMLElement).style.display = 'flex';
           }
         } else {
+          // If in-memory cache has results for this model, don't wipe them
+          if (effectiveModelId && modelResultsCache[effectiveModelId]) return;
           setHasCalculatedOnce(false);
           hasCalculatedOnceRef.current = false;
           setPlsResults(null);
@@ -1217,9 +1257,20 @@ const ModelEditor = () => {
         alert('Failed to save snapshot: ' + res.error);
         return;
       }
-      if (res.snapshot) {
-        addStudySnapshot(targetStudy.path, res.snapshot);
+      const snapshotObj = res.snapshot || (res.id ? res : null);
+      if (snapshotObj) {
+        addStudySnapshot(targetStudy.path, snapshotObj);
+        if (targetStudy.id) {
+          addStudySnapshot(targetStudy.id, snapshotObj);
+        }
       }
+      // Re-fetch snapshots from SQLite to ensure store is completely authoritative
+      api.listSnapshots(targetStudy.path).then(snaps => {
+        if (Array.isArray(snaps)) {
+          setStudySnapshots(targetStudy.path, snaps);
+          if (targetStudy.id) setStudySnapshots(targetStudy.id, snaps);
+        }
+      }).catch(() => {});
       setIsSnapshotModalOpen(false);
       setSaveToast('Snapshot saved successfully');
       setTimeout(() => setSaveToast(null), 3000);
@@ -1701,6 +1752,40 @@ const ModelEditor = () => {
   }, [plsResults]);
 
   const reportTabDetails = useMemo(() => {
+    if (plsResults?.is_mga) {
+      const rep = plsResults.mga_report;
+      const gA = rep?.groupAName || 'Group A';
+      const gB = rep?.groupBName || 'Group B';
+      const sub = `${gA} (n=${rep?.nA ?? '?'}) vs ${gB} (n=${rep?.nB ?? '?'})`;
+      const [baseTab, subKey] = activeResultTab.includes('__')
+        ? activeResultTab.split('__')
+        : [activeResultTab, 'bootstrap_mga'];
+      const subLabel =
+        subKey === 'parametric' ? 'Parametric Test'
+        : subKey === 'welch' ? 'Welch-Satterthwaite Test'
+        : subKey === 'confidence_intervals' ? 'Confidence Intervals (Bias-Corrected)'
+        : subKey === 'bootstrapping_results' ? 'Bootstrapping Results'
+        : plsResults.mga_type === 'permutation' ? 'Permutation' : 'Bootstrap MGA';
+      const badge = subLabel;
+      switch (baseTab) {
+        case 'path_coefficients':
+          return { title: 'Path Coefficients', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'total_effects':
+          return { title: 'Total Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'total_indirect_effects':
+          return { title: 'Total Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'specific_indirect_effects':
+          return { title: 'Specific Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'outer_loadings':
+          return { title: 'Outer Loadings', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'outer_weights':
+          return { title: 'Outer Weights', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'micom':
+          return { title: 'MICOM Measurement Invariance', badge: 'Permutation', subtitle: 'Step 1: Configural, Step 2: Compositional, Step 3: Mean & Variance Invariance' };
+        case 'run_details':
+          return { title: 'Run Details & Settings', badge: 'MGA', subtitle: 'Algorithm configuration, data group specifications, and sample counts.' };
+      }
+    }
     switch (activeResultTab) {
       case 'path_coefficients':
         return {
@@ -2008,8 +2093,13 @@ const ModelEditor = () => {
             }
           } else {
             setIsModelOutdated(false);
-            if (plsResultsRef.current || plsResults) {
-              setCanvasResults(plsResultsRef.current || plsResults);
+            const res = plsResultsRef.current || plsResults;
+            if (res) {
+              if (res.is_mga) {
+                setCanvasResults(getMgaCanvasResultForMode(res, mgaCanvasMode));
+              } else {
+                setCanvasResults(res);
+              }
             }
           }
         } catch (e) {}
@@ -2133,6 +2223,42 @@ const ModelEditor = () => {
       </div>
     </div>
     <div className="subheader__actions">
+      {/* MGA Canvas Group Selector (SmartPLS parity, docked in subheader) */}
+      {plsResults?.is_mga && currentView === 'model' && (
+        <div className="subheader__switcher" style={{ marginRight: '4px' }}>
+          <button
+            type="button"
+            className={`subheader__switcher-btn ${mgaCanvasMode === 'group_a' ? 'active' : ''}`}
+            onClick={() => {
+              setMgaCanvasMode('group_a');
+              setCanvasResults(getMgaCanvasResultForMode(plsResults, 'group_a'));
+            }}
+          >
+            {plsResults.groupAName || 'Group A'}
+          </button>
+          <button
+            type="button"
+            className={`subheader__switcher-btn ${mgaCanvasMode === 'group_b' ? 'active' : ''}`}
+            onClick={() => {
+              setMgaCanvasMode('group_b');
+              setCanvasResults(getMgaCanvasResultForMode(plsResults, 'group_b'));
+            }}
+          >
+            {plsResults.groupBName || 'Group B'}
+          </button>
+          <button
+            type="button"
+            className={`subheader__switcher-btn ${mgaCanvasMode === 'difference' ? 'active' : ''}`}
+            onClick={() => {
+              setMgaCanvasMode('difference');
+              setCanvasResults(getMgaCanvasResultForMode(plsResults, 'difference'));
+            }}
+          >
+            Difference
+          </button>
+        </div>
+      )}
+
       {/* Inline Model | Results Switcher */}
       <div className="subheader__switcher">
         <button
@@ -3505,7 +3631,9 @@ const ModelEditor = () => {
         }}
         hasRedundancy={!!plsResults?.convergent_validity_redundancy}
         hasRunDetails={hasRunDetails(plsResults)}
-        hasSpecificIndirect={!!(plsResults?.effects_decomposition?.specific_indirect?.length || plsResults?.structural?.specific_indirect?.length || availableAnalyses.includes('mediation') || analysisResultsMap.mediation)}
+        hasSpecificIndirect={plsResults?.is_mga ? !!(plsResults?.mga_report?.specificIndirectEffects?.length) : !!(plsResults?.effects_decomposition?.specific_indirect?.length || plsResults?.structural?.specific_indirect?.length || availableAnalyses.includes('mediation') || analysisResultsMap.mediation)}
+        isMga={!!plsResults?.is_mga}
+        hasMicom={plsResults?.is_mga && plsResults?.mga_type === 'permutation'}
       />
       {/* ─── Center Results Area ─── */}
       <main className="results-main">
@@ -3637,25 +3765,31 @@ const ModelEditor = () => {
               </h1>
               <p className="report-header__subtitle">{reportTabDetails.subtitle}</p>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-              <button
-                className="results-tool-btn"
-                type="button"
-                onClick={handleCopyCurrentTable}
-                title="Copy table to clipboard"
-              >
-                <Copy size={13} />
-                <span>Copy Table</span>
-              </button>
-
-            </div>
+            {!plsResults?.is_mga && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <button
+                  className="results-tool-btn"
+                  type="button"
+                  onClick={handleCopyCurrentTable}
+                  title="Copy table to clipboard"
+                >
+                  <Copy size={13} />
+                  <span>Copy Table</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Dynamic Table Area */}
         <div className="table-container">
           <div className="scientific-table-wrap">
-            {activeResultTab === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
+            {plsResults?.is_mga && plsResults?.mga_report ? (
+              <MgaActiveTableView
+                report={plsResults.mga_report}
+                activeTab={activeResultTab}
+              />
+            ) : activeResultTab === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
               <>
                 {analysisLoading.mediation && <p className="results-empty-note">Loading mediation results...</p>}
                 {analysisErrors.mediation && <p className="results-empty-note">{analysisErrors.mediation} <button type="button" onClick={() => void loadAnalysis('mediation')}>Retry</button></p>}
@@ -4758,7 +4892,7 @@ const ModelEditor = () => {
               <ModelFitResults results={plsResults} />
             ) : null}
           </div>
-          {activeResultTab === 'path_coefficients' && (
+          {activeResultTab === 'path_coefficients' && !plsResults?.is_mga && (
             <InlineAnalysisResults results={plsResults} analyses={analysisResultsMap} available={availableAnalyses} latest={latestAnalysis}
               loading={analysisLoading} errors={analysisErrors} stale={analysisStale} onLoad={id => void loadAnalysis(id)} />
           )}
@@ -4853,27 +4987,37 @@ const ModelEditor = () => {
     initialSettings={plsResults?.settings}
     onComplete={(report) => {
       setIsPermutationModalOpen(false);
-      cacheMgaReport(report);
-      const studyKey = activeStudy?.path || effectiveStudyId || '';
-      if (studyKey) {
-        addStudyMgaReport(studyKey, {
-          id: report.id,
-          reportType: report.reportType,
-          title: report.title,
-          modelKey: report.modelId,
-          datasetId: report.datasetId,
-          createdAt: report.createdAt,
+      const mgaResults = createMgaPlsResults(report);
+      setPlsResults(mgaResults);
+      plsResultsRef.current = mgaResults;
+      if (effectiveModelId) {
+        setModelResultCache(effectiveModelId, mgaResults);
+      }
+      setCanvasResults(getMgaCanvasResultForMode(mgaResults, mgaCanvasMode));
+      if (activeStudy?.path) {
+        void api.saveProjectResults({
+          projectPath: activeStudy.path,
+          modelId: effectiveModelId || undefined,
+          datasetId: activeDataset?.id,
+          algorithm: 'pls',
+          analysisType: 'pls',
+          results: mgaResults,
+          spec: exportModelSpec(),
+          diagramLayout: getModelCanvasState(),
         });
       }
-      openTab({
-        type: 'mga-report',
-        title: report.title,
-        reportId: report.id,
-        reportType: report.reportType,
-        modelId: effectiveModelId,
-        studyId: effectiveStudyId,
-        workspaceId: currentTab?.workspaceId || activeWorkspaceId,
-      });
+      const calculatedSnapshot = { spec: exportModelSpec(), layout: getModelCanvasState() };
+      setLastCalculatedModel(calculatedSnapshot);
+      lastCalculatedModelRef.current = calculatedSnapshot;
+      setIsModelOutdated(false);
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      setActiveResultTab('path_coefficients__permutation_test');
+      const viewSlider = document.getElementById('main-view-slider');
+      if (viewSlider) {
+        (viewSlider as HTMLElement).style.display = 'flex';
+      }
+      switchView('results');
     }}
   />
 
@@ -4891,27 +5035,37 @@ const ModelEditor = () => {
     initialSettings={plsResults?.settings}
     onComplete={(report) => {
       setIsMgaModalOpen(false);
-      cacheMgaReport(report);
-      const studyKey = activeStudy?.path || effectiveStudyId || '';
-      if (studyKey) {
-        addStudyMgaReport(studyKey, {
-          id: report.id,
-          reportType: report.reportType,
-          title: report.title,
-          modelKey: report.modelId,
-          datasetId: report.datasetId,
-          createdAt: report.createdAt,
+      const mgaResults = createMgaPlsResults(report);
+      setPlsResults(mgaResults);
+      plsResultsRef.current = mgaResults;
+      if (effectiveModelId) {
+        setModelResultCache(effectiveModelId, mgaResults);
+      }
+      setCanvasResults(getMgaCanvasResultForMode(mgaResults, mgaCanvasMode));
+      if (activeStudy?.path) {
+        void api.saveProjectResults({
+          projectPath: activeStudy.path,
+          modelId: effectiveModelId || undefined,
+          datasetId: activeDataset?.id,
+          algorithm: 'pls',
+          analysisType: 'pls',
+          results: mgaResults,
+          spec: exportModelSpec(),
+          diagramLayout: getModelCanvasState(),
         });
       }
-      openTab({
-        type: 'mga-report',
-        title: report.title,
-        reportId: report.id,
-        reportType: report.reportType,
-        modelId: effectiveModelId,
-        studyId: effectiveStudyId,
-        workspaceId: currentTab?.workspaceId || activeWorkspaceId,
-      });
+      const calculatedSnapshot = { spec: exportModelSpec(), layout: getModelCanvasState() };
+      setLastCalculatedModel(calculatedSnapshot);
+      lastCalculatedModelRef.current = calculatedSnapshot;
+      setIsModelOutdated(false);
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      setActiveResultTab('path_coefficients__bootstrap_mga');
+      const viewSlider = document.getElementById('main-view-slider');
+      if (viewSlider) {
+        (viewSlider as HTMLElement).style.display = 'flex';
+      }
+      switchView('results');
     }}
   />
 

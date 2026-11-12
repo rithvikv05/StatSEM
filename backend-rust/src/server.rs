@@ -393,11 +393,33 @@ fn route(
             query.get("model_id").map(String::as_str),
             Some(query.get("analysis_type").map(String::as_str).unwrap_or("pls")),
         )?),
+        ("POST", "/project/save-results") => {
+            let store = project(&body, query)?;
+            let item: Results = serde_json::from_value(body.clone()).map_err(|e| e.to_string())?;
+            store.save_results(item)
+        }
         ("GET", "/project/analysis-list") => Ok(json!({"analyses":project(&body,query)?.list_analysis_types(query.get("model_id").map(String::as_str))?})),
         ("POST", "/project/save-snapshot") => {
             let store = project(&body, query)?;
-            let item:Snapshot=serde_json::from_value(json!({"name":body["name"],"description":body["description"],"algorithm":body["algorithm"],"results":body["results"],"spec":body["spec"],"diagram_layout":body["diagram_layout"],"source_model_id":body["source_model_id"]})).map_err(|e|e.to_string())?;
-            store.save_snapshot(item)
+            let item: Snapshot = serde_json::from_value(json!({
+                "name": body["name"],
+                "description": body["description"],
+                "algorithm": body["algorithm"],
+                "results": body["results"],
+                "spec": body["spec"],
+                "diagram_layout": body["diagram_layout"],
+                "source_model_id": body["source_model_id"]
+            })).map_err(|e| e.to_string())?;
+            let snap = store.save_snapshot(item)?;
+            Ok(json!({
+                "id": snap["id"],
+                "name": snap["name"],
+                "description": snap["description"],
+                "algorithm": snap["algorithm"],
+                "created_at": snap["created_at"],
+                "source_model_id": snap["source_model_id"],
+                "snapshot": snap
+            }))
         }
         ("GET", "/project/list-snapshots") => project(&body, query)?.list_snapshots(),
         ("GET", "/project/get-snapshot") => project(&body, query)?.snapshot(

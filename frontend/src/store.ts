@@ -218,6 +218,8 @@ interface AppState {
   addStudyMgaReport: (studyId: string, report: MgaReportSummary) => void;
   removeStudyMgaReport: (studyId: string, reportId: string) => void;
   cacheMgaReport: (report: PermutationReport | MgaReport) => void;
+  modelResultsCache: Record<string, any>;
+  setModelResultCache: (modelId: string, result: any) => void;
   activeModelId: string | null;
   addModel: (model: Model) => void;
   removeModel: (id: string) => void;
@@ -807,6 +809,11 @@ export const useStore = create<AppState>()(
       cacheMgaReport: (report) =>
         set((state) => ({
           mgaReportCache: { ...state.mgaReportCache, [report.id]: report },
+        })),
+      modelResultsCache: {},
+      setModelResultCache: (modelId, result) =>
+        set((state) => ({
+          modelResultsCache: { ...state.modelResultsCache, [modelId]: result },
         })),
       activeModelId: null,
       addModel: (model) => set((state) => ({ models: [...state.models, model] })),

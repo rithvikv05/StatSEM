@@ -17,6 +17,66 @@ export interface DataSetupSettings {
   weight_column?: string | null;
 }
 
+export interface TabItem {
+  id: string;
+  label: string;
+}
+
+export const CalculationTabSlider: React.FC<{
+  tabs: TabItem[];
+  activeTab: string;
+  onChange: (id: string) => void;
+}> = ({ tabs, activeTab, onChange }) => {
+  return (
+    <div
+      role="tablist"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        width: '100%',
+        background: 'var(--color-bg-raised)',
+        padding: '3px',
+        borderRadius: 'var(--radius-md)',
+        border: '1px solid var(--color-border-subtle)',
+        boxSizing: 'border-box',
+        marginBottom: '14px',
+      }}
+    >
+      {tabs.map(t => {
+        const isActive = activeTab === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(t.id)}
+            style={{
+              flex: '1 1 0',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+              padding: '7px 8px',
+              borderRadius: 'calc(var(--radius-md) - 2px)',
+              border: 'none',
+              background: isActive ? 'var(--color-accent)' : 'transparent',
+              color: isActive ? '#ffffff' : 'var(--color-text-secondary)',
+              fontSize: '12.5px',
+              fontWeight: isActive ? 600 : 500,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 interface PlsSetupTabProps {
   settings: PlsSetupSettings;
   onChange: (settings: PlsSetupSettings) => void;
@@ -24,38 +84,36 @@ interface PlsSetupTabProps {
 }
 
 export const PlsSetupTab: React.FC<PlsSetupTabProps> = ({ settings, onChange, indicators = [] }) => {
-  const stopExponent = Math.max(3, Math.min(12, Math.round(-Math.log10(settings.tolerance || 1e-7))));
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
       <label className="modal__field" style={{ marginBottom: 0 }}>
-        <span className="modal__label">Weighting scheme</span>
+        <span className="modal__label">Path weighting algorithm</span>
         <select
           className="modal__input"
           value={settings.inner_weighting}
           onChange={e => onChange({ ...settings, inner_weighting: e.target.value as PlsSetupSettings['inner_weighting'] })}
         >
-          <option value="path">Path (Recommended)</option>
-          <option value="factor">Factor</option>
-          <option value="centroid">Centroid (PCA)</option>
+          <option value="path">Structural Path (Standard)</option>
+          <option value="factor">Factor Analysis Mode</option>
+          <option value="centroid">Component Analysis (Centroid / PCA)</option>
         </select>
       </label>
 
       <label className="modal__field" style={{ marginBottom: 0 }}>
-        <span className="modal__label">Type of results</span>
+        <span className="modal__label">Output metric &amp; scaling</span>
         <select
           className="modal__input"
           value={settings.result_type || 'standardized'}
           onChange={e => onChange({ ...settings, result_type: e.target.value as PlsSetupSettings['result_type'] })}
         >
-          <option value="standardized">Standardized</option>
-          <option value="unstandardized">Unstandardized</option>
-          <option value="mean_centered">Mean centered</option>
+          <option value="standardized">Standardized Scores (Z-score)</option>
+          <option value="unstandardized">Unstandardized (Raw metric)</option>
+          <option value="mean_centered">Mean-centered</option>
         </select>
       </label>
 
       <label className="modal__field" style={{ marginBottom: 0 }}>
-        <span className="modal__label">Initial weight</span>
+        <span className="modal__label">Initial indicator weights</span>
         <select
           className="modal__input"
           value={settings.initial_weights === 'individual' ? 'individual' : 'default'}
@@ -71,8 +129,8 @@ export const PlsSetupTab: React.FC<PlsSetupTabProps> = ({ settings, onChange, in
             });
           }}
         >
-          <option value="default">Default</option>
-          <option value="individual">Individual</option>
+          <option value="default">Default (Equal initialization)</option>
+          <option value="individual">Individual (Custom indicator values)</option>
         </select>
       </label>
 
@@ -114,37 +172,6 @@ export const PlsSetupTab: React.FC<PlsSetupTabProps> = ({ settings, onChange, in
           </div>
         </div>
       )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-        <label className="modal__field" style={{ marginBottom: 0 }}>
-          <span className="modal__label">Maximum iterations</span>
-          <input
-            type="number"
-            min={1}
-            max={5000}
-            className="modal__input"
-            value={settings.max_iter}
-            onChange={e => onChange({ ...settings, max_iter: Math.max(1, Math.min(5000, Number(e.target.value) || 300)) })}
-          />
-        </label>
-        <label className="modal__field" style={{ marginBottom: 0 }}>
-          <span className="modal__label">Stop criterion (10⁻ˣ)</span>
-          <input
-            type="number"
-            min={3}
-            max={12}
-            className="modal__input"
-            value={stopExponent}
-            onChange={e => {
-              const exp = Math.max(3, Math.min(12, Number(e.target.value) || 7));
-              onChange({ ...settings, tolerance: Math.pow(10, -exp) });
-            }}
-          />
-          <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px', display: 'block' }}>
-            {stopExponent} means 10⁻{stopExponent}
-          </span>
-        </label>
-      </div>
     </div>
   );
 };
@@ -155,6 +182,7 @@ interface DataSetupTabProps {
   dataGroups?: DataGroup[];
   datasetHeaders?: string[];
   hideWeightingVector?: boolean;
+  hideDataGroups?: boolean;
 }
 
 export const DataSetupTab: React.FC<DataSetupTabProps> = ({
@@ -163,6 +191,7 @@ export const DataSetupTab: React.FC<DataSetupTabProps> = ({
   dataGroups = [],
   datasetHeaders = [],
   hideWeightingVector = false,
+  hideDataGroups = false,
 }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -180,31 +209,33 @@ export const DataSetupTab: React.FC<DataSetupTabProps> = ({
         </select>
       </label>
 
-      <label className="modal__field" style={{ marginBottom: 0 }}>
-        <span className="modal__label">Data groups</span>
-        <select
-          className="modal__input"
-          value={settings.selected_data_group_id || ''}
-          onChange={e => {
-            const val = e.target.value;
-            onChange({
-              ...settings,
-              selected_data_group_id: val || null,
-            });
-          }}
-        >
-          <option value="">Base (All observations)</option>
-          {dataGroups.length > 0 && (
-            <optgroup label="Data Groups">
-              {dataGroups.map(g => (
-                <option key={g.id} value={g.id}>
-                  {g.name} (n={g.recordCount})
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
-      </label>
+      {!hideDataGroups && (
+        <label className="modal__field" style={{ marginBottom: 0 }}>
+          <span className="modal__label">Data groups</span>
+          <select
+            className="modal__input"
+            value={settings.selected_data_group_id || ''}
+            onChange={e => {
+              const val = e.target.value;
+              onChange({
+                ...settings,
+                selected_data_group_id: val || null,
+              });
+            }}
+          >
+            <option value="">Base (All observations)</option>
+            {dataGroups.length > 0 && (
+              <optgroup label="Data Groups">
+                {dataGroups.map(g => (
+                  <option key={g.id} value={g.id}>
+                    {g.name} (n={g.recordCount})
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
+      )}
 
       {!hideWeightingVector && (
         <label className="modal__field" style={{ marginBottom: 0 }}>
@@ -223,21 +254,6 @@ export const DataSetupTab: React.FC<DataSetupTabProps> = ({
           </select>
         </label>
       )}
-
-      <div style={{
-        padding: '10px 12px',
-        borderRadius: '8px',
-        background: 'var(--color-bg-surface)',
-        border: '1px solid var(--color-border-subtle)',
-        fontSize: '12px',
-        color: 'var(--color-text-muted)',
-      }}>
-        {settings.missing_treatment === 'mean' && 'Mean replacement is recommended when <5% of values per indicator are missing.'}
-        {settings.missing_treatment === 'casewise' && 'Cases with any missing indicator in the model are excluded.'}
-        {settings.missing_treatment === 'pairwise' && 'Calculates correlations using all valid pairs of observations.'}
-        {settings.missing_treatment === 'none' && 'Estimation requires full data without missing values.'}
-      </div>
     </div>
   );
 };
-

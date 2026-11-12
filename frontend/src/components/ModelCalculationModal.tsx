@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { ModelSpec } from '../utils/api';
 import type { DataGroup } from '../mga/types';
-import { PlsSetupTab, DataSetupTab, type PlsSetupSettings, type DataSetupSettings } from './CalculationCommonTabs';
+import { PlsSetupTab, DataSetupTab, CalculationTabSlider, type PlsSetupSettings, type DataSetupSettings } from './CalculationCommonTabs';
 
 export type ModelCalculationSettings = {
   inner_weighting: 'path' | 'factor' | 'centroid';
@@ -136,40 +136,23 @@ export function ModelCalculationModal({
     <div className="modal-overlay active calculation-overlay" role="presentation">
       <div className="modal calculation-dialog" role="dialog" aria-modal="true" aria-labelledby="model-calculation-title" style={{ maxWidth: 540, width: '92vw' }}>
         <div className="modal__header">
-          <div>
-            <div className="modal__title" id="model-calculation-title">
-              {consistent ? 'Consistent PLS-SEM (PLSc)' : 'PLS-SEM Algorithm'}
-            </div>
-            <div className="modal__subtitle">
-              Partial least squares structural equation modeling setup
-            </div>
-          </div>
+          <h2 className="modal__title" id="model-calculation-title" style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>
+            {consistent ? 'Consistent PLS-SEM (PLSc)' : 'PLS-SEM Algorithm'}
+          </h2>
           <button className="calculation-close" aria-label="Close" onClick={onClose}>
             ×
           </button>
         </div>
 
         <div className="modal__body">
-          <div className="view-toggle" role="tablist" style={{ alignSelf: 'flex-start' }}>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'pls'}
-              className={`view-toggle__btn ${activeTab === 'pls' ? 'active' : ''}`}
-              onClick={() => setActiveTab('pls')}
-            >
-              PLS setup
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'data'}
-              className={`view-toggle__btn ${activeTab === 'data' ? 'active' : ''}`}
-              onClick={() => setActiveTab('data')}
-            >
-              Data setup
-            </button>
-          </div>
+          <CalculationTabSlider
+            tabs={[
+              { id: 'pls', label: 'PLS setup' },
+              { id: 'data', label: 'Data setup' },
+            ]}
+            activeTab={activeTab}
+            onChange={t => setActiveTab(t as any)}
+          />
 
           {activeTab === 'pls' && (
             <PlsSetupTab

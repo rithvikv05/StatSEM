@@ -19,6 +19,7 @@ import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { DiagramExportModal } from '../components/DiagramExportModal';
 import { PermutationDialog } from '../mga/PermutationDialog';
 import { MgaDialog } from '../mga/MgaDialog';
+import { getGroupRows } from '../mga/groupUtils';
 import type { ParsedDataset } from '../utils/dataset-parser';
 import { parseDatasetFile, processData } from '../utils/dataset-parser';
 import { api, type ValidationResponse } from '../utils/api';
@@ -217,7 +218,9 @@ const ModelEditor = () => {
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [modelSettingsConsistent, setModelSettingsConsistent] = useState(false);
   const [isPermutationModalOpen, setIsPermutationModalOpen] = useState(false);
+  const [permutationConsistent, setPermutationConsistent] = useState(false);
   const [isMgaModalOpen, setIsMgaModalOpen] = useState(false);
+  const [mgaConsistent, setMgaConsistent] = useState(false);
   const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [analysisModalType, setAnalysisModalType] = useState<string>('predict');
@@ -1042,9 +1045,23 @@ const ModelEditor = () => {
       await api.saveProjectModel(activeStudy.path, spec, layout, effectiveModelId || undefined);
 
       // 3. Execute PLS-SEM algorithm
+      let calculateRows = activeDataset?.rows;
+      if (settings?.selected_data_group_id && datasetHeaders && calculateRows) {
+        const group = activeDataset?.dataGroups?.find(g => g.id === settings.selected_data_group_id);
+        if (group) {
+          const { rows: filtered } = getGroupRows(datasetHeaders, calculateRows, group);
+          if (filtered.length === 0) {
+            alert('The selected data group has no observations.');
+            setIsCalculating(false);
+            return;
+          }
+          calculateRows = filtered;
+        }
+      }
+
       const runRes = await api.runPlsModel(activeStudy.path, spec, {
         columns: datasetHeaders,
-        rows: activeDataset?.rows,
+        rows: calculateRows,
         dataset_name: activeDataset?.filename,
         model_id: effectiveModelId || undefined,
         diagram_layout: layout,
@@ -2168,11 +2185,11 @@ const ModelEditor = () => {
               } else if (id === 'bootstrap' || id === 'consistent_bootstrap') {
                 setBootstrapConsistent(id === 'consistent_bootstrap');
                 setIsBootstrapModalOpen(true);
-              } else if (id === 'compare') {
-                setIsCompareModalOpen(true);
-              } else if (id === 'permutation') {
+              } else if (id === 'permutation' || id === 'permutation_consistent') {
+                setPermutationConsistent(id === 'permutation_consistent');
                 setIsPermutationModalOpen(true);
-              } else if (id === 'mga_groups') {
+              } else if (id === 'mga_bootstrap' || id === 'mga_bootstrap_consistent') {
+                setMgaConsistent(id === 'mga_bootstrap_consistent');
                 setIsMgaModalOpen(true);
               } else {
                 setAnalysisModalType(id);
@@ -4755,6 +4772,7 @@ const ModelEditor = () => {
     consistent={modelSettingsConsistent}
     initialSettings={plsResults?.settings}
     spec={exportModelSpec()}
+    dataGroups={activeDataset?.dataGroups || []}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
     onClose={() => setModelSettingsOpen(false)}
@@ -4769,6 +4787,7 @@ const ModelEditor = () => {
     modelId={effectiveModelId || undefined}
     diagramLayout={getModelCanvasState()}
     initialSettings={plsResults?.settings}
+    dataGroups={activeDataset?.dataGroups || []}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
     datasetName={activeDataset?.filename}
@@ -4796,13 +4815,14 @@ const ModelEditor = () => {
 
   {isAnalysisModalOpen && <AnalysisModal
     isOpen={isAnalysisModalOpen}
-    analysisType={analysisModalType === 'mga_consistent' ? 'mga' : analysisModalType}
+    analysisType={analysisModalType}
     initialSettings={plsResults?.settings}
-    consistent={analysisModalType === 'mga_consistent'}
+    consistent={false}
     projectPath={activeStudy?.path || ''}
     modelId={effectiveModelId || undefined}
     datasetId={activeDataset?.id || undefined}
     spec={exportModelSpec()}
+    dataGroups={activeDataset?.dataGroups || []}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
     onComplete={(type, results) => {
@@ -4821,6 +4841,7 @@ const ModelEditor = () => {
 
   <PermutationDialog
     isOpen={isPermutationModalOpen}
+    consistent={permutationConsistent}
     onClose={() => setIsPermutationModalOpen(false)}
     projectPath={activeStudy?.path || undefined}
     modelId={effectiveModelId || undefined}
@@ -4858,6 +4879,7 @@ const ModelEditor = () => {
 
   <MgaDialog
     isOpen={isMgaModalOpen}
+    consistent={mgaConsistent}
     onClose={() => setIsMgaModalOpen(false)}
     projectPath={activeStudy?.path || undefined}
     modelId={effectiveModelId || undefined}

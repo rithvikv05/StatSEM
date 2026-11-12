@@ -18,6 +18,7 @@ interface MgaDialogProps {
   rows: any[][];
   dataGroups: DataGroup[];
   initialSettings?: InitialPlsLikeSettings;
+  consistent?: boolean;
   onComplete: (report: MgaReport) => void;
 }
 
@@ -32,9 +33,10 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
   rows,
   dataGroups,
   initialSettings,
+  consistent = false,
   onComplete,
 }) => {
-  const [activeTab, setActiveTab] = useState<'setup' | 'pls' | 'missing'>('setup');
+  const [activeTab, setActiveTab] = useState<'mga' | 'bootstrap' | 'pls' | 'missing'>('mga');
   const [stage, setStage] = useState<'config' | 'running' | 'error'>('config');
 
   const [groupAId, setGroupAId] = useState('');
@@ -44,7 +46,11 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
   const [significanceLevel, setSignificanceLevel] = useState<number>(0.05);
   const [parallelProcessing, setParallelProcessing] = useState<boolean>(true);
   const [seedText, setSeedText] = useState<string>('');
-  const [plsSettings, setPlsSettings] = useState<PlsSettings>(() => plsSettingsFromInitial(initialSettings));
+  const [plsSettings, setPlsSettings] = useState<PlsSettings>(() => {
+    const s = plsSettingsFromInitial(initialSettings);
+    if (consistent) s.consistent = true;
+    return s;
+  });
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [phaseLabel, setPhaseLabel] = useState<string>('Bootstrapping Group A');
@@ -70,7 +76,7 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {
       wasOpenRef.current = true;
-      setActiveTab('setup');
+      setActiveTab('mga');
       setStage('config');
       setGroupAId(dataGroups[0]?.id || '');
       setGroupBId(dataGroups[1]?.id || '');
@@ -238,9 +244,11 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
       <div className="modal calculation-dialog" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} style={{ maxWidth: '580px', width: '94vw' }}>
         <div className="modal__header">
           <div>
-            <h2 className="modal__title">Multigroup Analysis (MGA)</h2>
+            <h2 className="modal__title">
+              {consistent ? 'Consistent Bootstrap Multigroup Analysis (PLSc-MGA)' : 'Bootstrap Multigroup Analysis (PLS-MGA)'}
+            </h2>
             <p className="modal__subtitle">
-              Bootstrap-based Henseler&apos;s PLS-MGA, Parametric, and Welch-Satterthwaite tests
+              Henseler&apos;s PLS-MGA, Parametric, and Welch-Satterthwaite multigroup tests
             </p>
           </div>
           {stage !== 'running' && (
@@ -273,9 +281,10 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
             <>
               <div className="view-toggle" role="tablist" style={{ alignSelf: 'flex-start' }}>
                 {[
-                  { id: 'setup', label: 'Setup' },
-                  { id: 'pls', label: 'PLS estimation' },
-                  { id: 'missing', label: 'Missing values' },
+                  { id: 'mga', label: 'MGA setup' },
+                  { id: 'bootstrap', label: 'Bootstrap setup' },
+                  { id: 'pls', label: 'PLS setup' },
+                  { id: 'missing', label: 'Data setup' },
                 ].map(t => (
                   <button
                     key={t.id}
@@ -290,8 +299,16 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
                 ))}
               </div>
 
-              {activeTab === 'setup' && (
+              {activeTab === 'mga' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {dataGroups.length < 2 && (
+                    <div className="results-notice results-notice--warn" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                      <span>
+                        At least 2 data groups are required for Multigroup Analysis. Open your dataset tab and click <strong>Generate Data Groups</strong> (e.g., Contract vs. Prepaid plan) to create groups.
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <div className="modal__field" style={{ marginBottom: 0 }}>
                       <label className="modal__label">Group A</label>
@@ -311,6 +328,25 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
                     </div>
                   </div>
 
+                  {preflight.blockingError && (
+                    <div className="results-notice results-notice--danger">{preflight.blockingError}</div>
+                  )}
+
+                  {!preflight.blockingError && preflight.warnings.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {preflight.warnings.map((w, idx) => (
+                        <div key={idx} className="results-notice results-notice--warn">
+                          <AlertTriangle size={14} />
+                          <span>{w.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'bootstrap' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <div className="modal__field" style={{ marginBottom: 0 }}>
                       <label className="modal__label">Subsamples</label>
@@ -367,21 +403,6 @@ export const MgaDialog: React.FC<MgaDialogProps> = ({
                     <Checkbox checked={parallelProcessing} onChange={setParallelProcessing} />
                     <span>Parallel processing</span>
                   </label>
-
-                  {preflight.blockingError && (
-                    <div className="results-notice results-notice--danger">{preflight.blockingError}</div>
-                  )}
-
-                  {!preflight.blockingError && preflight.warnings.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {preflight.warnings.map((w, idx) => (
-                        <div key={idx} className="results-notice results-notice--warn">
-                          <AlertTriangle size={14} />
-                          <span>{w.message}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
 
                   <div className="results-notice" style={{ flexDirection: 'column', gap: '4px' }}>
                     <div><strong>Henseler&apos;s MGA:</strong> Non-parametric, compares all bootstrap estimates across groups.</div>

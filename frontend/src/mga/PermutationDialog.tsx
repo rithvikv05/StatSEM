@@ -18,6 +18,7 @@ interface PermutationDialogProps {
   rows: any[][];
   dataGroups: DataGroup[];
   initialSettings?: InitialPlsLikeSettings;
+  consistent?: boolean;
   onComplete: (report: PermutationReport) => void;
 }
 
@@ -32,9 +33,10 @@ export const PermutationDialog: React.FC<PermutationDialogProps> = ({
   rows,
   dataGroups,
   initialSettings,
+  consistent = false,
   onComplete,
 }) => {
-  const [activeTab, setActiveTab] = useState<'setup' | 'pls' | 'missing'>('setup');
+  const [activeTab, setActiveTab] = useState<'permutation' | 'pls' | 'missing'>('permutation');
   const [stage, setStage] = useState<'config' | 'running' | 'error'>('config');
 
   const [groupAId, setGroupAId] = useState('');
@@ -44,7 +46,11 @@ export const PermutationDialog: React.FC<PermutationDialogProps> = ({
   const [significanceLevel, setSignificanceLevel] = useState<number>(0.05);
   const [parallelProcessing, setParallelProcessing] = useState<boolean>(true);
   const [seedText, setSeedText] = useState<string>('');
-  const [plsSettings, setPlsSettings] = useState<PlsSettings>(() => plsSettingsFromInitial(initialSettings));
+  const [plsSettings, setPlsSettings] = useState<PlsSettings>(() => {
+    const s = plsSettingsFromInitial(initialSettings);
+    if (consistent) s.consistent = true;
+    return s;
+  });
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [current, setCurrent] = useState<number>(0);
@@ -69,7 +75,7 @@ export const PermutationDialog: React.FC<PermutationDialogProps> = ({
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {
       wasOpenRef.current = true;
-      setActiveTab('setup');
+      setActiveTab('permutation');
       setStage('config');
       setGroupAId(dataGroups[0]?.id || '');
       setGroupBId(dataGroups[1]?.id || '');
@@ -235,9 +241,11 @@ export const PermutationDialog: React.FC<PermutationDialogProps> = ({
       <div className="modal calculation-dialog" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} style={{ maxWidth: '580px', width: '94vw' }}>
         <div className="modal__header">
           <div>
-            <h2 className="modal__title">Permutation (with MICOM)</h2>
+            <h2 className="modal__title">
+              {consistent ? 'Consistent Permutation MGA & MICOM (PLSc)' : 'Permutation Multigroup Analysis & MICOM'}
+            </h2>
             <p className="modal__subtitle">
-              Measurement invariance (MICOM Steps 1–3) &amp; permutation test across two groups
+              Measurement invariance (MICOM Steps 1–3) &amp; permutation multigroup test
             </p>
           </div>
           {stage !== 'running' && (
@@ -270,9 +278,9 @@ export const PermutationDialog: React.FC<PermutationDialogProps> = ({
             <>
               <div className="view-toggle" role="tablist" style={{ alignSelf: 'flex-start' }}>
                 {[
-                  { id: 'setup', label: 'Setup' },
-                  { id: 'pls', label: 'PLS estimation' },
-                  { id: 'missing', label: 'Missing values' },
+                  { id: 'permutation', label: 'Permutation setup' },
+                  { id: 'pls', label: 'PLS setup' },
+                  { id: 'missing', label: 'Data setup' },
                 ].map(t => (
                   <button
                     key={t.id}
@@ -287,8 +295,16 @@ export const PermutationDialog: React.FC<PermutationDialogProps> = ({
                 ))}
               </div>
 
-              {activeTab === 'setup' && (
+              {activeTab === 'permutation' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {dataGroups.length < 2 && (
+                    <div className="results-notice results-notice--warn" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                      <span>
+                        At least 2 data groups are required for Permutation MGA &amp; MICOM. Open your dataset tab and click <strong>Generate Data Groups</strong> to create groups.
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <div className="modal__field" style={{ marginBottom: 0 }}>
                       <label className="modal__label">Group A</label>

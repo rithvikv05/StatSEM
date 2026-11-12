@@ -1,15 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../utils/api';
 import { Checkbox } from './Checkbox';
 import type { ModelSpec } from '../utils/api';
-import { ModelCalculationModal } from './ModelCalculationModal';
+import type { DataGroup } from '../mga/types';
 import type { ModelCalculationSettings } from './ModelCalculationModal';
+import { getGroupRows } from '../mga/groupUtils';
+import { PlsSetupTab, DataSetupTab, type PlsSetupSettings, type DataSetupSettings } from './CalculationCommonTabs';
 
 interface BootstrapModalProps {
   isOpen: boolean;
   consistent?: boolean;
   projectPath: string;
   spec?: ModelSpec;
+  dataGroups?: DataGroup[];
   datasetHeaders?: string[];
   datasetRows?: any[][];
   datasetName?: string;
@@ -25,8 +28,9 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   consistent = false,
   projectPath,
   spec,
-  datasetHeaders,
-  datasetRows,
+  dataGroups = [],
+  datasetHeaders = [],
+  datasetRows = [],
   datasetName,
   modelId,
   diagramLayout,
@@ -34,8 +38,11 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   onComplete,
   onClose,
 }) => {
+  const [activeTab, setActiveTab] = useState<'bootstrap' | 'pls' | 'data'>('bootstrap');
   const [stage, setStage] = useState<'config' | 'running' | 'completed' | 'cancelled' | 'error'>('config');
-  const [nBoot, setNBoot] = useState<number>(500);
+
+  // Bootstrap parameters
+  const [nBoot, setNBoot] = useState<number>(5000);
   const [seed, setSeed] = useState<number>(42);
   const [randomSeed, setRandomSeed] = useState(false);
   const [parallel, setParallel] = useState(true);
@@ -45,14 +52,28 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   const [alpha, setAlpha] = useState(0.05);
   const [tails, setTails] = useState<'one' | 'two'>('two');
   const [direction, setDirection] = useState<'positive' | 'negative'>('positive');
-  const [modelSettings, setModelSettings] = useState<Partial<ModelCalculationSettings>>({});
-  const [editModelSettings, setEditModelSettings] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
 
-  const gcList = (spec as any)?.gaussian_copulas || (spec as any)?.gaussianCopulas || [];
-  const hasGcTerms = Array.isArray(gcList) && gcList.length > 0;
+  // PLS setup state
+  const [plsSetup, setPlsSetup] = useState<PlsSetupSettings>({
+    inner_weighting: (initialSettings?.inner_weighting as any) || 'path',
+    result_type: (initialSettings?.result_type as any) || 'standardized',
+    initial_weights: (initialSettings?.initial_weights as any) || 'equal',
+    individual_initial_weights: initialSettings?.individual_initial_weights,
+    max_iter: initialSettings?.max_iter || 300,
+    tolerance: initialSettings?.tolerance || 1e-7,
+  });
+
+  // Data setup state
+  const [dataSetup, setDataSetup] = useState<DataSetupSettings>({
+    missing_treatment: initialSettings?.missing_treatment === 'listwise' ? 'casewise' : (initialSettings?.missing_treatment as any) || 'mean',
+    selected_data_group_id: initialSettings?.selected_data_group_id || null,
+    data_filter: initialSettings?.data_filter || null,
+    weight_column: initialSettings?.weight_column || null,
+  });
+
+  const [jobId, setJobId] = useState<string | null>(null);
   const [current, setCurrent] = useState<number>(0);
-  const [total, setTotal] = useState<number>(500);
+  const [total, setTotal] = useState<number>(5000);
   const [percent, setPercent] = useState<number>(0);
   const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -61,10 +82,31 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   const pollIntervalRef = useRef<any>(null);
   const hasCompletedRef = useRef<boolean>(false);
 
+  const indicators = useMemo(() => {
+    return Array.from(new Set((spec?.constructs || []).flatMap(c => c.indicators))).map(id => {
+      const match = spec?.indicators?.find(i => i.id === id);
+      return { id, label: match?.column || id };
+    });
+  }, [spec]);
+
   useEffect(() => {
-    if (isOpen) setModelSettings(initialSettings || {});
-    if (!isOpen) {
-      // Reset modal state on close
+    if (isOpen) {
+      setPlsSetup({
+        inner_weighting: (initialSettings?.inner_weighting as any) || 'path',
+        result_type: (initialSettings?.result_type as any) || 'standardized',
+        initial_weights: (initialSettings?.initial_weights as any) || 'equal',
+        individual_initial_weights: initialSettings?.individual_initial_weights,
+        max_iter: initialSettings?.max_iter || 300,
+        tolerance: initialSettings?.tolerance || 1e-7,
+      });
+      setDataSetup({
+        missing_treatment: initialSettings?.missing_treatment === 'listwise' ? 'casewise' : (initialSettings?.missing_treatment as any) || 'mean',
+        selected_data_group_id: initialSettings?.selected_data_group_id || null,
+        data_filter: initialSettings?.data_filter || null,
+        weight_column: initialSettings?.weight_column || null,
+      });
+      setActiveTab('bootstrap');
+    } else {
       setStage('config');
       setCurrent(0);
       setPercent(0);
@@ -84,7 +126,19 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
 
   const handleStart = async () => {
     try {
-      if (!Number.isInteger(nBoot) || nBoot < 2 || !Number.isSafeInteger(seed) || seed < 0 || alpha <= 0 || alpha >= 0.5 || (ciMethod === 'studentized' && (!Number.isInteger(studentizedResamples) || studentizedResamples < 10))) { setStage('error'); setErrorMsg('Enter valid resampling counts, seed, and significance level. Studentized intervals require at least 10 inner resamples.'); return; }
+      if (
+        !Number.isInteger(nBoot) ||
+        nBoot < 2 ||
+        !Number.isSafeInteger(seed) ||
+        seed < 0 ||
+        alpha <= 0 ||
+        alpha >= 0.5 ||
+        (ciMethod === 'studentized' && (!Number.isInteger(studentizedResamples) || studentizedResamples < 10))
+      ) {
+        setStage('error');
+        setErrorMsg('Enter valid resampling counts, seed, and significance level. Studentized intervals require at least 10 inner resamples.');
+        return;
+      }
       hasCompletedRef.current = false;
       setStage('running');
       setCurrent(0);
@@ -93,19 +147,59 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
       setElapsedSec(0);
       setErrorMsg(null);
 
+      // Derive effective data_filter and filter rows if data group selected
+      let effectiveFilter = dataSetup.data_filter;
+      let effectiveRows = datasetRows;
+      if (dataSetup.selected_data_group_id) {
+        const group = dataGroups.find(g => g.id === dataSetup.selected_data_group_id);
+        if (group) {
+          if (group.terms?.length === 1 && group.terms[0].operator === 'is equal to') {
+            effectiveFilter = { column: group.terms[0].column, value: group.terms[0].value1 };
+          }
+          if (datasetHeaders && datasetRows.length > 0) {
+            const { rows: filtered } = getGroupRows(datasetHeaders, datasetRows, group);
+            if (filtered.length === 0) {
+              setStage('error');
+              setErrorMsg('The selected data group has no observations.');
+              return;
+            }
+            effectiveRows = filtered;
+          }
+        }
+      }
+
+      const effectiveSettings: Partial<ModelCalculationSettings> = {
+        inner_weighting: plsSetup.inner_weighting,
+        result_type: plsSetup.result_type,
+        initial_weights: plsSetup.initial_weights,
+        individual_initial_weights: plsSetup.individual_initial_weights,
+        max_iter: plsSetup.max_iter,
+        tolerance: plsSetup.tolerance,
+        missing_treatment: dataSetup.missing_treatment === 'casewise' || dataSetup.missing_treatment === 'pairwise'
+          ? 'listwise'
+          : (dataSetup.missing_treatment as any),
+        data_filter: effectiveFilter,
+        weight_column: dataSetup.weight_column,
+      };
+
       const startRes = await api.startBootstrap(projectPath, spec, {
         n_boot: nBoot,
         consistent,
         seed: randomSeed ? crypto.getRandomValues(new Uint32Array(1))[0] : seed,
-        parallel, mode, ci_method: ciMethod, studentized_resamples: studentizedResamples, significance_level: alpha, tails, direction,
-        settings: modelSettings,
-        scheme: 'path',
+        parallel,
+        mode,
+        ci_method: ciMethod,
+        studentized_resamples: studentizedResamples,
+        significance_level: alpha,
+        tails,
+        direction,
+        settings: effectiveSettings,
+        scheme: plsSetup.inner_weighting,
         columns: datasetHeaders,
-        rows: datasetRows,
+        rows: effectiveRows,
         dataset_name: datasetName,
         model_id: modelId,
         diagram_layout: diagramLayout,
-
       });
 
       if (startRes.error || !startRes.job_id) {
@@ -137,16 +231,15 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
         }
       };
 
-      // Connect WebSocket
       const ws = api.createBootstrapWebSocket(
         currentJobId,
-        (msg: any) => {
+        (msg) => {
           if (msg.type === 'progress') {
             if (!hasCompletedRef.current) {
-              if (typeof msg.current === 'number') setCurrent(msg.current);
-              if (typeof msg.total === 'number') setTotal(msg.total);
-              if (typeof msg.percent === 'number') setPercent(msg.percent);
-              if (typeof msg.elapsed_sec === 'number') setElapsedSec(msg.elapsed_sec);
+              setCurrent(msg.current);
+              setTotal(msg.total);
+              setPercent(msg.percent);
+              setElapsedSec(msg.elapsed_sec);
             }
           } else if (msg.type === 'completed') {
             markJobCompleted(msg);
@@ -168,14 +261,11 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
         (err) => {
           console.warn('Bootstrap WebSocket error:', err);
         },
-        () => {
-          // Closed
-        }
+        () => {}
       );
 
       wsRef.current = ws;
 
-      // Status polling fallback to ensure modal completes even if WS drops packets
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
       }
@@ -207,9 +297,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
               if (typeof statusRes.elapsed_sec === 'number') setElapsedSec(statusRes.elapsed_sec);
             }
           }
-        } catch {
-          // ignore network polling hiccups
-        }
+        } catch {}
       }, 500);
     } catch (err: any) {
       setStage('error');
@@ -225,9 +313,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       try {
         wsRef.current.send(JSON.stringify({ action: 'cancel' }));
-      } catch (e) {
-        // ignore
-      }
+      } catch {}
     }
     if (jobId) {
       await api.cancelBootstrap(jobId);
@@ -238,299 +324,253 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="calculation-overlay calculation-existing" style={{
-      position: 'fixed',
-      inset: 0,
-      backgroundColor: 'rgba(15, 23, 42, 0.65)',
-      backdropFilter: 'blur(4px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 9999,
-    }}>
-      <div style={{
-        backgroundColor: 'var(--color-bg-base, #ffffff)',
-        borderRadius: '14px',
-        width: '520px',
-        maxWidth: '92vw',
-        boxShadow: 'var(--shadow-float, 0 20px 25px -5px rgba(0, 0, 0, 0.2))',
-        border: '1px solid var(--color-border-subtle, #e2e8f0)',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-      }}>
-        {/* Header */}
-        <div style={{
-          padding: '18px 24px',
-          borderBottom: '1px solid var(--color-border-subtle, #f1f5f9)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: 'var(--color-bg-surface, #f8fafc)',
-        }}>
+    <div className="modal-overlay active calculation-overlay" role="presentation">
+      <div
+        className="modal calculation-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bootstrap-title"
+        style={{ maxWidth: 540, width: '92vw' }}
+      >
+        <div className="modal__header">
           <div>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
-              {consistent ? 'Consistent bootstrap' : 'Bootstrap inference'}
+            <h3 className="modal__title" id="bootstrap-title">
+              {consistent ? 'Consistent Bootstrapping (PLSc)' : 'Bootstrapping Algorithm'}
             </h3>
-            <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--color-text-muted, #64748b)' }}>
-              Estimate uncertainty in model results
+            <p className="modal__subtitle">
+              Resampling procedure for significance testing and confidence intervals
             </p>
           </div>
           {stage !== 'running' && (
-            <button
-              onClick={onClose}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '18px',
-                color: 'var(--color-text-muted, #94a3b8)',
-                padding: '4px 8px',
-                borderRadius: '6px',
-              }}
-            >
-              ✕
+            <button className="calculation-close" aria-label="Close" onClick={onClose}>
+              ×
             </button>
           )}
         </div>
 
-        {/* Content Body */}
-        <div style={{ padding: '24px' }}>
-          {stage === 'config' && (
-            <div className="calculation-fields">
-              <label className="modal__field"><span className="modal__label">Resamples</span><input className="modal__input" type="number" min="2" step="1" value={nBoot} onChange={e => setNBoot(Number(e.target.value))}/></label>
-              <button type="button" className="modal__btn-cancel" onClick={() => setEditModelSettings(true)}>Model and data settings</button>
-              <label className="modal__field"><span className="modal__label">Confidence interval</span><select className="modal__input" value={ciMethod} onChange={e => setCiMethod(e.target.value as typeof ciMethod)}><option value="percentile">Percentile</option><option value="bias_corrected">Bias corrected</option><option value="bca">Bias corrected and accelerated (BCa)</option><option value="studentized">Studentized</option></select></label>
-              {ciMethod === 'studentized' && <><label className="modal__field"><span className="modal__label">Inner resamples</span><input className="modal__input" type="number" min="10" step="1" value={studentizedResamples} onChange={e => setStudentizedResamples(Number(e.target.value))}/></label><p className="calculation-note">Each resample is bootstrapped again to estimate its standard error. This can take substantially longer. Intervals are unavailable for estimates with too few successful or nonzero standard errors.</p></>}
-              <details className="calculation-more"><summary>More options</summary><div className="calculation-more__fields">
-                <label className="modal__field"><span className="modal__label">Results</span><select className="modal__input" value={mode} onChange={e => setMode(e.target.value as 'basic' | 'complete')}><option value="complete">All supported estimates</option><option value="basic">Essential estimates</option></select></label>
-                <label className="modal__field"><span className="modal__label">Significance level</span><input className="modal__input" type="number" min="0.001" max="0.499" step="0.01" value={alpha} onChange={e => setAlpha(Number(e.target.value))}/></label>
-                <label className="modal__field"><span className="modal__label">Hypothesis test</span><select className="modal__input" value={tails} onChange={e => setTails(e.target.value as 'one' | 'two')}><option value="two">Two-sided</option><option value="one">One-sided</option></select></label>
-                {tails === 'one' && <label className="modal__field"><span className="modal__label">Expected direction</span><select className="modal__input" value={direction} onChange={e => setDirection(e.target.value as 'positive' | 'negative')}><option value="positive">Positive</option><option value="negative">Negative</option></select></label>}
-                <div className="calculation-check"><Checkbox id="bootstrap-parallel" checked={parallel} onChange={setParallel}/><label htmlFor="bootstrap-parallel">Use parallel processing</label></div>
-                <div className="calculation-check"><Checkbox id="bootstrap-random-seed" checked={randomSeed} onChange={setRandomSeed}/><label htmlFor="bootstrap-random-seed">Generate a random seed</label></div>
-                {!randomSeed && <label className="modal__field"><span className="modal__label">Seed</span><input className="modal__input" type="number" min="0" step="1" value={seed} onChange={e => setSeed(Number(e.target.value))}/></label>}
-              </div></details>
-              {ciMethod === 'bca' && <p className="calculation-note">BCa requires complete data and at most 500 observations.</p>}
-              <p className="calculation-note">Uses {consistent ? 'consistent' : 'standard'} PLS with the selected model and data settings. A one-sided direction applies to all estimates. Running it replaces the current model results.</p>
-              {hasGcTerms && <p className="calculation-note">Copula options use the engine defaults.</p>}
-            </div>
-          )}
-
-          {stage === 'running' && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary, #1e293b)' }}>
-                  {hasGcTerms ? 'Bootstrapping with Gaussian copulas...' : 'Running Resamples...'}
+        <div className="modal__body">
+          {stage === 'running' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '10px 0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                  Running bootstrap resamples...
                 </span>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-accent)' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-accent)' }}>
                   {percent.toFixed(1)}%
                 </span>
               </div>
 
-              {/* Progress Track */}
               <div style={{
                 width: '100%',
-                height: '10px',
-                backgroundColor: 'var(--color-bg-surface, #f1f5f9)',
-                borderRadius: '9999px',
+                height: '8px',
+                backgroundColor: 'var(--color-bg-raised)',
+                borderRadius: '999px',
                 overflow: 'hidden',
-                position: 'relative',
+                border: '1px solid var(--color-border-subtle)',
               }}>
                 <div style={{
-                  width: `${percent}%`,
+                  width: `${Math.min(100, percent)}%`,
                   height: '100%',
                   backgroundColor: 'var(--color-accent)',
-                  borderRadius: '9999px',
                   transition: 'width 0.2s ease',
-                  backgroundImage: 'linear-gradient(45deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent)',
-                  backgroundSize: '1rem 1rem',
                 }} />
               </div>
 
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                marginTop: '10px',
-                fontSize: '12px',
-                color: '#64748b',
-              }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-text-muted)' }}>
                 <span>Iteration {current.toLocaleString()} of {total.toLocaleString()}</span>
                 <span>Elapsed: {elapsedSec.toFixed(1)}s</span>
               </div>
             </div>
-          )}
+          ) : (
+            <>
+              {errorMsg && <div className="results-notice results-notice--danger">{errorMsg}</div>}
 
-          {stage === 'completed' && (
-            <div style={{ textAlign: 'center', padding: '12px 0' }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                backgroundColor: '#dcfce7',
-                color: '#16a34a',
-                fontSize: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 12px',
-              }}>
-                ✓
+              <div className="view-toggle" role="tablist" style={{ alignSelf: 'flex-start' }}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'bootstrap'}
+                  className={`view-toggle__btn ${activeTab === 'bootstrap' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('bootstrap')}
+                >
+                  Bootstrapping
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'pls'}
+                  className={`view-toggle__btn ${activeTab === 'pls' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('pls')}
+                >
+                  PLS setup
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'data'}
+                  className={`view-toggle__btn ${activeTab === 'data' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('data')}
+                >
+                  Data setup
+                </button>
               </div>
-              <h4 style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: 600, color: '#0f172a' }}>
-                Bootstrapping Complete!
-              </h4>
-              <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
-                Successfully computed standard errors, t-values, and p-values for {total.toLocaleString()} resamples in {elapsedSec.toFixed(1)}s.
-              </p>
-            </div>
-          )}
 
-          {stage === 'cancelled' && (
-            <div style={{ textAlign: 'center', padding: '12px 0' }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                backgroundColor: '#fef3c7',
-                color: '#d97706',
-                fontSize: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 12px',
-              }}>
-                !
-              </div>
-              <h4 style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: 600, color: '#0f172a' }}>
-                Bootstrapping Cancelled
-              </h4>
-              <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
-                Execution was cancelled mid-run. No changes were saved.
-              </p>
-            </div>
-          )}
+              {activeTab === 'bootstrap' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <label className="modal__field" style={{ marginBottom: 0 }}>
+                    <span className="modal__label">Subsamples</span>
+                    <input
+                      type="number"
+                      min={2}
+                      step={100}
+                      className="modal__input"
+                      value={nBoot}
+                      onChange={e => setNBoot(Number(e.target.value))}
+                    />
+                  </label>
 
-          {stage === 'error' && (
-            <div style={{ textAlign: 'center', padding: '12px 0' }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                backgroundColor: '#fee2e2',
-                color: '#dc2626',
-                fontSize: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 12px',
-              }}>
-                ✕
-              </div>
-              <h4 style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: 600, color: '#991b1b' }}>
-                Bootstrapping Failed
-              </h4>
-              <p style={{ margin: 0, fontSize: '12px', color: '#b91c1c' }}>
-                {errorMsg}
-              </p>
-            </div>
+                  <div className="calculation-check">
+                    <Checkbox id="boot-parallel" checked={parallel} onChange={setParallel} />
+                    <label htmlFor="boot-parallel">Parallel processing</label>
+                  </div>
+
+                  <label className="modal__field" style={{ marginBottom: 0 }}>
+                    <span className="modal__label">Amount of results</span>
+                    <select
+                      className="modal__input"
+                      value={mode}
+                      onChange={e => setMode(e.target.value as 'basic' | 'complete')}
+                    >
+                      <option value="complete">Complete</option>
+                      <option value="basic">Most important (Basic)</option>
+                    </select>
+                  </label>
+
+                  <label className="modal__field" style={{ marginBottom: 0 }}>
+                    <span className="modal__label">Confidence interval method</span>
+                    <select
+                      className="modal__input"
+                      value={ciMethod}
+                      onChange={e => setCiMethod(e.target.value as typeof ciMethod)}
+                    >
+                      <option value="percentile">Percentile bootstrap</option>
+                      <option value="studentized">Studentized bootstrap</option>
+                      <option value="bca">Bias-corrected and accelerated (BCa) bootstrap</option>
+                    </select>
+                  </label>
+
+                  {ciMethod === 'studentized' && (
+                    <label className="modal__field" style={{ marginBottom: 0 }}>
+                      <span className="modal__label">Inner studentized resamples</span>
+                      <input
+                        type="number"
+                        min={10}
+                        className="modal__input"
+                        value={studentizedResamples}
+                        onChange={e => setStudentizedResamples(Number(e.target.value))}
+                      />
+                    </label>
+                  )}
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <label className="modal__field" style={{ marginBottom: 0 }}>
+                      <span className="modal__label">Test type</span>
+                      <select
+                        className="modal__input"
+                        value={tails}
+                        onChange={e => setTails(e.target.value as 'one' | 'two')}
+                      >
+                        <option value="two">Two-tailed</option>
+                        <option value="one">One-tailed</option>
+                      </select>
+                    </label>
+
+                    <label className="modal__field" style={{ marginBottom: 0 }}>
+                      <span className="modal__label">Significance level</span>
+                      <select
+                        className="modal__input"
+                        value={alpha}
+                        onChange={e => setAlpha(Number(e.target.value))}
+                      >
+                        <option value={0.01}>0.01 (99% CI)</option>
+                        <option value={0.05}>0.05 (95% CI)</option>
+                        <option value={0.1}>0.10 (90% CI)</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  {tails === 'one' && (
+                    <label className="modal__field" style={{ marginBottom: 0 }}>
+                      <span className="modal__label">Expected direction</span>
+                      <select
+                        className="modal__input"
+                        value={direction}
+                        onChange={e => setDirection(e.target.value as 'positive' | 'negative')}
+                      >
+                        <option value="positive">Positive</option>
+                        <option value="negative">Negative</option>
+                      </select>
+                    </label>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div className="calculation-check">
+                      <Checkbox id="boot-random-seed" checked={randomSeed} onChange={setRandomSeed} />
+                      <label htmlFor="boot-random-seed">Random seed</label>
+                    </div>
+                    {!randomSeed && (
+                      <label className="modal__field" style={{ marginBottom: 0 }}>
+                        <span className="modal__label">Fixed seed</span>
+                        <input
+                          type="number"
+                          min={0}
+                          className="modal__input"
+                          value={seed}
+                          onChange={e => setSeed(Number(e.target.value))}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'pls' && (
+                <PlsSetupTab
+                  settings={plsSetup}
+                  onChange={setPlsSetup}
+                  indicators={indicators}
+                />
+              )}
+
+              {activeTab === 'data' && (
+                <DataSetupTab
+                  settings={dataSetup}
+                  onChange={setDataSetup}
+                  dataGroups={dataGroups}
+                  datasetHeaders={datasetHeaders}
+                />
+              )}
+            </>
           )}
         </div>
 
-        {/* Footer Buttons */}
-        <div style={{
-          padding: '14px 24px',
-          borderTop: '1px solid var(--color-border-subtle, #f1f5f9)',
-          backgroundColor: 'var(--color-bg-surface, #f8fafc)',
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: '10px',
-        }}>
-          {stage === 'config' && (
+        <div className="modal__footer">
+          {stage === 'running' ? (
+            <button className="modal__btn-cancel" onClick={handleCancel}>
+              Cancel Calculation
+            </button>
+          ) : (
             <>
-              <button
-                type="button"
-                onClick={onClose}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: '8px',
-                  border: '1px solid var(--color-border-subtle, #cbd5e1)',
-                  backgroundColor: 'var(--color-bg-base, #ffffff)',
-                  color: 'var(--color-text-secondary, #475569)',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                }}
-              >
+              <button className="modal__btn-cancel" onClick={onClose}>
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={handleStart}
-                style={{
-                  padding: '8px 20px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  backgroundColor: 'var(--color-accent)',
-                  color: '#ffffff',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  boxShadow: 'var(--shadow-xs, 0 1px 2px 0 rgba(0, 0, 0, 0.05))',
-                  transition: 'background-color var(--transition-fast)',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent-hover)')}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent)')}
-              >
-                Run bootstrapping
+              <button className="modal__btn-create" onClick={handleStart}>
+                Start calculation
               </button>
             </>
           )}
-
-          {stage === 'running' && (
-            <button
-              type="button"
-              onClick={handleCancel}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '8px',
-                border: '1px solid #fca5a5',
-                backgroundColor: '#fef2f2',
-                color: '#b91c1c',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Cancel Run
-            </button>
-          )}
-
-          {(stage === 'completed' || stage === 'cancelled' || stage === 'error') && (
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: '8px 20px',
-                borderRadius: '8px',
-                border: 'none',
-                backgroundColor: 'var(--color-accent)',
-                color: '#ffffff',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                boxShadow: 'var(--shadow-xs, 0 1px 2px 0 rgba(0, 0, 0, 0.05))',
-                transition: 'background-color var(--transition-fast)',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent-hover)')}
-              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent)')}
-            >
-              {stage === 'completed' ? 'View Results' : 'Close'}
-            </button>
-          )}
         </div>
       </div>
-      {editModelSettings && <ModelCalculationModal isOpen consistent={consistent} submitLabel="Use settings" initialSettings={modelSettings} spec={spec} datasetHeaders={datasetHeaders} datasetRows={datasetRows} onClose={() => setEditModelSettings(false)} onRun={settings => { setModelSettings(settings); setEditModelSettings(false); }} />}
     </div>
   );
 };

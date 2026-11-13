@@ -4,7 +4,6 @@ use crate::mga::bootstrap_mga::{run_bootstrap_mga, validate_mga_settings, MgaSet
 use crate::mga::groups::{validate_pair_for_comparison, DataGroup};
 use crate::mga::micom::run_permutation_with_micom;
 use crate::mga::permutation::{validate_permutation_settings, PermutationSettings};
-use crate::project_store::Store;
 use crate::server;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -120,7 +119,7 @@ pub fn start_permutation(body: &Value, query: &HashMap<String, String>) -> Resul
         .map_err(|_| "Permutation jobs lock poisoned")?
         .insert(job_id.clone(), job.clone());
 
-    let project_path = optional_project_path(body, query);
+    let _project_path = optional_project_path(body, query);
     let model_id = server::text(body, query, "model_id")
         .or_else(|| server::text(body, query, "modelId"))
         .unwrap_or_else(|| "default".into());
@@ -293,7 +292,7 @@ pub fn start_bootstrap_mga(body: &Value, query: &HashMap<String, String>) -> Res
         .map_err(|_| "Bootstrap MGA jobs lock poisoned")?
         .insert(job_id.clone(), job.clone());
 
-    let project_path = optional_project_path(body, query);
+    let _project_path = optional_project_path(body, query);
     let model_id = server::text(body, query, "model_id")
         .or_else(|| server::text(body, query, "modelId"))
         .unwrap_or_else(|| "default".into());

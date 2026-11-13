@@ -1482,6 +1482,7 @@ export function initModelCanvas() {
       containerWidth: rect.width || 1200,
       containerHeight: rect.height || 800,
       decimalDigits: layoutDp,
+      moderatingEffects: moderatingEffects,
     });
 
     // Update nodes in-place to preserve references
@@ -1490,6 +1491,7 @@ export function initModelCanvas() {
       if (existing) {
         existing.x = rn.x;
         existing.y = rn.y;
+        if (rn.indicatorDirection) existing.indicatorDirection = rn.indicatorDirection;
       }
     });
 
@@ -1497,7 +1499,27 @@ export function initModelCanvas() {
       const existing = edges.find(e => e.id === re.id || (e.sourceId === re.sourceId && e.targetId === re.targetId));
       if (existing) {
         delete existing.waypoints;
+        existing.curved = re.curved;
+        if (re.curvature !== undefined) {
+          existing.curvature = re.curvature;
+        } else {
+          delete existing.curvature;
+        }
       }
+    });
+
+    // Reset manual positions on copulas & quadratic effects so they re-center at new path midpoints
+    gaussianCopulas.forEach(gc => {
+      delete gc.node_x;
+      delete gc.node_y;
+      delete gc.x;
+      delete gc.y;
+    });
+    quadraticEffects.forEach(qe => {
+      delete qe.node_x;
+      delete qe.node_y;
+      delete qe.x;
+      delete qe.y;
     });
 
     selectedIds.clear();
@@ -3145,19 +3167,15 @@ export function initModelCanvas() {
       midY = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
     }
 
-    let landX = midX;
-    let landY = midY;
-    if (hasMod) {
-      landX += ux * 12;
-      landY += uy * 12;
-    }
+    const landX = midX;
+    const landY = midY;
 
     let nodeX = gc.node_x !== undefined ? gc.node_x : gc.x;
     let nodeY = gc.node_y !== undefined ? gc.node_y : gc.y;
 
     if (nodeX === undefined || nodeY === undefined || isNaN(nodeX) || isNaN(nodeY)) {
-      const cand1 = { x: midX + nx * 110, y: midY + ny * 110 };
-      const cand2 = { x: midX - nx * 110, y: midY - ny * 110 };
+      const cand1 = { x: midX + nx * 80, y: midY + ny * 80 };
+      const cand2 = { x: midX - nx * 80, y: midY - ny * 80 };
 
       const getMinDist = (pt) => {
         let minDist = Infinity;
@@ -3385,24 +3403,16 @@ export function initModelCanvas() {
       (gc.target_construct === tNode.id || gc.target === tId)
     );
 
-    let landX = midX;
-    let landY = midY;
-    if (hasMod) {
-      landX += ux * 10;
-      landY += uy * 10;
-    }
-    if (hasGc) {
-      landX -= ux * 10;
-      landY -= uy * 10;
-    }
+    const landX = midX;
+    const landY = midY;
 
     // Results node placement
     let nodeX = qe.node_x !== undefined ? qe.node_x : qe.x;
     let nodeY = qe.node_y !== undefined ? qe.node_y : qe.y;
 
     if (nodeX === undefined || nodeY === undefined || isNaN(nodeX) || isNaN(nodeY)) {
-      const cand1 = { x: midX + nx * 115, y: midY + ny * 115 };
-      const cand2 = { x: midX - nx * 115, y: midY - ny * 115 };
+      const cand1 = { x: midX + nx * 85, y: midY + ny * 85 };
+      const cand2 = { x: midX - nx * 85, y: midY - ny * 85 };
 
       const getMinDist = (pt) => {
         let minDist = Infinity;
@@ -3447,8 +3457,9 @@ export function initModelCanvas() {
     const arcStartX = pNode.x + nx * (pRadius + 2);
     const arcStartY = pNode.y + ny * (pRadius + 2);
 
-    const arcMidX = (arcStartX + landX) / 2 + nx * 38;
-    const arcMidY = (arcStartY + landY) / 2 + ny * 38;
+    const qeCurv = typeof qe.curvature === 'number' ? qe.curvature : 38;
+    const arcMidX = (arcStartX + landX) / 2 + nx * qeCurv;
+    const arcMidY = (arcStartY + landY) / 2 + ny * qeCurv;
 
     // Badge location on the bezier curve (t = 0.5)
     const badgeX = 0.25 * arcStartX + 0.5 * arcMidX + 0.25 * landX;
@@ -4247,7 +4258,7 @@ export function initModelCanvas() {
 
       const isSelected = selectedIds.has(gc.id);
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      const defGcColor = isDark ? '#e2e8f0' : '#334155';
+      const defGcColor = 'var(--color-accent, #6B4EE6)';
 
       if (isSelected) {
         const haloLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -4330,8 +4341,8 @@ export function initModelCanvas() {
       gcCircle.setAttribute('cx', nodeX);
       gcCircle.setAttribute('cy', nodeY);
       gcCircle.setAttribute('r', String(gcRadius));
-      gcCircle.setAttribute('fill', isDark ? '#0f172a' : '#1e293b');
-      gcCircle.setAttribute('stroke', isSelected ? 'var(--color-accent, #6B4EE6)' : '#ffffff');
+      gcCircle.setAttribute('fill', isDark ? '#1e1b4b' : '#ede9fe');
+      gcCircle.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
       gcCircle.setAttribute('stroke-width', '2');
       gcGroup.appendChild(gcCircle);
 
@@ -4340,7 +4351,7 @@ export function initModelCanvas() {
       gcText.setAttribute('y', nodeY);
       gcText.setAttribute('text-anchor', 'middle');
       gcText.setAttribute('dominant-baseline', 'central');
-      gcText.setAttribute('fill', '#ffffff');
+      gcText.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
       gcText.setAttribute('font-size', '11');
       gcText.setAttribute('font-weight', '700');
       gcText.setAttribute('font-family', 'var(--font-sans, system-ui)');
@@ -4477,17 +4488,33 @@ export function initModelCanvas() {
           const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
           halo.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
           halo.setAttribute('fill', 'none');
-          halo.setAttribute('stroke', '#10b981');
+          halo.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
           halo.setAttribute('stroke-width', '6.5');
           halo.setAttribute('stroke-opacity', '0.35');
           halo.setAttribute('stroke-linecap', 'round');
           edgesLayer.appendChild(halo);
+
+          // Handle to adjust curvature in editor mode
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', arcMidX);
+          handle.setAttribute('cy', arcMidY);
+          handle.setAttribute('r', 5);
+          handle.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
+          handle.setAttribute('data-export-ui', 'true');
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', (event) => {
+            if (event.button === 0) {
+              event.stopPropagation();
+              draggingCurve = qe;
+            }
+          });
+          edgesLayer.appendChild(handle);
         }
 
         const arcPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         arcPath.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
         arcPath.setAttribute('fill', 'none');
-        arcPath.setAttribute('stroke', '#10b981');
+        arcPath.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
         arcPath.setAttribute('stroke-width', '1.8');
         arcPath.setAttribute('stroke-dasharray', '5 4');
         edgesLayer.appendChild(arcPath);
@@ -4496,7 +4523,7 @@ export function initModelCanvas() {
         landDot.setAttribute('cx', landX);
         landDot.setAttribute('cy', landY);
         landDot.setAttribute('r', '3.5');
-        landDot.setAttribute('fill', '#10b981');
+        landDot.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
         edgesLayer.appendChild(landDot);
 
         // Clickable hit area
@@ -4521,8 +4548,8 @@ export function initModelCanvas() {
         bg.setAttribute('width', '24');
         bg.setAttribute('height', '18');
         bg.setAttribute('rx', '4');
-        bg.setAttribute('fill', isDark ? '#064e3b' : '#ecfdf5');
-        bg.setAttribute('stroke', isSelected ? 'var(--color-accent, #6B4EE6)' : '#10b981');
+        bg.setAttribute('fill', isDark ? '#1e1b4b' : '#ede9fe');
+        bg.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
         bg.setAttribute('stroke-width', isSelected ? '2' : '1.2');
         badgeG.appendChild(bg);
 
@@ -4531,7 +4558,7 @@ export function initModelCanvas() {
         txt.setAttribute('dominant-baseline', 'central');
         txt.setAttribute('font-size', '11');
         txt.setAttribute('font-weight', '700');
-        txt.setAttribute('fill', isDark ? '#a7f3d0' : '#059669');
+        txt.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
         txt.textContent = 'x²';
         badgeG.appendChild(txt);
 
@@ -4539,12 +4566,12 @@ export function initModelCanvas() {
         badgeG.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
         edgesLayer.appendChild(badgeG);
       } else {
-        // --- RESULTS MODE: SmartPLS 4 style green circle construct labeled '{P} x / {P}' with dashed line ---
+        // --- RESULTS MODE: SmartPLS 4 style accent circle construct labeled '{P} x / {P}' with dashed line ---
         if (isSelected) {
           const haloLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
           haloLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
           haloLine.setAttribute('fill', 'none');
-          haloLine.setAttribute('stroke', '#10b981');
+          haloLine.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
           haloLine.setAttribute('stroke-width', '6.5');
           haloLine.setAttribute('stroke-opacity', '0.45');
           haloLine.setAttribute('stroke-linecap', 'round');
@@ -4555,7 +4582,7 @@ export function initModelCanvas() {
           haloNode.setAttribute('cy', nodeY);
           haloNode.setAttribute('r', String(qeRadius + 4));
           haloNode.setAttribute('fill', 'none');
-          haloNode.setAttribute('stroke', '#10b981');
+          haloNode.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
           haloNode.setAttribute('stroke-width', '3');
           haloNode.setAttribute('stroke-opacity', '0.6');
           edgesLayer.appendChild(haloNode);
@@ -4565,7 +4592,7 @@ export function initModelCanvas() {
         const dotLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         dotLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
         dotLine.setAttribute('class', isSelected ? 'quadratic-line selected' : 'quadratic-line');
-        dotLine.style.stroke = '#10b981';
+        dotLine.style.stroke = 'var(--color-accent, #6B4EE6)';
         dotLine.style.strokeWidth = '1.8';
         dotLine.style.strokeDasharray = '4 4';
         dotLine.style.fill = 'none';
@@ -4577,7 +4604,7 @@ export function initModelCanvas() {
         landDot.setAttribute('cx', landX);
         landDot.setAttribute('cy', landY);
         landDot.setAttribute('r', '4');
-        landDot.setAttribute('fill', '#10b981');
+        landDot.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
         edgesLayer.appendChild(landDot);
 
         // Hit path
@@ -4600,8 +4627,8 @@ export function initModelCanvas() {
         qeCircle.setAttribute('cx', nodeX);
         qeCircle.setAttribute('cy', nodeY);
         qeCircle.setAttribute('r', String(qeRadius));
-        qeCircle.setAttribute('fill', isDark ? '#064e3b' : '#ecfdf5');
-        qeCircle.setAttribute('stroke', isSelected ? 'var(--color-accent, #6B4EE6)' : '#10b981');
+        qeCircle.setAttribute('fill', isDark ? '#1e1b4b' : '#ede9fe');
+        qeCircle.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
         qeCircle.setAttribute('stroke-width', '2.5');
         qeGroup.appendChild(qeCircle);
 
@@ -4610,7 +4637,7 @@ export function initModelCanvas() {
         qeText1.setAttribute('y', nodeY - 6);
         qeText1.setAttribute('text-anchor', 'middle');
         qeText1.setAttribute('dominant-baseline', 'central');
-        qeText1.setAttribute('fill', isDark ? '#a7f3d0' : '#065f46');
+        qeText1.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
         qeText1.setAttribute('font-size', '10.5');
         qeText1.setAttribute('font-weight', '700');
         qeText1.setAttribute('font-family', 'var(--font-sans, system-ui)');
@@ -4623,7 +4650,13 @@ export function initModelCanvas() {
         qeText2.setAttribute('y', nodeY + 8);
         qeText2.setAttribute('text-anchor', 'middle');
         qeText2.setAttribute('dominant-baseline', 'central');
-        qeText2.setAttribute('fill', isDark ? '#a7f3d0' : '#065f46');
+        qeText2.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
+        qeText2.setAttribute('font-size', '10.5');
+        qeText2.setAttribute('font-weight', '700');
+        qeText2.setAttribute('font-family', 'var(--font-sans, system-ui)');
+        qeText2.setAttribute('pointer-events', 'none');
+        qeText2.textContent = `${pNode.label}`;
+        qeGroup.appendChild(qeText2);
         qeText2.setAttribute('font-size', '10.5');
         qeText2.setAttribute('font-weight', '700');
         qeText2.setAttribute('font-family', 'var(--font-sans, system-ui)');
@@ -5887,6 +5920,20 @@ export function initModelCanvas() {
       const pt = svg.createSVGPoint();
       pt.x = e.clientX; pt.y = e.clientY;
       const cursor = pt.matrixTransform(zoomLayer.getScreenCTM().inverse());
+
+      if (draggingCurve.predictor_construct || draggingCurve.predictor) {
+        const qeGeo = getQuadraticEffectGeometry(draggingCurve);
+        if (qeGeo) {
+          const { arcStartX, arcStartY, landX, landY } = qeGeo;
+          const dx = landX - arcStartX, dy = landY - arcStartY, length = Math.hypot(dx, dy) || 1;
+          const nx = -dy / length, ny = dx / length;
+          const curv = (cursor.x - (arcStartX + landX) / 2) * nx + (cursor.y - (arcStartY + landY) / 2) * ny;
+          draggingCurve.curvature = Math.max(-160, Math.min(160, curv));
+          render();
+        }
+        return;
+      }
+
       const source = nodes.find(node => node.id === draggingCurve.sourceId);
       const target = nodes.find(node => node.id === draggingCurve.targetId);
       const modGeometry = draggingCurve.moderator ? getModerationLineGeometry(draggingCurve) : null;

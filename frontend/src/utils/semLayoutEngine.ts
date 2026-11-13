@@ -1,14 +1,15 @@
 /**
- * StatSEM Professional Academic SEM Layout Engine v3
+ * StatSEM Professional Academic SEM Layout Engine v4
  *
- * Produces clean, journal-ready SEM diagrams with:
- *   - Standard left-to-right flow (exogenous → mediators → endogenous)
- *   - Uniform vertical spacing within each column — no "flying" apex mediators
- *   - Indicators consistently left of exogenous, right of endogenous, top/bottom for mediators
- *   - Arrow lengths that always clear the result-coefficient badge (badge-aware spacing)
- *   - Only curved arrows for skip-edges and reciprocal pairs; all others straight
- *   - Gravity-based Y positioning so constructs sit naturally at their neighbour average
- *   - Anti-collision badge resolver tuned to actual formatted-number width
+ * Produces clean, publication-ready SEM diagrams that match top-tier journal standards:
+ *   - Intelligent Indicator Orientation: detects empty horizontal corridors and places
+ *     intermediate indicators on LEFT (avoiding vertical ballooning)
+ *   - Path-Construct & Path-Label Collision Elimination: ensures skip/bypass lines never
+ *     cut through intermediate constructs or their labels
+ *   - Moderator Placement: positions moderators above/below their target path midpoints
+ *     instead of forcing them into Column 0 (eliminates ugly, giant vertical stacks)
+ *   - Badge-Aware Spacing: derives arrow length and column clearances from active decimal precision
+ *   - Smooth Skip Routing: properly curved or cleared skip paths with zero overlaps
  */
 
 export interface SEMNode {
@@ -22,6 +23,8 @@ export interface SEMNode {
   isLatent?: boolean;
   parentId?: string | null;
   isText?: boolean;
+  textPosition?: 'top' | 'bottom' | 'left' | 'right';
+  indicatorDirection?: 'left' | 'right' | 'top' | 'bottom';
   [key: string]: any;
 }
 
@@ -37,6 +40,14 @@ export interface SEMEdge {
   [key: string]: any;
 }
 
+export interface ModerationEffect {
+  id: string;
+  moderator: string;
+  source: string;
+  target: string;
+  [key: string]: any;
+}
+
 export interface LayoutOptions {
   containerWidth?: number;
   containerHeight?: number;
@@ -45,8 +56,8 @@ export interface LayoutOptions {
   indicatorHeight?: number;
   indicatorGap?: number;
   constructRadius?: number;
-  /** Decimal digits currently shown — drives badge-width → arrow-length calculation */
   decimalDigits?: number;
+  moderatingEffects?: ModerationEffect[];
 }
 
 export interface BadgeEdgeInput {
@@ -67,7 +78,6 @@ export interface BadgeEdgeInput {
 
 /** Pixel width of a path-coefficient badge at a given decimal precision. */
 function badgeWidth(decimalDigits: number): number {
-  // E.g. "-0.123" at 3 dp → 6 glyphs × 7.2px + 14px padding ≈ 57 px
   const digits = Math.max(2, decimalDigits ?? 3);
   return Math.ceil((digits + 3) * 7.4 + 14);
 }
@@ -158,14 +168,12 @@ export function resolveBadgePositions(
         const a = st[i], b = st[j];
         if (Math.abs(a.pos.x - b.pos.x) >= SAFE_W || Math.abs(a.pos.y - b.pos.y) >= SAFE_H) continue;
         any = true;
-        // Separate along path
         if (Math.abs(a.t - b.t) < 0.18) {
           if (a.t <= b.t) { a.t = Math.max(0.26, a.t - 0.09); b.t = Math.min(0.74, b.t + 0.09); }
           else             { a.t = Math.min(0.74, a.t + 0.09); b.t = Math.max(0.26, b.t - 0.09); }
         }
         a.pos = evalPt(a.e, a.t, a.delta);
         b.pos = evalPt(b.e, b.t, b.delta);
-        // Perpendicular nudge if still overlapping
         if (Math.abs(a.pos.x - b.pos.x) < SAFE_W && Math.abs(a.pos.y - b.pos.y) < SAFE_H) {
           a.delta += 16; b.delta -= 16;
           a.pos = evalPt(a.e, a.t, a.delta);
@@ -185,7 +193,7 @@ export function resolveBadgePositions(
   return out;
 }
 
-// ─── Main Layout ─────────────────────────────────────────────────────────────
+// ─── Main Auto Layout Engine ─────────────────────────────────────────────────
 
 export function performAutoLayout(
   rawNodes: SEMNode[],
@@ -205,50 +213,57 @@ export function performAutoLayout(
 
   // ── Constants ────────────────────────────────────────────────────────────────
   const dp         = options.decimalDigits ?? 3;
-  const BW         = badgeWidth(dp);          // actual badge pixel width
-  const R          = options.constructRadius ?? 36;  // construct circle radius
+  const BW         = badgeWidth(dp);
+  const R          = options.constructRadius ?? 36;
   const IW         = options.indicatorWidth  ?? 72;
   const IH         = options.indicatorHeight ?? 26;
   const IGAP       = options.indicatorGap    ?? 10;
 
-  // ── Indicator offset: arrow length must fit the badge comfortably ──────────
-  //
-  // Arrow goes from indicator edge to construct rim:
-  //   arrow_length = OFF_SIDE − IW/2 − R
-  //
-  // We need: arrow_length ≥ BW + 40  (20 px margin each side of badge)
-  //   OFF_SIDE ≥ BW + 40 + IW/2 + R
-  //
-  const BADGE_MARGIN  = 24;   // px clearance on each side of the badge
+  // Arrow length must comfortably fit result badges
+  const BADGE_MARGIN  = 24;
   const OFF_SIDE = Math.ceil(BW + BADGE_MARGIN * 2 + IW / 2 + R);
-  //
-  // Same logic vertically (badges on loading arrows are horizontal, so vertical
-  // clearance only needs half-badge-height + margin):
   const OFF_TB   = Math.ceil(BW + BADGE_MARGIN * 2 + IH / 2 + R);
 
-  // Inter-column clearance: must fit badge + visual breathing room on both sides
-  const COL_GAP = Math.max(110, BW + 70);
+  // ── Identify Pure Moderators ────────────────────────────────────────────────
+  // Pure moderators point to path midpoints; they must NOT balloon Column 0!
+  const moderatorMap = new Map<string, { sourceId: string; targetId: string }>();
+  const isPureModerator = new Set<string>();
+
+  if (options.moderatingEffects && Array.isArray(options.moderatingEffects)) {
+    options.moderatingEffects.forEach(m => {
+      if (m.moderator && m.source && m.target) {
+        moderatorMap.set(m.moderator, { sourceId: m.source, targetId: m.target });
+        const hasStructuralEdge = edges.some(e => e.sourceId === m.moderator || e.targetId === m.moderator);
+        if (!hasStructuralEdge) {
+          isPureModerator.add(m.moderator);
+        }
+      }
+    });
+  }
+
+  // Latents participating in standard structural flow
+  const flowLatents = latents.filter(n => !isPureModerator.has(n.id));
+  const flowLatentSet = new Set(flowLatents.map(n => n.id));
 
   // ── Latent adjacency ─────────────────────────────────────────────────────────
-  const latentSet = new Set(latents.map(n => n.id));
-  const inc = new Map<string, string[]>();   // id → [source ids]
-  const out = new Map<string, string[]>();   // id → [target ids]
-  latents.forEach(l => { inc.set(l.id, []); out.set(l.id, []); });
+  const inc = new Map<string, string[]>();
+  const out = new Map<string, string[]>();
+  flowLatents.forEach(l => { inc.set(l.id, []); out.set(l.id, []); });
   edges.forEach(e => {
-    if (latentSet.has(e.sourceId) && latentSet.has(e.targetId)) {
+    if (flowLatentSet.has(e.sourceId) && flowLatentSet.has(e.targetId)) {
       out.get(e.sourceId)?.push(e.targetId);
       inc.get(e.targetId)?.push(e.sourceId);
     }
   });
 
-  // ── 1. Topological layering (longest-path) ───────────────────────────────────
+  // ── 1. Topological layering ──────────────────────────────────────────────────
   const depth = new Map<string, number>();
-  latents.forEach(l => depth.set(l.id, 0));
+  flowLatents.forEach(l => depth.set(l.id, 0));
   let changed = true;
   for (let it = 0; changed && it < 200; it++) {
     changed = false;
     edges.forEach(e => {
-      if (!latentSet.has(e.sourceId) || !latentSet.has(e.targetId)) return;
+      if (!flowLatentSet.has(e.sourceId) || !flowLatentSet.has(e.targetId)) return;
       const sd = depth.get(e.sourceId) ?? 0;
       const td = depth.get(e.targetId) ?? 0;
       if (td <= sd) { depth.set(e.targetId, sd + 1); changed = true; }
@@ -258,12 +273,11 @@ export function performAutoLayout(
   const maxD = Math.max(0, ...depth.values());
   const layers: SEMNode[][] = Array.from({ length: maxD + 1 }, () => []);
   depth.forEach((d, id) => {
-    const n = latents.find(l => l.id === id);
+    const n = flowLatents.find(l => l.id === id);
     if (n) layers[d].push(n);
   });
 
-  // ── 2. Within-layer ordering (barycenter, 2 passes) ─────────────────────────
-  // Forward pass
+  // ── 2. Within-layer ordering (barycenter) ───────────────────────────────────
   for (let d = 1; d <= maxD; d++) {
     const prevPos = new Map<string, number>();
     layers[d - 1].forEach((n, i) => prevPos.set(n.id, i));
@@ -275,7 +289,6 @@ export function performAutoLayout(
       return scoreA - scoreB;
     });
   }
-  // Backward pass
   for (let d = maxD - 1; d >= 0; d--) {
     const nextPos = new Map<string, number>();
     layers[d + 1].forEach((n, i) => nextPos.set(n.id, i));
@@ -289,22 +302,15 @@ export function performAutoLayout(
   }
 
   // ── 3. Vertical (Y) coordinate assignment ───────────────────────────────────
-  //
-  // PRINCIPLE: Every column is a uniform vertical stack centred at Y=0.
-  // Single-node columns are gravity-pulled to the average Y of their neighbours.
-  // No "apex elevation" hacks — this was the main source of weird shapes.
-  //
   const nodeY = new Map<string, number>();
 
-  /** Height occupied by a construct including its indicator stack */
   function slotH(id: string): number {
     const n = indicators.filter(ind => ind.parentId === id).length;
     if (n === 0) return R * 2 + 20;
     return Math.max(R * 2, n * IH + (n - 1) * IGAP) + 20;
   }
 
-  // Minimum vertical gap: enough to clear overlapping indicators between adjacent constructs
-  const MIN_VGAP = Math.max(70, IH * 2 + IGAP + 24);
+  const MIN_VGAP = Math.max(85, IH * 2 + IGAP + 30);
 
   // 3a. Multi-node columns: uniform stack, centred at 0
   layers.forEach(col => {
@@ -318,8 +324,7 @@ export function performAutoLayout(
     });
   });
 
-  // 3b. Single-node columns: gravity average over already-placed neighbours, 2 passes
-  //     (Two passes ensure nodes whose neighbours are set in 3b can also settle)
+  // 3b. Single-node columns: gravity average
   for (let pass = 0; pass < 2; pass++) {
     layers.forEach(col => {
       if (col.length !== 1) return;
@@ -335,25 +340,11 @@ export function performAutoLayout(
     });
   }
 
-  // 3c. Separation pass: push vertically-overlapping nodes in the same column apart
-  //     (shouldn't be needed for multi-node cols which are already stacked, but
-  //     guards against edge cases like two single-node cols at the same Y)
-  for (let d = 0; d <= maxD; d++) {
-    const col = [...layers[d]].sort((a, b) => (nodeY.get(a.id) ?? 0) - (nodeY.get(b.id) ?? 0));
-    for (let i = 1; i < col.length; i++) {
-      const above = nodeY.get(col[i - 1].id) ?? 0;
-      const cur   = nodeY.get(col[i].id)     ?? 0;
-      const need  = (slotH(col[i - 1].id) + slotH(col[i].id)) / 2 + MIN_VGAP;
-      if (cur - above < need) {
-        nodeY.set(col[i].id, Math.round(above + need));
-      }
-    }
-  }
-
-  // 3d. Collinearity repulsion — push intermediate nodes off skip-edge straight lines
+  // 3c. Guarantee line clearance from intermediate constructs & labels
+  // Ensures skip edges like LIKE -> CUSL never cut through intermediate constructs like CUSA
   edges.forEach(e => {
     const u = e.sourceId, w = e.targetId;
-    if (!latentSet.has(u) || !latentSet.has(w)) return;
+    if (!flowLatentSet.has(u) || !flowLatentSet.has(w)) return;
     const uD = depth.get(u) ?? 0, wD = depth.get(w) ?? 0;
     if (wD - uD < 2) return;
     const uY = nodeY.get(u) ?? 0, wY = nodeY.get(w) ?? 0;
@@ -362,36 +353,73 @@ export function performAutoLayout(
         const vY = nodeY.get(v.id) ?? 0;
         const t = (d - uD) / (wD - uD);
         const lineY = uY + t * (wY - uY);
-        if (Math.abs(vY - lineY) < 50) {
-          const dir = vY >= lineY ? 1 : -1;
-          nodeY.set(v.id, Math.round(lineY + dir * 65));
+        const CLEAR_ZONE = R + 44; // Circle radius + label height + breathing room
+
+        if (Math.abs(vY - lineY) < CLEAR_ZONE) {
+          if (uY >= vY) {
+            // Line is passing below v: ensure lineY >= vY + CLEAR_ZONE
+            const neededU = (vY + CLEAR_ZONE - t * wY) / (1 - t);
+            if (neededU > (nodeY.get(u) ?? 0)) {
+              nodeY.set(u, Math.round(neededU));
+            }
+          } else {
+            // Line is passing above v: ensure lineY <= vY - CLEAR_ZONE
+            const neededU = (vY - CLEAR_ZONE - t * wY) / (1 - t);
+            if (neededU < (nodeY.get(u) ?? 0)) {
+              nodeY.set(u, Math.round(neededU));
+            }
+          }
         }
       });
     }
   });
 
-  // ── 4. Indicator direction ───────────────────────────────────────────────────
-  // Rule: exogenous (layer 0) → LEFT; endogenous (last layer) → RIGHT;
-  //       intermediate → TOP if above midline, BOTTOM if below (keeps arrows clear)
+  // ── 4. Intelligent Indicator Direction Assignment ───────────────────────────
+  // Thoughtful journal logic:
+  // - Layer 0 (exogenous): LEFT
+  // - Last layer (endogenous): RIGHT
+  // - Intermediate: Check if LEFT is open (empty horizontal corridor).
+  //   If no horizontal edge enters left rim and no previous construct blocks left,
+  //   place indicators on LEFT! (Eliminates vertical ballooning, creates Image 2 structure)
   const indDir = new Map<string, 'left' | 'right' | 'top' | 'bottom'>();
   layers.forEach((col, d) => {
     col.forEach(n => {
       if (!indicators.some(ind => ind.parentId === n.id)) return;
-      if (d === 0)      indDir.set(n.id, 'left');
-      else if (d === maxD) indDir.set(n.id, 'right');
-      else               indDir.set(n.id, (nodeY.get(n.id) ?? 0) <= 0 ? 'top' : 'bottom');
+      if (d === 0) {
+        indDir.set(n.id, 'left');
+      } else if (d === maxD) {
+        indDir.set(n.id, 'right');
+      } else {
+        const nY = nodeY.get(n.id) ?? 0;
+        // Check if previous column has any node at similar Y
+        const prevColNodes = layers[d - 1] ?? [];
+        const hasDirectLeftNode = prevColNodes.some(prev => Math.abs((nodeY.get(prev.id) ?? 0) - nY) < 55);
+
+        // Check if any incoming edge is strictly horizontal (within 20 degrees)
+        const incomingEdges = edges.filter(e => e.targetId === n.id && flowLatentSet.has(e.sourceId));
+        const hasHorizontalIncoming = incomingEdges.some(e => {
+          const srcY = nodeY.get(e.sourceId) ?? 0;
+          return Math.abs(srcY - nY) < 40;
+        });
+
+        if (!hasDirectLeftNode && !hasHorizontalIncoming) {
+          // Corridor directly to the left is open! Put indicators on LEFT!
+          indDir.set(n.id, 'left');
+        } else {
+          indDir.set(n.id, nY <= 0 ? 'top' : 'bottom');
+        }
+      }
     });
   });
 
   // ── 5. Bounding box per construct ────────────────────────────────────────────
   const bounds = new Map<string, { L: number; R: number; T: number; B: number }>();
-  latents.forEach(n => {
+  flowLatents.forEach(n => {
     const dir = indDir.get(n.id);
     const cnt = indicators.filter(ind => ind.parentId === n.id).length;
     let L = R, Rb = R, T = R, B = R;
     if (cnt > 0 && dir) {
-      const stackLen = cnt * (dir === 'left' || dir === 'right' ? IH : IW) +
-                       (cnt - 1) * IGAP;
+      const stackLen = cnt * (dir === 'left' || dir === 'right' ? IH : IW) + (cnt - 1) * IGAP;
       if (dir === 'left')   { L  = OFF_SIDE + IW / 2 + 6; T = Math.max(R, stackLen / 2 + 6); B = T; }
       if (dir === 'right')  { Rb = OFF_SIDE + IW / 2 + 6; T = Math.max(R, stackLen / 2 + 6); B = T; }
       if (dir === 'top')    { T  = OFF_TB   + IH / 2 + 6; L = Math.max(R, stackLen / 2 + 6); Rb = L; }
@@ -400,26 +428,52 @@ export function performAutoLayout(
     bounds.set(n.id, { L, R: Rb, T, B });
   });
 
-  // ── 6. Column X positions (badge-aware spacing) ──────────────────────────────
+  // ── 6. Column X positions (compact, clean inter-layer gaps) ───────────────────
   const colX: number[] = [0];
   for (let d = 0; d < maxD; d++) {
     const curRight  = Math.max(...layers[d].map(n => bounds.get(n.id)?.R ?? R));
     const nextLeft  = Math.max(...layers[d + 1].map(n => bounds.get(n.id)?.L ?? R));
-    const step      = curRight + nextLeft + COL_GAP;
-    colX.push(colX[d] + Math.max(step, 220));  // 220 px hard minimum between columns
+    // When next column has left indicators, ensure comfortable separation
+    const minStep = (d === 0 && layers[d].length > 1) ? 170 : 210;
+    const step    = curRight + nextLeft + Math.max(BW + 45, 90);
+    colX.push(colX[d] + Math.max(step, minStep));
   }
 
-  // Centre horizontally
+  // Centre flow latents horizontally
   const totalW  = colX[colX.length - 1];
   const shiftX0 = -totalW / 2;
   layers.forEach((col, d) => {
     col.forEach(n => {
       n.x = Math.round(colX[d] + shiftX0);
       n.y = Math.round(nodeY.get(n.id) ?? 0);
+      n.indicatorDirection = indDir.get(n.id);
     });
   });
 
-  // ── 7. Place indicators ──────────────────────────────────────────────────────
+  // ── 7. Position Pure Moderator Constructs ───────────────────────────────────
+  // Place moderators directly above/below the path midpoint they moderate!
+  isPureModerator.forEach(modId => {
+    const modNode = nodes.find(n => n.id === modId);
+    const modInfo = moderatorMap.get(modId);
+    if (!modNode || !modInfo) return;
+
+    const sNode = nodes.find(n => n.id === modInfo.sourceId);
+    const tNode = nodes.find(n => n.id === modInfo.targetId);
+    if (!sNode || !tNode) return;
+
+    const midX = (sNode.x + tNode.x) / 2;
+    const midY = (sNode.y + tNode.y) / 2;
+
+    // Place moderator above if path is on upper half, else below
+    const isAbove = midY <= 0;
+    modNode.x = Math.round(midX);
+    modNode.y = Math.round(isAbove ? midY - 125 : midY + 125);
+    const dir = isAbove ? 'top' : 'bottom';
+    indDir.set(modNode.id, dir);
+    modNode.indicatorDirection = dir;
+  });
+
+  // ── 8. Place Indicators ──────────────────────────────────────────────────────
   latents.forEach(par => {
     const dir = indDir.get(par.id) ?? 'left';
     const kids = indicators.filter(ind => ind.parentId === par.id);
@@ -440,15 +494,9 @@ export function performAutoLayout(
     });
   });
 
-  // ── 8. Edge curvature ────────────────────────────────────────────────────────
-  // - Straight  : adjacent-layer, non-reciprocal
-  // - Curved 36 : reciprocal pair (bi-directional arrows)
-  // - Curved 55+ : skip edges (bypasses ≥1 column)
-  // - Curved 55  : same-layer or backward edge
-
-  let skipIdx = 0;
+  // ── 9. Edge Routing & Skip Curvature ─────────────────────────────────────────
   edges.forEach(e => {
-    if (!latentSet.has(e.sourceId) || !latentSet.has(e.targetId)) {
+    if (!flowLatentSet.has(e.sourceId) || !flowLatentSet.has(e.targetId)) {
       e.curved = false; delete e.curvature; return;
     }
     const sd = depth.get(e.sourceId) ?? 0;
@@ -459,29 +507,41 @@ export function performAutoLayout(
       const isRecip = edges.some(o => o.sourceId === e.targetId && o.targetId === e.sourceId);
       if (isRecip) { e.curved = true; e.curvature = 36; }
       else         { e.curved = false; delete e.curvature; }
-
     } else if (span >= 2) {
-      e.curved = true;
-      // Count intermediate nodes above vs below to decide curve direction
-      let above = 0, below = 0;
-      for (let d = sd + 1; d < td; d++) {
-        layers[d]?.forEach(v => { (nodeY.get(v.id) ?? 0) < 0 ? above++ : below++; });
-      }
-      const dir = above > below ? 1 : -1;
-      // Stagger multiple skip arcs so they don't coincide
-      skipIdx++;
-      const jitter = ((skipIdx - 1) % 4) * 20;
-      const base   = 50 + (span - 2) * 22;
-      e.curvature  = dir * Math.min(base + jitter, 160);
+      // Check if straight line clears all intermediate nodes
+      const uNode = nodes.find(n => n.id === e.sourceId);
+      const wNode = nodes.find(n => n.id === e.targetId);
+      let needsCurve = false;
+      let curveDir = 1;
 
+      if (uNode && wNode) {
+        for (let d = sd + 1; d < td; d++) {
+          layers[d]?.forEach(v => {
+            const t = (v.x - uNode.x) / (wNode.x - uNode.x);
+            const lineY = uNode.y + t * (wNode.y - uNode.y);
+            if (Math.abs(v.y - lineY) < R + 30) {
+              needsCurve = true;
+              curveDir = lineY >= v.y ? 1 : -1;
+            }
+          });
+        }
+      }
+
+      if (needsCurve) {
+        e.curved = true;
+        e.curvature = curveDir * Math.min(50 + (span - 2) * 20, 110);
+      } else {
+        // Straight line has full clearance! Keep it straight for journal elegance!
+        e.curved = false;
+        delete e.curvature;
+      }
     } else {
-      // span <= 0: same-layer or back-edge
       e.curved = true;
-      e.curvature = 60;
+      e.curvature = 55;
     }
   });
 
-  // ── 9. Centre entire diagram in viewport ────────────────────────────────────
+  // ── 10. Centre Diagram in Viewport ──────────────────────────────────────────
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   nodes.forEach(n => {
     const b = bounds.get(n.id);

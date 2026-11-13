@@ -1093,6 +1093,20 @@ const ModelEditor = () => {
         setIsModelOutdated(false);
         setHasCalculatedOnce(true);
         hasCalculatedOnceRef.current = true;
+        if (effectiveModelId) {
+          setModelResultCache(effectiveModelId, runRes.results);
+          if (activeStudy?.path) {
+            void api.saveProjectResults({
+              projectPath: activeStudy.path,
+              modelId: effectiveModelId || undefined,
+              datasetId: activeDataset?.id,
+              algorithm: 'pls',
+              analysisType: 'pls',
+              results: runRes.results,
+            });
+          }
+        }
+        setActiveResultTab('path_coefficients');
       }
 
       setValidationSuccessToast(`PLS-SEM Calculation Complete! Converged in ${runRes.results?.iterations || 0} iterations`);
@@ -1759,124 +1773,152 @@ const ModelEditor = () => {
       const sub = `${gA} (n=${rep?.nA ?? '?'}) vs ${gB} (n=${rep?.nB ?? '?'})`;
       const [baseTab, subKey] = activeResultTab.includes('__')
         ? activeResultTab.split('__')
-        : [activeResultTab, 'bootstrap_mga'];
+        : [activeResultTab, plsResults.mga_type === 'permutation' ? 'permutation_test' : 'bootstrap_mga'];
       const subLabel =
-        subKey === 'parametric' ? 'Parametric Test'
-        : subKey === 'welch' ? 'Welch-Satterthwaite Test'
-        : subKey === 'confidence_intervals' ? 'Confidence Intervals (Bias-Corrected)'
-        : subKey === 'bootstrapping_results' ? 'Bootstrapping Results'
-        : plsResults.mga_type === 'permutation' ? 'Permutation' : 'Bootstrap MGA';
+        subKey === 'parametric' ? 'Parametric test'
+        : subKey === 'welch' ? 'Welch-Satterthwaite test'
+        : subKey === 'confidence_intervals' ? 'Confidence intervals'
+        : subKey === 'bootstrapping_results' ? 'Bootstrapping results'
+        : subKey === 'permutation_test' ? 'Permutation test'
+        : 'Bootstrap MGA';
       const badge = subLabel;
       switch (baseTab) {
         case 'path_coefficients':
-          return { title: 'Path Coefficients', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Path coefficients', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'total_effects':
-          return { title: 'Total Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Total effects', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'total_indirect_effects':
-          return { title: 'Total Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Total indirect effects', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'specific_indirect_effects':
-          return { title: 'Specific Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Specific indirect effects', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'outer_loadings':
-          return { title: 'Outer Loadings', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Outer loadings', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'outer_weights':
-          return { title: 'Outer Weights', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Outer weights', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'micom':
-          return { title: 'MICOM Measurement Invariance', badge: 'Permutation', subtitle: 'Step 1: Configural, Step 2: Compositional, Step 3: Mean & Variance Invariance' };
+          return { title: 'MICOM (Invariance)', badge: 'Permutation', subtitle: 'Step 1: Configural, Step 2: Compositional, Step 3: Mean & Variance Invariance' };
         case 'run_details':
-          return { title: 'Run Details & Settings', badge: 'MGA', subtitle: 'Algorithm configuration, data group specifications, and sample counts.' };
+          return { title: 'Run details', badge: 'MGA', subtitle: 'Algorithm configuration, data group specifications, and sample counts.' };
       }
     }
-    switch (activeResultTab) {
+    const tab = activeResultTab.split('__')[0];
+    switch (tab) {
       case 'path_coefficients':
         return {
-          title: 'Path Coefficients',
+          title: 'Path coefficients',
           badge: 'β (beta)',
           subtitle: 'Standardized beta coefficients between endogenous and exogenous latent constructs.',
         };
       case 'specific_indirect_effects':
-        return { title: 'Individual Indirect Paths', badge: 'Indirect effects', subtitle: 'Estimates for each distinct mediation path.' };
+        return { title: 'Specific indirect effects', badge: 'Indirect', subtitle: 'Estimates for each distinct mediation path.' };
       case 'run_details':
-        return { title: 'Calculation Details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
+        return { title: 'Run details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
       case 'total_indirect_effects':
         return {
-          title: 'Total Indirect Effects',
+          title: 'Total indirect effects',
           badge: 'Indirect',
           subtitle: 'Specific and cumulative indirect mediation pathways across constructs.',
         };
       case 'total_effects':
         return {
-          title: 'Total Effects',
+          title: 'Total effects',
           badge: 'Direct + Indirect',
           subtitle: 'Cumulative relationships and mediation decomposition across the structural model.',
         };
       case 'outer_loadings':
         return {
-          title: 'Outer Loadings',
+          title: 'Outer loadings',
           badge: 'λ (lambda)',
           subtitle: 'Bivariate correlations between each indicator and its associated latent construct score.',
         };
       case 'outer_weights':
         return {
-          title: 'Outer Weights',
+          title: 'Outer weights',
           badge: 'w',
           subtitle: 'Relative contribution weights of indicators to their latent construct scores.',
         };
       case 'r_squared':
         return {
-          title: 'R-Square (R²)',
+          title: 'R-square (R²)',
           badge: 'R² & Adj R²',
           subtitle: 'Coefficient of determination measuring variance explained for endogenous constructs.',
         };
       case 'f_squared':
         return {
-          title: 'f-Square Effect Sizes',
+          title: 'f-square (f²)',
           badge: 'f²',
           subtitle: 'Cohen\'s f² effect size of omitted predictor on endogenous construct R².',
         };
       case 'reliability':
+      case 'construct_reliability':
         return {
-          title: 'Construct Reliability & Validity',
+          title: 'Construct reliability & validity',
           badge: 'α, CR, ρA, AVE',
           subtitle: 'Internal consistency reliability (Cronbach\'s α, CR, rho_A) and convergent validity (AVE).',
         };
       case 'discriminant':
         return {
-          title: 'Discriminant Validity',
+          title: 'Discriminant validity',
           badge: 'HTMT & Fornell-Larcker',
           subtitle: 'Assessment of construct distinction via Heterotrait-Monotrait ratio and Fornell-Larcker criterion.',
         };
       case 'collinearity':
         return {
-          title: 'Collinearity Statistics (VIF)',
+          title: 'Collinearity (VIF)',
           badge: 'VIF',
           subtitle: 'Variance Inflation Factors evaluating multicollinearity among predictors and indicators.',
         };
       case 'construct_scores':
         return {
-          title: 'Latent Variable Scores',
+          title: 'Construct scores',
           badge: 'Y (standardized)',
           subtitle: 'Estimated case-level construct scores standardized to zero mean and unit variance.',
         };
+      case 'hypotheses':
+        return {
+          title: 'Hypotheses testing',
+          badge: 'Hypotheses',
+          subtitle: 'Evaluation of structural hypothesized directional paths.',
+        };
       case 'model_fit':
         return {
-          title: 'Model Fit',
-          badge: 'SRMR & discrepancy',
+          title: 'Model fit (SRMR)',
+          badge: 'SRMR',
           subtitle: 'Model fit statistics and reference values.',
         };
       case 'bootstrap_significance':
         return {
-          title: 'Bootstrap Significance Testing',
+          title: 'Bootstrap inference',
           badge: 'p-values, t-stats, 95% CI',
           subtitle: 'Non-parametric bootstrap distributions, standard errors, t-statistics, p-values, and 95% confidence intervals.',
+        };
+      case 'convergent_validity_redundancy':
+        return {
+          title: 'Convergent validity (redundancy)',
+          badge: 'Redundancy',
+          subtitle: 'Formative construct convergent validity assessment against global single-item measures.',
         };
       default:
         return {
           title: 'PLS-SEM Results',
           badge: 'PLS',
-          subtitle: 'Estimation results from the PLS-SEM engine.',
+          subtitle: 'Algorithm output, criteria checks, and parameters.',
         };
     }
-  }, [activeResultTab]);
+  }, [activeResultTab, plsResults]);
+
+  const currentTabId = !plsResults?.is_mga && activeResultTab.includes('__') ? activeResultTab.split('__')[0] : activeResultTab;
+
+  useEffect(() => {
+    if (plsResults) {
+      if (!plsResults.is_mga && activeResultTab.includes('__')) {
+        setActiveResultTab(activeResultTab.split('__')[0]);
+      } else if (plsResults.is_mga && !activeResultTab.includes('__') && activeResultTab !== 'run_details' && activeResultTab !== 'micom') {
+        const sub = plsResults.mga_type === 'permutation' ? 'permutation_test' : 'bootstrap_mga';
+        setActiveResultTab(`${activeResultTab}__${sub}`);
+      }
+    }
+  }, [plsResults]);
 
   const handleCopyCurrentTable = () => {
     const tableEl = document.querySelector('.scientific-table');
@@ -3765,19 +3807,17 @@ const ModelEditor = () => {
               </h1>
               <p className="report-header__subtitle">{reportTabDetails.subtitle}</p>
             </div>
-            {!plsResults?.is_mga && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                <button
-                  className="results-tool-btn"
-                  type="button"
-                  onClick={handleCopyCurrentTable}
-                  title="Copy table to clipboard"
-                >
-                  <Copy size={13} />
-                  <span>Copy Table</span>
-                </button>
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <button
+                className="results-tool-btn"
+                type="button"
+                onClick={handleCopyCurrentTable}
+                title="Copy table to clipboard"
+              >
+                <Copy size={13} />
+                <span>Copy Table</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -3789,7 +3829,7 @@ const ModelEditor = () => {
                 report={plsResults.mga_report}
                 activeTab={activeResultTab}
               />
-            ) : activeResultTab === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
+            ) : currentTabId === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
               <>
                 {analysisLoading.mediation && <p className="results-empty-note">Loading mediation results...</p>}
                 {analysisErrors.mediation && <p className="results-empty-note">{analysisErrors.mediation} <button type="button" onClick={() => void loadAnalysis('mediation')}>Retry</button></p>}
@@ -3803,11 +3843,11 @@ const ModelEditor = () => {
                 <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 600, color: '#334155' }}>Model estimates unavailable</h3>
                 <p style={{ margin: 0, fontSize: '13px' }}>Run the PLS-SEM algorithm to display the core model estimates. Any completed analysis output is shown below.</p>
               </div>
-            ) : activeResultTab === 'hypotheses' ? (
+            ) : currentTabId === 'hypotheses' ? (
               <HypothesisTestingPanel
                 results={plsResults}
               />
-            ) : activeResultTab === 'path_coefficients' ? (
+            ) : currentTabId === 'path_coefficients' ? (
               getTableMode('path_coefficients') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -3887,7 +3927,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'total_indirect_effects' ? (
+            ) : currentTabId === 'total_indirect_effects' ? (
               getTableMode('total_indirect_effects') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -3958,7 +3998,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'total_effects' ? (
+            ) : currentTabId === 'total_effects' ? (
               getTableMode('total_effects') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -4033,7 +4073,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'outer_loadings' ? (
+            ) : currentTabId === 'outer_loadings' ? (
               getTableMode('outer_loadings') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -4126,7 +4166,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'outer_weights' ? (
+            ) : currentTabId === 'outer_weights' ? (
               getTableMode('outer_weights') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -4202,7 +4242,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'r_squared' ? (
+            ) : currentTabId === 'r_squared' ? (
               <table className="scientific-table">
                 <thead>
                   <tr>
@@ -4248,7 +4288,7 @@ const ModelEditor = () => {
                   })}
                 </tbody>
               </table>
-            ) : activeResultTab === 'f_squared' ? (
+            ) : currentTabId === 'f_squared' ? (
               getTableMode('f_squared') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -4338,7 +4378,7 @@ const ModelEditor = () => {
                     )}
                   </tbody>
                 </table>
-              )) : activeResultTab === 'reliability' ? (
+              )) : currentTabId === 'reliability' ? (
               <table className="scientific-table">
                 <thead>
                   <tr>
@@ -4389,7 +4429,7 @@ const ModelEditor = () => {
                   })}
                 </tbody>
               </table>
-            ) : activeResultTab === 'discriminant' ? (
+            ) : currentTabId === 'discriminant' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                 <div>
                   <h4 style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>
@@ -4539,7 +4579,7 @@ const ModelEditor = () => {
                   </table>
                 </div>
               </div>
-            ) : activeResultTab === 'collinearity' ? (
+            ) : currentTabId === 'collinearity' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                 <div>
                   <h4 style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>Inner Model VIF (Predictors of Endogenous Constructs)</h4>
@@ -4606,7 +4646,7 @@ const ModelEditor = () => {
                   </table>
                 </div>
               </div>
-            ) : activeResultTab === 'convergent_validity_redundancy' ? (
+            ) : currentTabId === 'convergent_validity_redundancy' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>
@@ -4698,7 +4738,7 @@ const ModelEditor = () => {
                   </div>
                 </div>
               </div>
-            ) : activeResultTab === 'construct_scores' ? (
+            ) : currentTabId === 'construct_scores' ? (
               <table className="scientific-table">
                 <thead>
                   <tr>
@@ -4740,7 +4780,7 @@ const ModelEditor = () => {
                   ))}
                 </tbody>
               </table>
-            ) : activeResultTab === 'bootstrap_significance' ? (
+            ) : currentTabId === 'bootstrap_significance' ? (
               !plsResults.significance ? (
                 <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
                   <svg style={{ width: 48, height: 48, margin: '0 auto 16px', color: '#94a3b8' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -4886,13 +4926,13 @@ const ModelEditor = () => {
                   </div>
                 </div>
               )
-            ) : activeResultTab === 'run_details' ? (
+            ) : currentTabId === 'run_details' ? (
               <RunDetails results={plsResults} />
-            ) : activeResultTab === 'model_fit' ? (
+            ) : currentTabId === 'model_fit' ? (
               <ModelFitResults results={plsResults} />
             ) : null}
           </div>
-          {activeResultTab === 'path_coefficients' && !plsResults?.is_mga && (
+          {currentTabId === 'path_coefficients' && !plsResults?.is_mga && (
             <InlineAnalysisResults results={plsResults} analyses={analysisResultsMap} available={availableAnalyses} latest={latestAnalysis}
               loading={analysisLoading} errors={analysisErrors} stale={analysisStale} onLoad={id => void loadAnalysis(id)} />
           )}
@@ -4933,6 +4973,21 @@ const ModelEditor = () => {
       setLastCalculatedModel(calculatedSnapshot);
       lastCalculatedModelRef.current = calculatedSnapshot;
       setIsModelOutdated(false);
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      if (effectiveModelId) {
+        setModelResultCache(effectiveModelId, results);
+        if (activeStudy?.path) {
+          void api.saveProjectResults({
+            projectPath: activeStudy.path,
+            modelId: effectiveModelId || undefined,
+            datasetId: activeDataset?.id,
+            algorithm: 'pls',
+            analysisType: 'pls',
+            results,
+          });
+        }
+      }
       setActiveResultTab('bootstrap_significance');
       const viewSlider = document.getElementById('main-view-slider');
       if (viewSlider) {

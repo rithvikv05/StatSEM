@@ -59,12 +59,12 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
 
   const standardGroups = [
     { label: 'Estimates', items: [
-      ['path_coefficients', 'Direct paths'],
-      ['total_effects', 'Combined effects'],
-      ['total_indirect_effects', 'Indirect effects'],
-      ...(hasSpecificIndirect ? [['specific_indirect_effects', 'Individual indirect paths']] : []),
-      ['outer_loadings', 'Indicator loadings'],
-      ['outer_weights', 'Indicator weights'],
+      ['path_coefficients', 'Path coefficients'],
+      ['total_effects', 'Total effects'],
+      ['total_indirect_effects', 'Total indirect effects'],
+      ...(hasSpecificIndirect ? [['specific_indirect_effects', 'Specific indirect effects']] : []),
+      ['outer_loadings', 'Outer loadings'],
+      ['outer_weights', 'Outer weights'],
       ['construct_scores', 'Construct scores'],
       ['hypotheses', 'Hypotheses testing'],
       ...(!snapshot ? [['bootstrap_significance', 'Bootstrap inference']] : []),
@@ -364,7 +364,7 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                     {open && (
                       <div className="tree-section__items">
                         {group.items.map(([id, label]) => {
-                          const isActive = activeTab === id;
+                          const isActive = (!isMga && activeTab.includes('__') ? activeTab.split('__')[0] : activeTab) === id;
                           return (
                             <button
                               type="button"
@@ -392,11 +392,11 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
               <div style={{ marginTop: '8px', paddingTop: '4px', borderTop: '1px solid var(--color-border-subtle)', padding: '4px 8px' }}>
                 <button
                   type="button"
-                  className={`tree-item ${activeTab === 'run_details' ? 'active' : ''}`}
-                  aria-current={activeTab === 'run_details' ? 'page' : undefined}
+                  className={`tree-item ${(!isMga && activeTab.includes('__') ? activeTab.split('__')[0] : activeTab) === 'run_details' ? 'active' : ''}`}
+                  aria-current={(!isMga && activeTab.includes('__') ? activeTab.split('__')[0] : activeTab) === 'run_details' ? 'page' : undefined}
                   style={{
                     fontWeight: 600,
-                    color: activeTab === 'run_details' ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                    color: (!isMga && activeTab.includes('__') ? activeTab.split('__')[0] : activeTab) === 'run_details' ? 'var(--color-accent)' : 'var(--color-text-primary)',
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',

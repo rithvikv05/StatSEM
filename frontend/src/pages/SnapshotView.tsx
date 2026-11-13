@@ -643,116 +643,136 @@ export const SnapshotView: React.FC = () => {
       const sub = `${gA} (n=${rep?.nA ?? '?'}) vs ${gB} (n=${rep?.nB ?? '?'})`;
       const [baseTab, subKey] = activeResultTab.includes('__')
         ? activeResultTab.split('__')
-        : [activeResultTab, 'bootstrap_mga'];
+        : [activeResultTab, results.mga_type === 'permutation' ? 'permutation_test' : 'bootstrap_mga'];
       const subLabel =
-        subKey === 'parametric' ? 'Parametric Test'
-        : subKey === 'welch' ? 'Welch-Satterthwaite Test'
-        : subKey === 'confidence_intervals' ? 'Confidence Intervals (Bias-Corrected)'
-        : subKey === 'bootstrapping_results' ? 'Bootstrapping Results'
-        : results.mga_type === 'permutation' ? 'Permutation' : 'Bootstrap MGA';
+        subKey === 'parametric' ? 'Parametric test'
+        : subKey === 'welch' ? 'Welch-Satterthwaite test'
+        : subKey === 'confidence_intervals' ? 'Confidence intervals'
+        : subKey === 'bootstrapping_results' ? 'Bootstrapping results'
+        : subKey === 'permutation_test' ? 'Permutation test'
+        : 'Bootstrap MGA';
       const badge = subLabel;
       switch (baseTab) {
         case 'path_coefficients':
-          return { title: 'Path Coefficients', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Path coefficients', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'total_effects':
-          return { title: 'Total Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Total effects', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'total_indirect_effects':
-          return { title: 'Total Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Total indirect effects', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'specific_indirect_effects':
-          return { title: 'Specific Indirect Effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Specific indirect effects', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'outer_loadings':
-          return { title: 'Outer Loadings', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Outer loadings', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'outer_weights':
-          return { title: 'Outer Weights', badge, subtitle: `Multigroup comparison: ${sub}` };
+          return { title: 'Outer weights', badge, subtitle: `Multigroup comparison: ${sub}` };
         case 'micom':
-          return { title: 'MICOM Measurement Invariance', badge: 'Permutation', subtitle: 'Step 1: Configural, Step 2: Compositional, Step 3: Mean & Variance Invariance' };
+          return { title: 'MICOM (Invariance)', badge: 'Permutation', subtitle: 'Step 1: Configural, Step 2: Compositional, Step 3: Mean & Variance Invariance' };
         case 'run_details':
-          return { title: 'Run Details & Settings', badge: 'MGA', subtitle: 'Algorithm configuration, data group specifications, and sample counts.' };
+          return { title: 'Run details', badge: 'MGA', subtitle: 'Algorithm configuration, data group specifications, and sample counts.' };
       }
     }
-    switch (activeResultTab) {
+    const tab = activeResultTab.split('__')[0];
+    switch (tab) {
       case 'path_coefficients':
         return {
-          title: 'Path Coefficients',
+          title: 'Path coefficients',
           badge: 'β (beta)',
           subtitle: 'Standardized beta coefficients between endogenous and exogenous latent constructs.',
         };
       case 'specific_indirect_effects':
-        return { title: 'Individual Indirect Paths', badge: 'Indirect effects', subtitle: 'Estimates for each distinct mediation path.' };
+        return { title: 'Specific indirect effects', badge: 'Indirect', subtitle: 'Estimates for each distinct mediation path.' };
       case 'run_details':
-        return { title: 'Calculation Details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
+        return { title: 'Run details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
       case 'total_indirect_effects':
         return {
-          title: 'Total Indirect Effects',
+          title: 'Total indirect effects',
           badge: 'Indirect',
           subtitle: 'Specific and cumulative indirect mediation pathways across constructs.',
         };
       case 'total_effects':
         return {
-          title: 'Total Effects',
+          title: 'Total effects',
           badge: 'Direct + Indirect',
           subtitle: 'Cumulative relationships and mediation decomposition across the structural model.',
         };
       case 'outer_loadings':
         return {
-          title: 'Outer Loadings',
+          title: 'Outer loadings',
           badge: 'λ (lambda)',
           subtitle: 'Bivariate correlations between each indicator and its associated latent construct score.',
         };
       case 'outer_weights':
         return {
-          title: 'Outer Weights',
+          title: 'Outer weights',
           badge: 'w',
           subtitle: 'Relative contribution weights of indicators to their latent construct scores.',
         };
       case 'r_squared':
         return {
-          title: 'R-Square (R²)',
+          title: 'R-square (R²)',
           badge: 'R² & Adj R²',
           subtitle: 'Coefficient of determination measuring variance explained for endogenous constructs.',
         };
       case 'construct_reliability':
       case 'reliability':
         return {
-          title: 'Construct Reliability & Validity',
+          title: 'Construct reliability & validity',
           badge: 'α, CR, ρA, AVE',
           subtitle: 'Internal consistency reliability (Cronbach\'s α, CR, rho_A) and convergent validity (AVE).',
         };
       case 'htmt':
         return {
-          title: 'Discriminant Validity (HTMT)',
+          title: 'Discriminant validity (HTMT)',
           badge: 'Heterotrait-Monotrait Ratio',
           subtitle: 'HTMT ratios of correlations. Values strictly below 0.85 (or 0.90) indicate distinct construct validity.',
         };
       case 'fornell_larcker':
         return {
-          title: 'Fornell-Larcker Criterion',
+          title: 'Fornell-Larcker criterion',
           badge: '√AVE vs Correlations',
           subtitle: 'Square root of AVE (on diagonal) compared against inter-construct correlations (off-diagonal).',
         };
+      case 'discriminant':
+        return {
+          title: 'Discriminant validity',
+          badge: 'HTMT & Fornell-Larcker',
+          subtitle: 'Assessment of construct distinction via Heterotrait-Monotrait ratio and Fornell-Larcker criterion.',
+        };
       case 'f_squared':
         return {
-          title: 'f-Square Effect Sizes',
+          title: 'f-square (f²)',
           badge: 'f²',
           subtitle: 'Cohen\'s f² effect size of omitted predictor on endogenous construct R².',
         };
       case 'collinearity':
         return {
-          title: 'Collinearity Statistics (VIF)',
-          badge: 'Variance Inflation Factor',
-          subtitle: 'Variance Inflation Factor (VIF) evaluating multicollinearity among predictors. Ideal VIF < 3.3.',
+          title: 'Collinearity (VIF)',
+          badge: 'VIF',
+          subtitle: 'Variance Inflation Factors evaluating multicollinearity among predictors and indicators.',
         };
       case 'construct_scores':
         return {
-          title: 'Latent Variable Scores',
-          badge: 'Standardized Scores',
-          subtitle: 'Calculated standardized case scores for each latent variable in the model.',
+          title: 'Construct scores',
+          badge: 'Y (standardized)',
+          subtitle: 'Estimated case-level construct scores standardized to zero mean and unit variance.',
+        };
+      case 'hypotheses':
+        return {
+          title: 'Hypotheses testing',
+          badge: 'Hypotheses',
+          subtitle: 'Evaluation of structural hypothesized directional paths.',
         };
       case 'model_fit':
         return {
-          title: 'Model Fit (SRMR)',
-          badge: 'Global Fit',
+          title: 'Model fit (SRMR)',
+          badge: 'SRMR',
           subtitle: 'Standardized Root Mean Square Residual (SRMR) measuring global model fit. Values < 0.08 indicate good fit.',
+        };
+      case 'convergent_validity_redundancy':
+        return {
+          title: 'Convergent validity (redundancy)',
+          badge: 'Redundancy',
+          subtitle: 'Formative construct convergent validity assessment against global single-item measures.',
         };
       default:
         return {
@@ -761,7 +781,9 @@ export const SnapshotView: React.FC = () => {
           subtitle: `Saved snapshot calculation results for ${snapshot?.name || 'Model'}.`,
         };
     }
-  }, [activeResultTab, snapshot?.name]);
+  }, [activeResultTab, snapshot?.name, results]);
+
+  const currentTabId = !results?.is_mga && activeResultTab.includes('__') ? activeResultTab.split('__')[0] : activeResultTab;
 
   const isInteractionConstruct = (cid: string): boolean => {
     if (!cid) return false;
@@ -1148,19 +1170,17 @@ export const SnapshotView: React.FC = () => {
                       </p>
                     </div>
 
-                    {!results?.is_mga && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                        <button
-                          className="results-tool-btn"
-                          type="button"
-                          onClick={handleCopyTable}
-                          title="Copy table to clipboard"
-                        >
-                          <Copy size={13} />
-                          <span>Copy Table</span>
-                        </button>
-                      </div>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                      <button
+                        className="results-tool-btn"
+                        type="button"
+                        onClick={handleCopyTable}
+                        title="Copy table to clipboard"
+                      >
+                        <Copy size={13} />
+                        <span>Copy Table</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1172,16 +1192,16 @@ export const SnapshotView: React.FC = () => {
                         report={results.mga_report}
                         activeTab={activeResultTab}
                       />
-                    ) : activeResultTab === 'specific_indirect_effects' ? (
+                    ) : currentTabId === 'specific_indirect_effects' ? (
                       <SpecificIndirectResults results={results} />
-                    ) : activeResultTab === 'run_details' ? (
+                    ) : currentTabId === 'run_details' ? (
                       <RunDetails results={results} />
-                    ) : activeResultTab === 'hypotheses' ? (
+                    ) : currentTabId === 'hypotheses' ? (
                       <HypothesisTestingPanel
                         results={results}
                         model={snapshot?.model_state || snapshot?.model}
                       />
-                    ) : activeResultTab === 'path_coefficients' ? (
+                    ) : currentTabId === 'path_coefficients' ? (
                       getTableMode('path_coefficients') === 'matrix' ? (
                         <table className="scientific-table">
                           <thead>
@@ -1270,7 +1290,7 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : activeResultTab === 'total_indirect_effects' ? (
+                    ) : currentTabId === 'total_indirect_effects' ? (
                       getTableMode('total_indirect_effects') === 'matrix' ? (
                         <table className="scientific-table">
                           <thead>
@@ -1350,7 +1370,7 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : activeResultTab === 'total_effects' ? (
+                    ) : currentTabId === 'total_effects' ? (
                       getTableMode('total_effects') === 'matrix' ? (
                         <table className="scientific-table">
                           <thead>
@@ -1435,7 +1455,7 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : activeResultTab === 'outer_loadings' ? (
+                    ) : currentTabId === 'outer_loadings' ? (
                       getTableMode('outer_loadings') === 'matrix' ? (
                         <table className="scientific-table">
                           <thead>
@@ -1528,7 +1548,7 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : activeResultTab === 'outer_weights' ? (
+                    ) : currentTabId === 'outer_weights' ? (
                       getTableMode('outer_weights') === 'matrix' ? (
                         <table className="scientific-table">
                           <thead>
@@ -1604,7 +1624,7 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : activeResultTab === 'r_squared' ? (
+                    ) : currentTabId === 'r_squared' ? (
                       <table className="scientific-table">
                         <thead>
                           <tr>
@@ -1623,7 +1643,7 @@ export const SnapshotView: React.FC = () => {
                           ))}
                         </tbody>
                       </table>
-                    ) : activeResultTab === 'construct_reliability' ? (
+                    ) : currentTabId === 'construct_reliability' ? (
                       <table className="scientific-table">
                         <thead>
                           <tr>
@@ -1649,7 +1669,7 @@ export const SnapshotView: React.FC = () => {
                           })}
                         </tbody>
                       </table>
-                    ) : activeResultTab === 'htmt' ? (
+                    ) : currentTabId === 'htmt' ? (
                       getTableMode('htmt') === 'matrix' ? (
                         <table className="scientific-table">
                           <thead>
@@ -1748,7 +1768,7 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : activeResultTab === 'fornell_larcker' ? (
+                    ) : currentTabId === 'fornell_larcker' ? (
                       <table className="scientific-table">
                         <thead>
                           <tr>
@@ -1770,7 +1790,7 @@ export const SnapshotView: React.FC = () => {
                           ))}
                         </tbody>
                       </table>
-                    ) : activeResultTab === 'f_squared' ? (
+                    ) : currentTabId === 'f_squared' ? (
                       getTableMode('f_squared') === 'matrix' ? (
                         <table className="scientific-table">
                           <thead>
@@ -1870,7 +1890,7 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : activeResultTab === 'collinearity' ? (
+                    ) : currentTabId === 'collinearity' ? (
                       <table className="scientific-table">
                         <thead>
                           <tr>
@@ -1887,7 +1907,7 @@ export const SnapshotView: React.FC = () => {
                           ))}
                         </tbody>
                       </table>
-                    ) : activeResultTab === 'convergent_validity_redundancy' ? (
+                    ) : currentTabId === 'convergent_validity_redundancy' ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                         <table className="scientific-table">
                           <thead>
@@ -1964,7 +1984,7 @@ export const SnapshotView: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                    ) : activeResultTab === 'construct_scores' ? (
+                    ) : currentTabId === 'construct_scores' ? (
                       <table className="scientific-table">
                         <thead>
                           <tr>
@@ -1986,7 +2006,7 @@ export const SnapshotView: React.FC = () => {
                           ))}
                         </tbody>
                       </table>
-                    ) : activeResultTab === 'model_fit' ? (
+                    ) : currentTabId === 'model_fit' ? (
                       <ModelFitResults results={results} />
                     ) : null}
                   </div>

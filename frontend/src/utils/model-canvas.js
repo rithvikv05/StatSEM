@@ -3267,8 +3267,11 @@ export function initModelCanvas() {
     }
 
     const gcRadius = NODE_R * 0.55;
-    const lineDx = landX - nodeX;
-    const lineDy = landY - nodeY;
+    const waypoints = gc.waypoints || [];
+    const firstTargetX = waypoints.length > 0 ? waypoints[0].x : landX;
+    const firstTargetY = waypoints.length > 0 ? waypoints[0].y : landY;
+    const lineDx = firstTargetX - nodeX;
+    const lineDy = firstTargetY - nodeY;
     const lineDist = Math.hypot(lineDx, lineDy) || 1;
 
     const startX = nodeX + (lineDx / lineDist) * gcRadius;
@@ -3304,7 +3307,8 @@ export function initModelCanvas() {
       handleX,
       handleY,
       gnx,
-      gny
+      gny,
+      waypoints
     };
   }
 
@@ -4399,7 +4403,7 @@ export function initModelCanvas() {
     gaussianCopulas.forEach(gc => {
       const geo = getGaussianCopulaGeometry(gc);
       if (!geo) return;
-      const { nodeX, nodeY, gcRadius, startX, startY, landX, landY, isCurved, gcCurv, arcMidX, arcMidY, handleX, handleY, gnx, gny } = geo;
+      const { nodeX, nodeY, gcRadius, startX, startY, landX, landY, isCurved, gcCurv, arcMidX, arcMidY, handleX, handleY, gnx, gny, waypoints } = geo;
 
       const isSelected = selectedIds.has(gc.id);
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -4412,6 +4416,11 @@ export function initModelCanvas() {
       if (isCurved) {
         d += ` Q ${arcMidX} ${arcMidY} ${landX} ${landY}`;
       } else {
+        if (waypoints && waypoints.length > 0) {
+          waypoints.forEach(wp => {
+            d += ` L ${wp.x} ${wp.y}`;
+          });
+        }
         d += ` L ${landX} ${landY}`;
       }
 
@@ -4551,38 +4560,90 @@ export function initModelCanvas() {
       gcCircle.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
       edgesLayer.appendChild(gcGroup);
 
-      // 4b. Curvature / bend handle for GC (appended AFTER hitPath & gcGroup so it receives clicks cleanly)
+      // 4b. Straight line bend handles / waypoint handles for GC (appended AFTER hitPath & gcGroup)
       if (isSelected) {
-        const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        handle.setAttribute('cx', handleX);
-        handle.setAttribute('cy', handleY);
-        handle.setAttribute('r', '6');
-        handle.setAttribute('fill', effectiveGcColor);
-        handle.setAttribute('stroke', '#ffffff');
-        handle.setAttribute('stroke-width', '1.5');
-        handle.setAttribute('data-export-ui', 'true');
-        handle.setAttribute('pointer-events', 'all');
-        handle.style.pointerEvents = 'all';
-        handle.style.cursor = 'move';
-        handle.addEventListener('mousedown', (event) => {
-          if (event.button === 0) {
-            event.stopPropagation();
-            event.preventDefault();
-            if (!isCurved) {
-              gc.curved = true;
-              gc.curvature = 0;
+        if (isCurved) {
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', handleX);
+          handle.setAttribute('cy', handleY);
+          handle.setAttribute('r', '6');
+          handle.setAttribute('fill', effectiveGcColor);
+          handle.setAttribute('stroke', '#ffffff');
+          handle.setAttribute('stroke-width', '1.5');
+          handle.setAttribute('data-export-ui', 'true');
+          handle.setAttribute('pointer-events', 'all');
+          handle.style.pointerEvents = 'all';
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', (event) => {
+            if (event.button === 0) {
+              event.stopPropagation();
+              event.preventDefault();
+              draggingCurve = gc;
             }
-            draggingCurve = gc;
+          });
+          edgesLayer.appendChild(handle);
+        } else {
+          // Existing waypoint moveable handles
+          if (waypoints && waypoints.length > 0) {
+            waypoints.forEach((wp, idx) => {
+              const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+              handle.setAttribute('cx', wp.x);
+              handle.setAttribute('cy', wp.y);
+              handle.setAttribute('r', '5');
+              handle.setAttribute('fill', effectiveGcColor);
+              handle.setAttribute('stroke', '#ffffff');
+              handle.setAttribute('stroke-width', '1.5');
+              handle.setAttribute('data-export-ui', 'true');
+              handle.setAttribute('pointer-events', 'all');
+              handle.style.pointerEvents = 'all';
+              handle.style.cursor = 'move';
+              handle.addEventListener('mousedown', (e) => {
+                if (e.button === 0) {
+                  e.stopPropagation();
+                  draggingWaypoint = { edge: gc, idx };
+                }
+              });
+              edgesLayer.appendChild(handle);
+            });
           }
-        });
-        edgesLayer.appendChild(handle);
+
+          // Midpoint handles on each straight segment to create a bend/waypoint on drag
+          const points = [{ x: startX, y: startY }, ...(waypoints || []), { x: landX, y: landY }];
+          for (let i = 0; i < points.length - 1; i++) {
+            const midX = (points[i].x + points[i + 1].x) / 2;
+            const midY = (points[i].y + points[i + 1].y) / 2;
+            const midHandle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            midHandle.setAttribute('cx', midX);
+            midHandle.setAttribute('cy', midY);
+            midHandle.setAttribute('r', '5');
+            midHandle.setAttribute('fill', 'rgba(168,85,247,0.8)');
+            midHandle.setAttribute('stroke', '#ffffff');
+            midHandle.setAttribute('stroke-width', '1.5');
+            midHandle.setAttribute('data-export-ui', 'true');
+            midHandle.setAttribute('pointer-events', 'all');
+            midHandle.style.pointerEvents = 'all';
+            midHandle.style.cursor = 'crosshair';
+            midHandle.addEventListener('mousedown', (e) => {
+              if (e.button === 0) {
+                e.stopPropagation();
+                pendingWaypoint = { edge: gc, idx: i, midX, midY };
+              }
+            });
+            edgesLayer.appendChild(midHandle);
+          }
+        }
       }
 
       // 5. Collect result badge for GC dotted line
       const gcDetails = getGaussianCopulaDetails(gc);
       if (gcDetails && gcDetails.beta !== null && gcDetails.beta !== undefined) {
         let bX, bY;
-        if (isCurved) {
+        if (waypoints && waypoints.length > 0) {
+          const pts = [{ x: startX, y: startY }, ...waypoints, { x: landX, y: landY }];
+          const midSeg = Math.floor((pts.length - 1) / 2);
+          bX = (pts[midSeg].x + pts[midSeg + 1].x) / 2;
+          bY = (pts[midSeg].y + pts[midSeg + 1].y) / 2;
+        } else if (isCurved) {
           const t = 0.35;
           const invT = 1 - t;
           bX = invT * invT * startX + 2 * invT * t * arcMidX + t * t * landX;
@@ -6810,77 +6871,34 @@ export function initModelCanvas() {
       sX = edge.waypoints[edge.waypoints.length - 1].x;
       sY = edge.waypoints[edge.waypoints.length - 1].y;
     }
-    
-    let srcPortAngle = 0;
-    let tgtPortAngle = 0;
-    if (edge && Array.isArray(edges) && !edge.waypoints?.length) {
-      if (source.shape !== 'rectangle' && source.isLatent !== false) {
-        const outgoing = edges.filter(e => e && e.sourceId === source.id && !e.targetEdgeId && !e.sourceEdgeId);
-        if (outgoing.length > 1) {
-          outgoing.sort((a, b) => {
-            const tA = nodes.find(n => n.id === a.targetId);
-            const tB = nodes.find(n => n.id === b.targetId);
-            return (tA ? tA.y : 0) - (tB ? tB.y : 0);
-          });
-          const idx = outgoing.findIndex(e => e.id === edge.id || (e.sourceId === edge.sourceId && e.targetId === edge.targetId));
-          if (idx !== -1) {
-            const maxSpread = 0.28;
-            srcPortAngle = -maxSpread / 2 + (idx / (outgoing.length - 1)) * maxSpread;
-          }
-        }
-      }
-      if (target.shape !== 'rectangle' && target.isLatent !== false) {
-        const incoming = edges.filter(e => e && e.targetId === target.id && !e.targetEdgeId && !e.sourceEdgeId);
-        if (incoming.length > 1) {
-          incoming.sort((a, b) => {
-            const sA = nodes.find(n => n.id === a.sourceId);
-            const sB = nodes.find(n => n.id === b.sourceId);
-            return (sA ? sA.y : 0) - (sB ? sB.y : 0);
-          });
-          const idx = incoming.findIndex(e => e.id === edge.id || (e.sourceId === edge.sourceId && e.targetId === edge.targetId));
-          if (idx !== -1) {
-            const maxSpread = 0.28;
-            tgtPortAngle = -maxSpread / 2 + (idx / (incoming.length - 1)) * maxSpread;
-          }
-        }
-      }
-    }
 
-    const getIntersectionOffset = (node, ptX, ptY, isTarget) => {
+    const getIntersectionOffset = (node, ptX, ptY) => {
       const dx = ptX - node.x;
       const dy = ptY - node.y;
-      const distance = Math.sqrt(dx*dx + dy*dy);
+      const distance = Math.hypot(dx, dy);
       if (distance === 0) return { x: 0, y: 0 };
       
       const w = node.width || (node.isLatent !== false ? 64 : 64);
       const h = node.height || (node.isLatent !== false ? 64 : 24);
       const shape = node.shape || 'circle';
-      const dirX = isTarget ? dx : dx;
-      const dirY = isTarget ? dy : dy;
       
       if (shape === 'circle') {
         const rx = w / 2;
         const ry = h / 2;
-        const portOffset = isTarget ? tgtPortAngle : srcPortAngle;
-        if (portOffset !== 0) {
-          const baseAngle = Math.atan2(dirY, dirX);
-          const angle = baseAngle + portOffset;
-          return { x: Math.cos(angle) * rx, y: Math.sin(angle) * ry };
-        }
-        return { x: (dirX / distance) * rx, y: (dirY / distance) * ry };
+        return { x: (dx / distance) * rx, y: (dy / distance) * ry };
       } else {
         const rx = w / 2;
         const ry = h / 2;
-        if (Math.abs(dirX) * ry > Math.abs(dirY) * rx) {
-          return { x: Math.sign(dirX) * rx, y: dirY * (rx / Math.abs(dirX)) };
+        if (Math.abs(dx) * ry > Math.abs(dy) * rx) {
+          return { x: Math.sign(dx) * rx, y: dy * (rx / Math.abs(dx)) };
         } else {
-          return { x: dirX * (ry / Math.abs(dirY)), y: Math.sign(dirY) * ry };
+          return { x: dx * (ry / Math.abs(dy)), y: Math.sign(dy) * ry };
         }
       }
     };
     
-    const srcOff = getIntersectionOffset(source, tX, tY, false);
-    const tgtOff = getIntersectionOffset(target, sX, sY, true);
+    const srcOff = getIntersectionOffset(source, tX, tY);
+    const tgtOff = getIntersectionOffset(target, sX, sY);
     
     let x1 = source.x + srcOff.x;
     let y1 = source.y + srcOff.y;
@@ -6899,8 +6917,8 @@ export function initModelCanvas() {
       const cy = my + (dx / len) * curveVal;
 
       // 2nd pass: intersect from control point
-      const newSrcOff = getIntersectionOffset(source, cx, cy, false);
-      const newTgtOff = getIntersectionOffset(target, cx, cy, true);
+      const newSrcOff = getIntersectionOffset(source, cx, cy);
+      const newTgtOff = getIntersectionOffset(target, cx, cy);
       x1 = source.x + newSrcOff.x;
       y1 = source.y + newSrcOff.y;
       x2 = target.x + newTgtOff.x;
@@ -7508,7 +7526,22 @@ export function initModelCanvas() {
       ];
     } else if (isCopula) {
       // ─── Gaussian Copula Menu ───
+      const gcObj = gaussianCopulas.find(c => c.id === id);
+      const hasWaypoints = !!(gcObj && gcObj.waypoints && gcObj.waypoints.length > 0);
       items = [
+        ...(hasWaypoints || gcObj?.curved ? [
+          { id: 'ctx-reset-bend', label: 'Reset Arrow Bend', icon: 'restart_alt', action: () => {
+              if (gcObj) {
+                gcObj.waypoints = [];
+                gcObj.curved = false;
+                render();
+                pushHistory();
+                window.dispatchEvent(new CustomEvent('canvas-changed'));
+              }
+            }
+          },
+          { divider: true }
+        ] : []),
         { id: 'ctx-delete-copula', label: 'Remove', icon: 'delete', danger: true, shortcut: 'Del', action: () => deleteSelected() },
         { id: 'ctx-select-all-outgoing', label: 'Select all outgoing paths of this source', icon: 'arrow_forward', action: () => {
             const gc = gaussianCopulas.find(c => c.id === id);

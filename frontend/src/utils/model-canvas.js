@@ -1477,9 +1477,11 @@ export function initModelCanvas() {
   document.querySelector('.tb-btn[title="Auto-Align Model"]')?.addEventListener('click', () => {
     if (nodes.length === 0) return;
     const rect = svg.getBoundingClientRect();
+    const { decimalDigits: layoutDp } = getPrecisionSettings();
     const result = performAutoLayout(nodes, edges, {
       containerWidth: rect.width || 1200,
       containerHeight: rect.height || 800,
+      decimalDigits: layoutDp,
     });
 
     // Update nodes in-place to preserve references
@@ -3626,7 +3628,7 @@ export function initModelCanvas() {
       };
     }).filter(Boolean);
 
-    const badgePosMap = resolveBadgePositions(edgesWithCoords);
+    const badgePosMap = resolveBadgePositions(edgesWithCoords, currentDecimalDigits);
 
     // Edges
     edges.forEach(edge => {

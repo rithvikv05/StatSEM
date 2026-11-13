@@ -1514,12 +1514,14 @@ export function initModelCanvas() {
       delete gc.node_y;
       delete gc.x;
       delete gc.y;
+      delete gc.curvature;
     });
     quadraticEffects.forEach(qe => {
       delete qe.node_x;
       delete qe.node_y;
       delete qe.x;
       delete qe.y;
+      delete qe.curvature;
     });
 
     selectedIds.clear();
@@ -1796,6 +1798,8 @@ export function initModelCanvas() {
     if (color !== undefined) {
       edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.color = color);
       moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.color = color);
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.color = color);
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.color = color);
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeColor = color);
       render();
       pushHistory();
@@ -1830,6 +1834,26 @@ export function initModelCanvas() {
           m.waypoints = [];
         }
       });
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => {
+        gc.curved = (style === 'curved');
+        if (style === 'solid') gc.strokeDasharray = '';
+        if (style === 'dashed') gc.strokeDasharray = '4 4';
+        if (style === 'dotted') gc.strokeDasharray = '2 4';
+        if (style === 'curved') {
+          gc.strokeDasharray = '4 4';
+          gc.curved = true;
+        }
+      });
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => {
+        qe.curved = (style === 'curved' || style === undefined);
+        if (style === 'solid') qe.strokeDasharray = '';
+        if (style === 'dashed') qe.strokeDasharray = '5 4';
+        if (style === 'dotted') qe.strokeDasharray = '2 4';
+        if (style === 'curved') {
+          qe.strokeDasharray = '5 4';
+          qe.curved = true;
+        }
+      });
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => {
         n.edgeCurved = false;
         if (style === 'solid') n.edgeStrokeDasharray = '';
@@ -1853,6 +1877,8 @@ export function initModelCanvas() {
     if (arrowType) {
       edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.arrowhead = arrowType);
       moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.arrowhead = arrowType);
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.arrowhead = arrowType);
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.arrowhead = arrowType);
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeArrowhead = arrowType);
       render();
       pushHistory();
@@ -1868,6 +1894,8 @@ export function initModelCanvas() {
       const numW = parseFloat(w) || 1.5;
       edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.strokeWidth = numW);
       moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.strokeWidth = numW);
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.strokeWidth = numW);
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.strokeWidth = numW);
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeStrokeWidth = numW);
       render();
       pushHistory();
@@ -3174,8 +3202,12 @@ export function initModelCanvas() {
     let nodeY = gc.node_y !== undefined ? gc.node_y : gc.y;
 
     if (nodeX === undefined || nodeY === undefined || isNaN(nodeX) || isNaN(nodeY)) {
-      const cand1 = { x: midX + nx * 80, y: midY + ny * 80 };
-      const cand2 = { x: midX - nx * 80, y: midY - ny * 80 };
+      const cands = [
+        { x: midX + nx * 80, y: midY + ny * 80 },
+        { x: midX - nx * 80, y: midY - ny * 80 },
+        { x: midX + nx * 125, y: midY + ny * 125 },
+        { x: midX - nx * 125, y: midY - ny * 125 },
+      ];
 
       const getMinDist = (pt) => {
         let minDist = Infinity;
@@ -3184,19 +3216,28 @@ export function initModelCanvas() {
           if (d < minDist) minDist = d;
         });
         gaussianCopulas.forEach(other => {
-          if (other.id !== gc.id && other.node_x !== undefined) {
-            const d = Math.hypot(other.node_x - pt.x, other.node_y - pt.y);
+          if (other.id !== gc.id && (other.node_x !== undefined || other.x !== undefined)) {
+            const ox = other.node_x !== undefined ? other.node_x : other.x;
+            const oy = other.node_y !== undefined ? other.node_y : other.y;
+            const d = Math.hypot(ox - pt.x, oy - pt.y);
             if (d < minDist) minDist = d;
           }
         });
         return minDist;
       };
 
-      const dist1 = getMinDist(cand1);
-      const dist2 = getMinDist(cand2);
-      const chosen = dist1 >= dist2 ? cand1 : cand2;
-      nodeX = chosen.x;
-      nodeY = chosen.y;
+      let bestCand = cands[0];
+      let bestDist = -1;
+      for (const cand of cands) {
+        const d = getMinDist(cand);
+        if (d > bestDist) {
+          bestDist = d;
+          bestCand = cand;
+        }
+      }
+
+      nodeX = bestCand.x;
+      nodeY = bestCand.y;
       gc.node_x = nodeX;
       gc.node_y = nodeY;
     }
@@ -3209,6 +3250,16 @@ export function initModelCanvas() {
     const startX = nodeX + (lineDx / lineDist) * gcRadius;
     const startY = nodeY + (lineDy / lineDist) * gcRadius;
 
+    const isCurved = gc.curved === true;
+    const gcCurv = typeof gc.curvature === 'number' ? gc.curvature : 28;
+    const gdx = landX - startX;
+    const gdy = landY - startY;
+    const glen = Math.hypot(gdx, gdy) || 1;
+    const gnx = -gdy / glen;
+    const gny = gdx / glen;
+    const midHandleX = (startX + landX) / 2 + gnx * gcCurv;
+    const midHandleY = (startY + landY) / 2 + gny * gcCurv;
+
     return {
       sNode,
       tNode,
@@ -3219,7 +3270,11 @@ export function initModelCanvas() {
       startX,
       startY,
       landX,
-      landY
+      landY,
+      isCurved,
+      gcCurv,
+      midHandleX,
+      midHandleY
     };
   }
 
@@ -3368,8 +3423,6 @@ export function initModelCanvas() {
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len;
     const uy = dy / len;
-    const nx = -uy;
-    const ny = ux;
 
     let midX = (x1 + x2) / 2;
     let midY = (y1 + y2) / 2;
@@ -3402,6 +3455,25 @@ export function initModelCanvas() {
       (gc.source_construct === pNode.id || gc.source === pId) &&
       (gc.target_construct === tNode.id || gc.target === tId)
     );
+
+    // Normal that points away from the latent variable's label
+    // StatSEM default: label at bottom (y > pNode.y) unless textPosition === 'top'
+    const labelIsTop = pNode.textPosition === 'top';
+    let nx = -uy;
+    let ny = ux;
+    if (!labelIsTop) {
+      // Label is at the bottom: normal MUST point UPWARDS (ny <= 0)
+      if (ny > 0 || (ny === 0 && nx < 0)) {
+        nx = uy;
+        ny = -ux;
+      }
+    } else {
+      // Label is on top: normal MUST point DOWNWARDS (ny >= 0)
+      if (ny < 0 || (ny === 0 && nx > 0)) {
+        nx = uy;
+        ny = -ux;
+      }
+    }
 
     const landX = midX;
     const landY = midY;
@@ -3453,17 +3525,29 @@ export function initModelCanvas() {
     const startY = nodeY + (lineDy / lineDist) * qeRadius;
 
     // Editor mode curved arc control points from predictor construct to landX, landY
+    // Start cleanly in the direction away from the label (never from the bottom where label sits!)
     const pRadius = pNode.width ? Math.max(pNode.width, pNode.height) / 2 : NODE_R;
-    const arcStartX = pNode.x + nx * (pRadius + 2);
-    const arcStartY = pNode.y + ny * (pRadius + 2);
+    const toLandX = landX - pNode.x;
+    const toLandY = landY - pNode.y;
+    const toLandLen = Math.hypot(toLandX, toLandY) || 1;
+    const uLandX = toLandX / toLandLen;
+    const uLandY = toLandY / toLandLen;
 
-    const qeCurv = typeof qe.curvature === 'number' ? qe.curvature : 38;
+    const blendX = uLandX * 0.72 + nx * 0.68;
+    const blendY = uLandY * 0.72 + ny * 0.68;
+    const blendLen = Math.hypot(blendX, blendY) || 1;
+
+    const arcStartX = pNode.x + (blendX / blendLen) * (pRadius + 2);
+    const arcStartY = pNode.y + (blendY / blendLen) * (pRadius + 2);
+
+    const isCurved = qe.curved !== false;
+    const qeCurv = typeof qe.curvature === 'number' ? qe.curvature : 35;
     const arcMidX = (arcStartX + landX) / 2 + nx * qeCurv;
     const arcMidY = (arcStartY + landY) / 2 + ny * qeCurv;
 
-    // Badge location on the bezier curve (t = 0.5)
-    const badgeX = 0.25 * arcStartX + 0.5 * arcMidX + 0.25 * landX;
-    const badgeY = 0.25 * arcStartY + 0.5 * arcMidY + 0.25 * landY;
+    // Badge location
+    const badgeX = isCurved ? (0.25 * arcStartX + 0.5 * arcMidX + 0.25 * landX) : ((arcStartX + landX) / 2);
+    const badgeY = isCurved ? (0.25 * arcStartY + 0.5 * arcMidY + 0.25 * landY) : ((arcStartY + landY) / 2);
 
     return {
       pNode,
@@ -3483,7 +3567,9 @@ export function initModelCanvas() {
       badgeX,
       badgeY,
       nx,
-      ny
+      ny,
+      isCurved,
+      qeCurv
     };
   }
 
@@ -4081,19 +4167,20 @@ export function initModelCanvas() {
 
       // 2b. If other moderations chain onto this moderation, render a midpoint dot where they connect
       const hasChildren = moderatingEffects.some(m => m.attachToModId === mod.id);
-      const midDotX = geo.midX;
-      const midDotY = geo.midY;
+      if (hasChildren) {
+        const midDotX = geo.midX;
+        const midDotY = geo.midY;
 
-      const midDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      midDot.setAttribute('cx', midDotX);
-      midDot.setAttribute('cy', midDotY);
-      midDot.setAttribute('r', hasChildren ? '5' : '4');
-      midDot.setAttribute('fill', hasChildren ? effectiveModColor : (isDark ? '#1e293b' : '#ffffff'));
-      midDot.setAttribute('stroke', effectiveModColor);
-      midDot.setAttribute('stroke-width', '1.5');
-      if (!hasChildren) midDot.setAttribute('stroke-dasharray', '2 2');
-      midDot.style.cursor = 'pointer';
-      edgesLayer.appendChild(midDot);
+        const midDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        midDot.setAttribute('cx', midDotX);
+        midDot.setAttribute('cy', midDotY);
+        midDot.setAttribute('r', '5');
+        midDot.setAttribute('fill', effectiveModColor);
+        midDot.setAttribute('stroke', '#ffffff');
+        midDot.setAttribute('stroke-width', '1.5');
+        midDot.style.cursor = 'pointer';
+        edgesLayer.appendChild(midDot);
+      }
 
       // 3. Invisible wide clickable hit-target for moderation line and dot
       const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -4259,13 +4346,24 @@ export function initModelCanvas() {
       const isSelected = selectedIds.has(gc.id);
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
       const defGcColor = 'var(--color-accent, #6B4EE6)';
+      const effectiveGcColor = gc.color || defGcColor;
+      const gcStrokeWidth = gc.strokeWidth !== undefined ? String(gc.strokeWidth) : '1.8';
+      const isCurved = gc.curved === true;
+      const gcDasharray = gc.strokeDasharray !== undefined ? gc.strokeDasharray : (isCurved ? '4 4' : '4 4');
+
+      let d = `M ${startX} ${startY}`;
+      if (isCurved) {
+        d += ` Q ${midHandleX} ${midHandleY} ${landX} ${landY}`;
+      } else {
+        d += ` L ${landX} ${landY}`;
+      }
 
       if (isSelected) {
         const haloLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        haloLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+        haloLine.setAttribute('d', d);
         haloLine.setAttribute('fill', 'none');
-        haloLine.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
-        haloLine.setAttribute('stroke-width', '6.5');
+        haloLine.setAttribute('stroke', effectiveGcColor);
+        haloLine.setAttribute('stroke-width', String(parseFloat(gcStrokeWidth) + 5));
         haloLine.setAttribute('stroke-opacity', '0.45');
         haloLine.setAttribute('stroke-linecap', 'round');
         edgesLayer.appendChild(haloLine);
@@ -4275,37 +4373,70 @@ export function initModelCanvas() {
         haloNode.setAttribute('cy', nodeY);
         haloNode.setAttribute('r', String(gcRadius + 4));
         haloNode.setAttribute('fill', 'none');
-        haloNode.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
+        haloNode.setAttribute('stroke', effectiveGcColor);
         haloNode.setAttribute('stroke-width', '3');
         haloNode.setAttribute('stroke-opacity', '0.6');
         edgesLayer.appendChild(haloNode);
+
+        // Curvature / bend handle for GC
+        const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        handle.setAttribute('cx', isCurved ? midHandleX : (startX + landX) / 2);
+        handle.setAttribute('cy', isCurved ? midHandleY : (startY + landY) / 2);
+        handle.setAttribute('r', '5');
+        handle.setAttribute('fill', effectiveGcColor);
+        handle.setAttribute('data-export-ui', 'true');
+        handle.style.cursor = isCurved ? 'move' : 'crosshair';
+        handle.addEventListener('mousedown', (event) => {
+          if (event.button === 0) {
+            event.stopPropagation();
+            if (!isCurved) {
+              gc.curved = true;
+              gc.curvature = 28;
+            }
+            draggingCurve = gc;
+            render();
+          }
+        });
+        edgesLayer.appendChild(handle);
       }
 
-      // 1. Dotted line from GC node to path midpoint
+      // 1. Line from GC node to path midpoint
       const dotLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      dotLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+      dotLine.setAttribute('d', d);
       dotLine.setAttribute('class', isSelected ? 'copula-line selected' : 'copula-line');
-      dotLine.style.stroke = defGcColor;
-      dotLine.style.strokeWidth = '1.5';
-      dotLine.style.strokeDasharray = '2 4';
+      dotLine.style.stroke = effectiveGcColor;
+      dotLine.style.strokeWidth = gcStrokeWidth;
+      if (gcDasharray) dotLine.style.strokeDasharray = gcDasharray;
+      else dotLine.style.strokeDasharray = '';
       dotLine.style.fill = 'none';
       dotLine.style.cursor = 'pointer';
+
+      const gcArrow = gc.arrowhead !== undefined ? gc.arrowhead : 'circle';
+      if (gcArrow && gcArrow !== 'none') {
+        const mId = getOrCreateMarker(gcArrow, effectiveGcColor);
+        dotLine.setAttribute('marker-end', `url(#${mId})`);
+      } else {
+        dotLine.removeAttribute('marker-end');
+      }
       edgesLayer.appendChild(dotLine);
 
-      // 2. Landing dot on the path midpoint
-      const landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      landDot.setAttribute('cx', landX);
-      landDot.setAttribute('cy', landY);
-      landDot.setAttribute('r', '4');
-      landDot.setAttribute('fill', defGcColor);
-      landDot.setAttribute('stroke', '#ffffff');
-      landDot.setAttribute('stroke-width', '1.5');
-      landDot.style.cursor = 'pointer';
-      edgesLayer.appendChild(landDot);
+      // 2. Landing dot on the path midpoint (if not using arrowhead marker)
+      let landDot = null;
+      if (!gcArrow || gcArrow === 'none' || gcArrow === 'circle') {
+        landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        landDot.setAttribute('cx', landX);
+        landDot.setAttribute('cy', landY);
+        landDot.setAttribute('r', '4');
+        landDot.setAttribute('fill', effectiveGcColor);
+        landDot.setAttribute('stroke', '#ffffff');
+        landDot.setAttribute('stroke-width', '1.5');
+        landDot.style.cursor = 'pointer';
+        edgesLayer.appendChild(landDot);
+      }
 
       // 3. Wide invisible hit path for line & landing dot
       const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      hitPath.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+      hitPath.setAttribute('d', d);
       hitPath.style.stroke = 'rgba(0,0,0,0.001)';
       hitPath.style.strokeWidth = '24';
       hitPath.style.fill = 'none';
@@ -4327,9 +4458,9 @@ export function initModelCanvas() {
       };
 
       hitPath.addEventListener('click', handleGcClick);
-      landDot.addEventListener('click', handleGcClick);
+      if (landDot) landDot.addEventListener('click', handleGcClick);
       hitPath.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
-      landDot.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
+      if (landDot) landDot.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
       edgesLayer.appendChild(hitPath);
 
       // 4. GC Node Circle
@@ -4482,59 +4613,92 @@ export function initModelCanvas() {
         render();
       };
 
+      const effectiveQeColor = qe.color || 'var(--color-accent, #6B4EE6)';
+      const qeStrokeWidth = qe.strokeWidth !== undefined ? String(qe.strokeWidth) : '1.8';
+
       if (!activeResults) {
         // --- EDITOR MODE: Curved arc from predictor to path midpoint with x² badge ---
+        const isCurved = qe.curved !== false;
+        const qeDasharray = qe.strokeDasharray !== undefined ? qe.strokeDasharray : '5 4';
+        const qeArrow = qe.arrowhead !== undefined ? qe.arrowhead : 'open';
+
+        let d = `M ${arcStartX} ${arcStartY}`;
+        if (isCurved) {
+          d += ` Q ${arcMidX} ${arcMidY} ${landX} ${landY}`;
+        } else {
+          d += ` L ${landX} ${landY}`;
+        }
+
         if (isSelected) {
           const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          halo.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
+          halo.setAttribute('d', d);
           halo.setAttribute('fill', 'none');
-          halo.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
-          halo.setAttribute('stroke-width', '6.5');
+          halo.setAttribute('stroke', effectiveQeColor);
+          halo.setAttribute('stroke-width', String(parseFloat(qeStrokeWidth) + 5));
           halo.setAttribute('stroke-opacity', '0.35');
           halo.setAttribute('stroke-linecap', 'round');
           edgesLayer.appendChild(halo);
 
           // Handle to adjust curvature in editor mode
           const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          handle.setAttribute('cx', arcMidX);
-          handle.setAttribute('cy', arcMidY);
-          handle.setAttribute('r', 5);
-          handle.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
+          handle.setAttribute('cx', isCurved ? arcMidX : (arcStartX + landX) / 2);
+          handle.setAttribute('cy', isCurved ? arcMidY : (arcStartY + landY) / 2);
+          handle.setAttribute('r', '5');
+          handle.setAttribute('fill', effectiveQeColor);
           handle.setAttribute('data-export-ui', 'true');
-          handle.style.cursor = 'move';
+          handle.style.cursor = isCurved ? 'move' : 'crosshair';
           handle.addEventListener('mousedown', (event) => {
             if (event.button === 0) {
               event.stopPropagation();
+              if (!isCurved) {
+                qe.curved = true;
+                qe.curvature = 35;
+              }
               draggingCurve = qe;
+              render();
             }
           });
           edgesLayer.appendChild(handle);
         }
 
         const arcPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        arcPath.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
+        arcPath.setAttribute('d', d);
+        arcPath.setAttribute('class', isSelected ? 'quadratic-line selected' : 'quadratic-line');
         arcPath.setAttribute('fill', 'none');
-        arcPath.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
-        arcPath.setAttribute('stroke-width', '1.8');
-        arcPath.setAttribute('stroke-dasharray', '5 4');
+        arcPath.setAttribute('stroke', effectiveQeColor);
+        arcPath.setAttribute('stroke-width', qeStrokeWidth);
+        if (qeDasharray) arcPath.setAttribute('stroke-dasharray', qeDasharray);
+        else arcPath.removeAttribute('stroke-dasharray');
+
+        if (qeArrow && qeArrow !== 'none') {
+          const mId = getOrCreateMarker(qeArrow, effectiveQeColor);
+          arcPath.setAttribute('marker-end', `url(#${mId})`);
+        } else {
+          arcPath.removeAttribute('marker-end');
+        }
         edgesLayer.appendChild(arcPath);
 
-        const landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        landDot.setAttribute('cx', landX);
-        landDot.setAttribute('cy', landY);
-        landDot.setAttribute('r', '3.5');
-        landDot.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
-        edgesLayer.appendChild(landDot);
+        let landDot = null;
+        if (!qeArrow || qeArrow === 'none' || qeArrow === 'circle') {
+          landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          landDot.setAttribute('cx', landX);
+          landDot.setAttribute('cy', landY);
+          landDot.setAttribute('r', '3.5');
+          landDot.setAttribute('fill', effectiveQeColor);
+          edgesLayer.appendChild(landDot);
+        }
 
         // Clickable hit area
         const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        hitPath.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
+        hitPath.setAttribute('d', d);
         hitPath.setAttribute('fill', 'none');
-        hitPath.setAttribute('stroke', 'rgba(0,0,0,0.01)');
-        hitPath.setAttribute('stroke-width', '16');
+        hitPath.style.stroke = 'rgba(0,0,0,0.01)';
+        hitPath.style.strokeWidth = '16';
         hitPath.style.cursor = 'pointer';
         hitPath.addEventListener('click', handleQeClick);
+        if (landDot) landDot.addEventListener('click', handleQeClick);
         hitPath.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
+        if (landDot) landDot.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
         edgesLayer.appendChild(hitPath);
 
         // Badge with x²
@@ -4549,7 +4713,7 @@ export function initModelCanvas() {
         bg.setAttribute('height', '18');
         bg.setAttribute('rx', '4');
         bg.setAttribute('fill', isDark ? '#1e1b4b' : '#ede9fe');
-        bg.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
+        bg.setAttribute('stroke', effectiveQeColor);
         bg.setAttribute('stroke-width', isSelected ? '2' : '1.2');
         badgeG.appendChild(bg);
 
@@ -4558,7 +4722,7 @@ export function initModelCanvas() {
         txt.setAttribute('dominant-baseline', 'central');
         txt.setAttribute('font-size', '11');
         txt.setAttribute('font-weight', '700');
-        txt.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
+        txt.setAttribute('fill', effectiveQeColor);
         txt.textContent = 'x²';
         badgeG.appendChild(txt);
 
@@ -4567,12 +4731,28 @@ export function initModelCanvas() {
         edgesLayer.appendChild(badgeG);
       } else {
         // --- RESULTS MODE: SmartPLS 4 style accent circle construct labeled '{P} x / {P}' with dashed line ---
+        const isCurved = qe.curved === true;
+        const qeCurv = typeof qe.curvature === 'number' ? qe.curvature : 28;
+        const qdx = landX - startX, qdy = landY - startY, qlen = Math.hypot(qdx, qdy) || 1;
+        const qnx = -qdy / qlen, qny = qdx / qlen;
+        const midHandleX = (startX + landX) / 2 + qnx * qeCurv;
+        const midHandleY = (startY + landY) / 2 + qny * qeCurv;
+        const qeDasharray = qe.strokeDasharray !== undefined ? qe.strokeDasharray : (isCurved ? '4 4' : '4 4');
+        const qeArrow = qe.arrowhead !== undefined ? qe.arrowhead : 'circle';
+
+        let d = `M ${startX} ${startY}`;
+        if (isCurved) {
+          d += ` Q ${midHandleX} ${midHandleY} ${landX} ${landY}`;
+        } else {
+          d += ` L ${landX} ${landY}`;
+        }
+
         if (isSelected) {
           const haloLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          haloLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+          haloLine.setAttribute('d', d);
           haloLine.setAttribute('fill', 'none');
-          haloLine.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
-          haloLine.setAttribute('stroke-width', '6.5');
+          haloLine.setAttribute('stroke', effectiveQeColor);
+          haloLine.setAttribute('stroke-width', String(parseFloat(qeStrokeWidth) + 5));
           haloLine.setAttribute('stroke-opacity', '0.45');
           haloLine.setAttribute('stroke-linecap', 'round');
           edgesLayer.appendChild(haloLine);
@@ -4582,34 +4762,66 @@ export function initModelCanvas() {
           haloNode.setAttribute('cy', nodeY);
           haloNode.setAttribute('r', String(qeRadius + 4));
           haloNode.setAttribute('fill', 'none');
-          haloNode.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
+          haloNode.setAttribute('stroke', effectiveQeColor);
           haloNode.setAttribute('stroke-width', '3');
           haloNode.setAttribute('stroke-opacity', '0.6');
           edgesLayer.appendChild(haloNode);
+
+          // Curvature / bend handle
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', isCurved ? midHandleX : (startX + landX) / 2);
+          handle.setAttribute('cy', isCurved ? midHandleY : (startY + landY) / 2);
+          handle.setAttribute('r', '5');
+          handle.setAttribute('fill', effectiveQeColor);
+          handle.setAttribute('data-export-ui', 'true');
+          handle.style.cursor = isCurved ? 'move' : 'crosshair';
+          handle.addEventListener('mousedown', (event) => {
+            if (event.button === 0) {
+              event.stopPropagation();
+              if (!isCurved) {
+                qe.curved = true;
+                qe.curvature = 28;
+              }
+              draggingCurve = qe;
+              render();
+            }
+          });
+          edgesLayer.appendChild(handle);
         }
 
         // Dashed line from circle to path midpoint
         const dotLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        dotLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+        dotLine.setAttribute('d', d);
         dotLine.setAttribute('class', isSelected ? 'quadratic-line selected' : 'quadratic-line');
-        dotLine.style.stroke = 'var(--color-accent, #6B4EE6)';
-        dotLine.style.strokeWidth = '1.8';
-        dotLine.style.strokeDasharray = '4 4';
+        dotLine.style.stroke = effectiveQeColor;
+        dotLine.style.strokeWidth = qeStrokeWidth;
+        if (qeDasharray) dotLine.style.strokeDasharray = qeDasharray;
+        else dotLine.style.strokeDasharray = '';
         dotLine.style.fill = 'none';
         dotLine.style.cursor = 'pointer';
+
+        if (qeArrow && qeArrow !== 'none') {
+          const mId = getOrCreateMarker(qeArrow, effectiveQeColor);
+          dotLine.setAttribute('marker-end', `url(#${mId})`);
+        } else {
+          dotLine.removeAttribute('marker-end');
+        }
         edgesLayer.appendChild(dotLine);
 
         // Landing dot on the path midpoint
-        const landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        landDot.setAttribute('cx', landX);
-        landDot.setAttribute('cy', landY);
-        landDot.setAttribute('r', '4');
-        landDot.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
-        edgesLayer.appendChild(landDot);
+        let landDot = null;
+        if (!qeArrow || qeArrow === 'none' || qeArrow === 'circle') {
+          landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          landDot.setAttribute('cx', landX);
+          landDot.setAttribute('cy', landY);
+          landDot.setAttribute('r', '4');
+          landDot.setAttribute('fill', effectiveQeColor);
+          edgesLayer.appendChild(landDot);
+        }
 
         // Hit path
         const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        hitPath.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+        hitPath.setAttribute('d', d);
         hitPath.style.stroke = 'rgba(0,0,0,0.01)';
         hitPath.style.strokeWidth = '16';
         hitPath.style.fill = 'none';
@@ -5506,6 +5718,8 @@ export function initModelCanvas() {
       const selectedNode = nodes.find(n => n.id === selectedId);
       const selectedEdge = edges.find(e => e.id === selectedId) ||
                            moderatingEffects.find(m => m.id === selectedId) ||
+                           gaussianCopulas.find(g => g.id === selectedId) ||
+                           quadraticEffects.find(q => q.id === selectedId) ||
                            (selectedId.startsWith('edge_ind_') ? { id: selectedId } : null);
       
       if (selectedNode) {
@@ -5677,7 +5891,7 @@ export function initModelCanvas() {
       }
     } else if (selectedIds.size > 1) {
       const selectedNodes = nodes.filter(n => selectedIds.has(n.id));
-      const selectedEdgesList = [...edges, ...moderatingEffects].filter(e => selectedIds.has(e.id));
+      const selectedEdgesList = [...edges, ...moderatingEffects, ...gaussianCopulas, ...quadraticEffects].filter(e => selectedIds.has(e.id));
       const selectedIndicatorEdges = nodes.some(n => selectedIds.has(`edge_ind_${n.id}`));
       if (selectedNodes.length > 0 && selectedEdgesList.length === 0 && !selectedIndicatorEdges) {
         if (formattingDivider) formattingDivider.style.display = 'block';
@@ -5929,6 +6143,20 @@ export function initModelCanvas() {
           const nx = -dy / length, ny = dx / length;
           const curv = (cursor.x - (arcStartX + landX) / 2) * nx + (cursor.y - (arcStartY + landY) / 2) * ny;
           draggingCurve.curvature = Math.max(-160, Math.min(160, curv));
+          render();
+        }
+        return;
+      }
+
+      if (draggingCurve.source_construct || (draggingCurve.id && gaussianCopulas.some(g => g.id === draggingCurve.id))) {
+        const gcGeo = getGaussianCopulaGeometry(draggingCurve);
+        if (gcGeo) {
+          const { startX, startY, landX, landY } = gcGeo;
+          const dx = landX - startX, dy = landY - startY, length = Math.hypot(dx, dy) || 1;
+          const nx = -dy / length, ny = dx / length;
+          const curv = (cursor.x - (startX + landX) / 2) * nx + (cursor.y - (startY + landY) / 2) * ny;
+          draggingCurve.curvature = Math.max(-160, Math.min(160, curv));
+          draggingCurve.curved = true;
           render();
         }
         return;
@@ -7962,6 +8190,22 @@ export function initModelCanvas() {
       const arrowhead = mod.arrowhead || 'open';
       const color = mod.color || (isDark ? '#cbd5e1' : 'rgba(107, 78, 230, 0.75)');
       const strokeWidth = mod.strokeWidth !== undefined ? mod.strokeWidth : 1.5;
+      return { lineStyle, arrowhead, color, strokeWidth };
+    }
+    const gc = gaussianCopulas.find(g => g.id === selId);
+    if (gc) {
+      const lineStyle = gc.curved ? 'curved' : (gc.strokeDasharray === '' ? 'solid' : (gc.strokeDasharray === '2 4' ? 'dotted' : 'dashed'));
+      const arrowhead = gc.arrowhead || 'circle';
+      const color = gc.color || 'var(--color-accent, #6B4EE6)';
+      const strokeWidth = gc.strokeWidth !== undefined ? gc.strokeWidth : 1.8;
+      return { lineStyle, arrowhead, color, strokeWidth };
+    }
+    const qe = quadraticEffects.find(q => q.id === selId);
+    if (qe) {
+      const lineStyle = qe.curved !== false ? 'curved' : (qe.strokeDasharray === '' ? 'solid' : (qe.strokeDasharray === '2 4' ? 'dotted' : 'dashed'));
+      const arrowhead = qe.arrowhead || 'open';
+      const color = qe.color || 'var(--color-accent, #6B4EE6)';
+      const strokeWidth = qe.strokeWidth !== undefined ? qe.strokeWidth : 1.8;
       return { lineStyle, arrowhead, color, strokeWidth };
     }
     if (typeof selId === 'string' && selId.startsWith('edge_ind_')) {

@@ -466,137 +466,181 @@ export function performAutoLayout(
     });
   }
 
+  // Track all placed node positions and all structural edge line segments
+  const placedNodes: { id: string; x: number; y: number }[] = [];
+  nodes.forEach(n => {
+    if (!isPureModerator.has(n.id)) {
+      placedNodes.push({ id: n.id, x: n.x, y: n.y });
+    }
+  });
+
+  const edgeSegments: { sourceId: string; targetId: string; x1: number; y1: number; x2: number; y2: number }[] = [];
+  edges.forEach(e => {
+    const s = nodes.find(n => n.id === e.sourceId);
+    const t = nodes.find(n => n.id === e.targetId);
+    if (s && t) {
+      edgeSegments.push({ sourceId: e.sourceId, targetId: e.targetId, x1: s.x, y1: s.y, x2: t.x, y2: t.y });
+    }
+  });
+
+  const distToSeg = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
+    const l2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+    if (l2 === 0) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+  };
+
+  // Helper to pick the best collision-free position for a moderator
+  const findCollisionFreePosition = (
+    baseX: number,
+    baseY: number,
+    preferredSide: 1 | -1,
+    ignoredEdgeKey?: { source: string; target: string }
+  ): { x: number; y: number; dir: 'top' | 'bottom' | 'left' | 'right' } => {
+    // Generate candidates: both sides, staggered x offsets, multiple radii
+    const candidates: { x: number; y: number; dir: 'top' | 'bottom' | 'left' | 'right'; priority: number }[] = [];
+
+    const distances = [135, 185, 230];
+    const xOffsets = [0, -85, 85, -150, 150];
+
+    distances.forEach((dist, dIdx) => {
+      // Prioritize preferred side first, then other side
+      const sides = [preferredSide, (preferredSide * -1) as (1 | -1)];
+      sides.forEach((side, sIdx) => {
+        xOffsets.forEach((xOff, oIdx) => {
+          const cx = Math.round(baseX + xOff);
+          const cy = Math.round(baseY + side * dist);
+          const dir: 'top' | 'bottom' | 'left' | 'right' = side === -1 ? 'top' : 'bottom';
+          // Penalty increases with distance and offset
+          const priority = sIdx * 50 + dIdx * 30 + Math.abs(xOff) * 0.4;
+          candidates.push({ x: cx, y: cy, dir, priority });
+        });
+      });
+    });
+
+    let bestCand = candidates[0];
+    let bestScore = Infinity;
+
+    for (const cand of candidates) {
+      // 1. Check distance to all other placed nodes (must be at least 2*R + 45px)
+      let minNodeDist = Infinity;
+      for (const pn of placedNodes) {
+        const d = Math.hypot(cand.x - pn.x, cand.y - pn.y);
+        if (d < minNodeDist) minNodeDist = d;
+      }
+      if (minNodeDist < (2 * R + 45)) continue; // Direct collision with another node!
+
+      // 2. Check distance to non-target structural edges (must not slice through edges!)
+      let minEdgeDist = Infinity;
+      for (const es of edgeSegments) {
+        if (ignoredEdgeKey && es.sourceId === ignoredEdgeKey.source && es.targetId === ignoredEdgeKey.target) {
+          continue; // The arrow being moderated is allowed to connect
+        }
+        const d = distToSeg(cand.x, cand.y, es.x1, es.y1, es.x2, es.y2);
+        if (d < minEdgeDist) minEdgeDist = d;
+      }
+      if (minEdgeDist < (R + 32)) continue; // Collision with a structural path!
+
+      const score = cand.priority - Math.min(minNodeDist, 200) * 0.1 - Math.min(minEdgeDist, 100) * 0.1;
+      if (score < bestScore) {
+        bestScore = score;
+        bestCand = cand;
+      }
+    }
+
+    return bestCand;
+  };
+
   // Store landing & midpoint coords for each moderation arrow
   const modArrowMidpoints = new Map<string, { midX: number; midY: number; landX: number; landY: number; modX: number; modY: number }>();
 
-  // 7a: Direct path moderators grouped by path (spread so they NEVER stack on top of each other!)
-  const directModsByPath = new Map<string, ModerationEffect[]>();
+  // 7a: Direct path moderators: placed with collision prevention
   directMods.forEach(m => {
-    const key = `${m.source}->${m.target}`;
-    if (!directModsByPath.has(key)) directModsByPath.set(key, []);
-    directModsByPath.get(key)!.push(m);
-  });
-
-  directModsByPath.forEach(modList => {
-    const first = modList[0];
-    const sNode = nodes.find(n => n.id === first.source);
-    const tNode = nodes.find(n => n.id === first.target);
+    const modNode = nodes.find(n => n.id === m.moderator);
+    if (!modNode) return;
+    const sNode = nodes.find(n => n.id === m.source);
+    const tNode = nodes.find(n => n.id === m.target);
     if (!sNode || !tNode) return;
 
     const pathMidX = (sNode.x + tNode.x) / 2;
     const pathMidY = (sNode.y + tNode.y) / 2;
-    const isPathUpper = pathMidY <= 0;
+    const preferredSide: 1 | -1 = pathMidY <= 0 ? -1 : 1;
 
-    modList.forEach((m, idx) => {
-      const modNode = nodes.find(n => n.id === m.moderator);
-      if (!modNode) return;
+    const chosen = findCollisionFreePosition(pathMidX, pathMidY, preferredSide, { source: m.source, target: m.target });
 
-      let targetX = pathMidX;
-      let targetY = pathMidY;
-      let dir: 'top' | 'bottom' | 'left' | 'right' = 'top';
+    modNode.x = chosen.x;
+    modNode.y = chosen.y;
+    indDir.set(modNode.id, chosen.dir);
+    modNode.indicatorDirection = chosen.dir;
 
-      if (modList.length === 1) {
-        const side = isPathUpper ? -1 : 1;
-        targetX = Math.round(pathMidX);
-        targetY = Math.round(pathMidY + side * 130);
-        dir = side === -1 ? 'top' : 'bottom';
-      } else if (modList.length === 2) {
-        // Two moderators on same path: ONE ABOVE, ONE BELOW!
-        if (idx === 0) {
-          targetX = Math.round(pathMidX);
-          targetY = Math.round(pathMidY - 130);
-          dir = 'top';
-        } else {
-          targetX = Math.round(pathMidX);
-          targetY = Math.round(pathMidY + 130);
-          dir = 'bottom';
-        }
-      } else {
-        // Three or more: spread along the path on alternating sides
-        const side = (idx % 2 === 0) ? (isPathUpper ? -1 : 1) : (isPathUpper ? 1 : -1);
-        const xOffset = (Math.floor(idx / 2) * 85) * (idx % 4 < 2 ? -1 : 1);
-        targetX = Math.round(pathMidX + xOffset);
-        targetY = Math.round(pathMidY + side * 130);
-        dir = side === -1 ? 'top' : 'bottom';
-      }
+    placedNodes.push({ id: modNode.id, x: chosen.x, y: chosen.y });
 
-      modNode.x = targetX;
-      modNode.y = targetY;
-      indDir.set(modNode.id, dir);
-      modNode.indicatorDirection = dir;
-
-      modArrowMidpoints.set(m.id, {
-        landX: pathMidX,
-        landY: pathMidY,
-        modX: targetX,
-        modY: targetY,
-        midX: (targetX + pathMidX) / 2,
-        midY: (targetY + pathMidY) / 2,
-      });
+    modArrowMidpoints.set(m.id, {
+      landX: pathMidX,
+      landY: pathMidY,
+      modX: chosen.x,
+      modY: chosen.y,
+      midX: (chosen.x + pathMidX) / 2,
+      midY: (chosen.y + pathMidY) / 2,
     });
   });
 
   // 7b: Chained moderators (pointing to midpoints of other moderation arrows)
-  // Positioned perpendicularly to the side of the parent arrow — NEVER on top of one another!
   const placedChained = new Set<string>();
   for (let pass = 0; pass < 5; pass++) {
     let progressed = false;
 
-    const siblingsByParent = new Map<string, ModerationEffect[]>();
     chainedMods.forEach(cm => {
-      if (!placedChained.has(cm.id) && modArrowMidpoints.has(cm.attachToModId!)) {
-        if (!siblingsByParent.has(cm.attachToModId!)) siblingsByParent.set(cm.attachToModId!, []);
-        siblingsByParent.get(cm.attachToModId!)!.push(cm);
-      }
-    });
+      if (placedChained.has(cm.id) || !modArrowMidpoints.has(cm.attachToModId!)) return;
 
-    siblingsByParent.forEach((siblingList, parentModId) => {
-      const parentGeo = modArrowMidpoints.get(parentModId)!;
+      const parentGeo = modArrowMidpoints.get(cm.attachToModId!)!;
+      const cmNode = nodes.find(n => n.id === cm.moderator);
+      if (!cmNode) return;
 
-      siblingList.forEach((cm, sIdx) => {
-        const cmNode = nodes.find(n => n.id === cm.moderator);
-        if (!cmNode) return;
+      // Candidate offsets to side of parent arrow
+      const sideCandidates: { x: number; y: number; dir: 'left' | 'right' }[] = [
+        { x: Math.round(parentGeo.midX - 145), y: Math.round(parentGeo.midY), dir: 'left' },
+        { x: Math.round(parentGeo.midX + 145), y: Math.round(parentGeo.midY), dir: 'right' },
+        { x: Math.round(parentGeo.midX - 145), y: Math.round(parentGeo.midY - 80), dir: 'left' },
+        { x: Math.round(parentGeo.midX + 145), y: Math.round(parentGeo.midY - 80), dir: 'right' },
+        { x: Math.round(parentGeo.midX - 145), y: Math.round(parentGeo.midY + 80), dir: 'left' },
+        { x: Math.round(parentGeo.midX + 145), y: Math.round(parentGeo.midY + 80), dir: 'right' },
+      ];
 
-        let targetX = parentGeo.midX;
-        let targetY = parentGeo.midY;
-        let dir: 'left' | 'right' | 'top' | 'bottom' = 'left';
+      let bestCand = sideCandidates[0];
+      let bestDist = -1;
 
-        if (sIdx === 0) {
-          // First chained mod: sits to the left of the parent arrow
-          targetX = Math.round(parentGeo.midX - 140);
-          targetY = Math.round(parentGeo.midY);
-          dir = 'left';
-        } else if (sIdx === 1) {
-          // Second chained mod: sits to the right of the parent arrow
-          targetX = Math.round(parentGeo.midX + 140);
-          targetY = Math.round(parentGeo.midY);
-          dir = 'right';
-        } else {
-          // Additional chained siblings: staggered
-          const xSide = (sIdx % 2 === 0) ? -1 : 1;
-          const yOffset = Math.floor(sIdx / 2) * 75;
-          targetX = Math.round(parentGeo.midX + xSide * 140);
-          targetY = Math.round(parentGeo.midY + yOffset);
-          dir = xSide === -1 ? 'left' : 'right';
+      for (const cand of sideCandidates) {
+        let minD = Infinity;
+        for (const pn of placedNodes) {
+          const d = Math.hypot(cand.x - pn.x, cand.y - pn.y);
+          if (d < minD) minD = d;
         }
+        if (minD >= (2 * R + 45) && minD > bestDist) {
+          bestDist = minD;
+          bestCand = cand;
+        }
+      }
 
-        cmNode.x = targetX;
-        cmNode.y = targetY;
-        indDir.set(cmNode.id, dir);
-        cmNode.indicatorDirection = dir;
+      cmNode.x = bestCand.x;
+      cmNode.y = bestCand.y;
+      indDir.set(cmNode.id, bestCand.dir);
+      cmNode.indicatorDirection = bestCand.dir;
 
-        modArrowMidpoints.set(cm.id, {
-          landX: parentGeo.midX,
-          landY: parentGeo.midY,
-          modX: targetX,
-          modY: targetY,
-          midX: (targetX + parentGeo.midX) / 2,
-          midY: (targetY + parentGeo.midY) / 2,
-        });
+      placedNodes.push({ id: cmNode.id, x: bestCand.x, y: bestCand.y });
 
-        placedChained.add(cm.id);
-        progressed = true;
+      modArrowMidpoints.set(cm.id, {
+        landX: parentGeo.midX,
+        landY: parentGeo.midY,
+        modX: bestCand.x,
+        modY: bestCand.y,
+        midX: (bestCand.x + parentGeo.midX) / 2,
+        midY: (bestCand.y + parentGeo.midY) / 2,
       });
+
+      placedChained.add(cm.id);
+      progressed = true;
     });
 
     if (!progressed) break;

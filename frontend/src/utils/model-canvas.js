@@ -1737,6 +1737,8 @@ export function initModelCanvas() {
           const arrowType = action.replace('arrowhead-', '');
           edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.arrowhead = arrowType);
           moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.arrowhead = arrowType);
+          gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.arrowhead = arrowType);
+          quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.arrowhead = arrowType);
           nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeArrowhead = arrowType);
           render();
           pushHistory();
@@ -1765,6 +1767,26 @@ export function initModelCanvas() {
               m.waypoints = [];
             }
           });
+          gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => {
+            gc.curved = (style === 'curved');
+            if (style === 'solid') gc.strokeDasharray = '';
+            if (style === 'dashed') gc.strokeDasharray = '4 4';
+            if (style === 'dotted') gc.strokeDasharray = '2 4';
+            if (style === 'curved') {
+              gc.strokeDasharray = '4 4';
+              gc.curved = true;
+            }
+          });
+          quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => {
+            qe.curved = (style === 'curved' || style === undefined);
+            if (style === 'solid') qe.strokeDasharray = '';
+            if (style === 'dashed') qe.strokeDasharray = '5 4';
+            if (style === 'dotted') qe.strokeDasharray = '2 4';
+            if (style === 'curved') {
+              qe.strokeDasharray = '5 4';
+              qe.curved = true;
+            }
+          });
           nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => {
             n.edgeCurved = false;
             if (style === 'solid') n.edgeStrokeDasharray = '';
@@ -1782,6 +1804,8 @@ export function initModelCanvas() {
           const w = parseFloat(action.replace('weight-', ''));
           edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.strokeWidth = w);
           moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.strokeWidth = w);
+          gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.strokeWidth = w);
+          quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.strokeWidth = w);
           nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeStrokeWidth = w);
           render();
           pushHistory();
@@ -3251,14 +3275,16 @@ export function initModelCanvas() {
     const startY = nodeY + (lineDy / lineDist) * gcRadius;
 
     const isCurved = gc.curved === true;
-    const gcCurv = typeof gc.curvature === 'number' ? gc.curvature : 28;
+    const gcCurv = typeof gc.curvature === 'number' ? gc.curvature : 30;
     const gdx = landX - startX;
     const gdy = landY - startY;
     const glen = Math.hypot(gdx, gdy) || 1;
     const gnx = -gdy / glen;
     const gny = gdx / glen;
-    const midHandleX = (startX + landX) / 2 + gnx * gcCurv;
-    const midHandleY = (startY + landY) / 2 + gny * gcCurv;
+    const arcMidX = (startX + landX) / 2 + gnx * gcCurv;
+    const arcMidY = (startY + landY) / 2 + gny * gcCurv;
+    const handleX = isCurved ? ((startX + landX) / 2 + gnx * (gcCurv / 2)) : ((startX + landX) / 2);
+    const handleY = isCurved ? ((startY + landY) / 2 + gny * (gcCurv / 2)) : ((startY + landY) / 2);
 
     return {
       sNode,
@@ -3273,8 +3299,12 @@ export function initModelCanvas() {
       landY,
       isCurved,
       gcCurv,
-      midHandleX,
-      midHandleY
+      arcMidX,
+      arcMidY,
+      handleX,
+      handleY,
+      gnx,
+      gny
     };
   }
 
@@ -3542,12 +3572,36 @@ export function initModelCanvas() {
 
     const isCurved = qe.curved !== false;
     const qeCurv = typeof qe.curvature === 'number' ? qe.curvature : 35;
-    const arcMidX = (arcStartX + landX) / 2 + nx * qeCurv;
-    const arcMidY = (arcStartY + landY) / 2 + ny * qeCurv;
 
-    // Badge location
-    const badgeX = isCurved ? (0.25 * arcStartX + 0.5 * arcMidX + 0.25 * landX) : ((arcStartX + landX) / 2);
-    const badgeY = isCurved ? (0.25 * arcStartY + 0.5 * arcMidY + 0.25 * landY) : ((arcStartY + landY) / 2);
+    // Normal to the chord between arcStart and land
+    const cdx = landX - arcStartX;
+    const cdy = landY - arcStartY;
+    const clen = Math.hypot(cdx, cdy) || 1;
+    let cnx = -cdy / clen;
+    let cny = cdx / clen;
+    if (cnx * nx + cny * ny < 0) {
+      cnx = -cnx;
+      cny = -cny;
+    }
+
+    const arcMidX = (arcStartX + landX) / 2 + cnx * qeCurv;
+    const arcMidY = (arcStartY + landY) / 2 + cny * qeCurv;
+
+    // Apex / handle on the curve (at t = 0.5)
+    const handleX = isCurved ? ((arcStartX + landX) / 2 + cnx * (qeCurv / 2)) : ((arcStartX + landX) / 2);
+    const handleY = isCurved ? ((arcStartY + landY) / 2 + cny * (qeCurv / 2)) : ((arcStartY + landY) / 2);
+
+    // Badge location along curve (at t = 0.32 so it never clashes with the handle at t = 0.5!)
+    let badgeX, badgeY;
+    if (isCurved) {
+      const t = 0.32;
+      const invT = 1 - t;
+      badgeX = invT * invT * arcStartX + 2 * invT * t * arcMidX + t * t * landX;
+      badgeY = invT * invT * arcStartY + 2 * invT * t * arcMidY + t * t * landY;
+    } else {
+      badgeX = (arcStartX + landX) / 2;
+      badgeY = (arcStartY + landY) / 2;
+    }
 
     return {
       pNode,
@@ -3564,10 +3618,14 @@ export function initModelCanvas() {
       arcStartY,
       arcMidX,
       arcMidY,
+      handleX,
+      handleY,
       badgeX,
       badgeY,
       nx,
       ny,
+      cnx,
+      cny,
       isCurved,
       qeCurv
     };
@@ -4341,19 +4399,18 @@ export function initModelCanvas() {
     gaussianCopulas.forEach(gc => {
       const geo = getGaussianCopulaGeometry(gc);
       if (!geo) return;
-      const { nodeX, nodeY, gcRadius, startX, startY, landX, landY } = geo;
+      const { nodeX, nodeY, gcRadius, startX, startY, landX, landY, isCurved, gcCurv, arcMidX, arcMidY, handleX, handleY, gnx, gny } = geo;
 
       const isSelected = selectedIds.has(gc.id);
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
       const defGcColor = 'var(--color-accent, #6B4EE6)';
       const effectiveGcColor = gc.color || defGcColor;
       const gcStrokeWidth = gc.strokeWidth !== undefined ? String(gc.strokeWidth) : '1.8';
-      const isCurved = gc.curved === true;
       const gcDasharray = gc.strokeDasharray !== undefined ? gc.strokeDasharray : (isCurved ? '4 4' : '4 4');
 
       let d = `M ${startX} ${startY}`;
       if (isCurved) {
-        d += ` Q ${midHandleX} ${midHandleY} ${landX} ${landY}`;
+        d += ` Q ${arcMidX} ${arcMidY} ${landX} ${landY}`;
       } else {
         d += ` L ${landX} ${landY}`;
       }
@@ -4377,27 +4434,6 @@ export function initModelCanvas() {
         haloNode.setAttribute('stroke-width', '3');
         haloNode.setAttribute('stroke-opacity', '0.6');
         edgesLayer.appendChild(haloNode);
-
-        // Curvature / bend handle for GC
-        const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        handle.setAttribute('cx', isCurved ? midHandleX : (startX + landX) / 2);
-        handle.setAttribute('cy', isCurved ? midHandleY : (startY + landY) / 2);
-        handle.setAttribute('r', '5');
-        handle.setAttribute('fill', effectiveGcColor);
-        handle.setAttribute('data-export-ui', 'true');
-        handle.style.cursor = isCurved ? 'move' : 'crosshair';
-        handle.addEventListener('mousedown', (event) => {
-          if (event.button === 0) {
-            event.stopPropagation();
-            if (!isCurved) {
-              gc.curved = true;
-              gc.curvature = 28;
-            }
-            draggingCurve = gc;
-            render();
-          }
-        });
-        edgesLayer.appendChild(handle);
       }
 
       // 1. Line from GC node to path midpoint
@@ -4515,14 +4551,51 @@ export function initModelCanvas() {
       gcCircle.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
       edgesLayer.appendChild(gcGroup);
 
+      // 4b. Curvature / bend handle for GC (appended AFTER hitPath & gcGroup so it receives clicks cleanly)
+      if (isSelected) {
+        const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        handle.setAttribute('cx', handleX);
+        handle.setAttribute('cy', handleY);
+        handle.setAttribute('r', '6');
+        handle.setAttribute('fill', effectiveGcColor);
+        handle.setAttribute('stroke', '#ffffff');
+        handle.setAttribute('stroke-width', '1.5');
+        handle.setAttribute('data-export-ui', 'true');
+        handle.setAttribute('pointer-events', 'all');
+        handle.style.pointerEvents = 'all';
+        handle.style.cursor = 'move';
+        handle.addEventListener('mousedown', (event) => {
+          if (event.button === 0) {
+            event.stopPropagation();
+            event.preventDefault();
+            if (!isCurved) {
+              gc.curved = true;
+              gc.curvature = 0;
+            }
+            draggingCurve = gc;
+          }
+        });
+        edgesLayer.appendChild(handle);
+      }
+
       // 5. Collect result badge for GC dotted line
       const gcDetails = getGaussianCopulaDetails(gc);
       if (gcDetails && gcDetails.beta !== null && gcDetails.beta !== undefined) {
+        let bX, bY;
+        if (isCurved) {
+          const t = 0.35;
+          const invT = 1 - t;
+          bX = invT * invT * startX + 2 * invT * t * arcMidX + t * t * landX;
+          bY = invT * invT * startY + 2 * invT * t * arcMidY + t * t * landY;
+        } else {
+          bX = startX + 0.35 * (landX - startX);
+          bY = startY + 0.35 * (landY - startY);
+        }
         copulaBadgesToRender.push({
           gc,
           gcDetails,
-          badgeX: (startX + landX) / 2,
-          badgeY: (startY + landY) / 2,
+          badgeX: bX,
+          badgeY: bY,
           isSelected,
           handleGcClick,
           hitPath
@@ -4596,7 +4669,29 @@ export function initModelCanvas() {
     quadraticEffects.forEach(qe => {
       const geo = getQuadraticEffectGeometry(qe);
       if (!geo) return;
-      const { pNode, tNode, nodeX, nodeY, qeRadius, startX, startY, landX, landY, arcStartX, arcStartY, arcMidX, arcMidY, badgeX, badgeY } = geo;
+      const {
+        pNode,
+        tNode,
+        nodeX,
+        nodeY,
+        qeRadius,
+        startX,
+        startY,
+        landX,
+        landY,
+        arcStartX,
+        arcStartY,
+        arcMidX,
+        arcMidY,
+        handleX,
+        handleY,
+        badgeX,
+        badgeY,
+        cnx,
+        cny,
+        isCurved,
+        qeCurv
+      } = geo;
       const isSelected = selectedIds.has(qe.id);
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
 
@@ -4618,7 +4713,6 @@ export function initModelCanvas() {
 
       if (!activeResults) {
         // --- EDITOR MODE: Curved arc from predictor to path midpoint with x² badge ---
-        const isCurved = qe.curved !== false;
         const qeDasharray = qe.strokeDasharray !== undefined ? qe.strokeDasharray : '5 4';
         const qeArrow = qe.arrowhead !== undefined ? qe.arrowhead : 'open';
 
@@ -4638,27 +4732,6 @@ export function initModelCanvas() {
           halo.setAttribute('stroke-opacity', '0.35');
           halo.setAttribute('stroke-linecap', 'round');
           edgesLayer.appendChild(halo);
-
-          // Handle to adjust curvature in editor mode
-          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          handle.setAttribute('cx', isCurved ? arcMidX : (arcStartX + landX) / 2);
-          handle.setAttribute('cy', isCurved ? arcMidY : (arcStartY + landY) / 2);
-          handle.setAttribute('r', '5');
-          handle.setAttribute('fill', effectiveQeColor);
-          handle.setAttribute('data-export-ui', 'true');
-          handle.style.cursor = isCurved ? 'move' : 'crosshair';
-          handle.addEventListener('mousedown', (event) => {
-            if (event.button === 0) {
-              event.stopPropagation();
-              if (!isCurved) {
-                qe.curved = true;
-                qe.curvature = 35;
-              }
-              draggingCurve = qe;
-              render();
-            }
-          });
-          edgesLayer.appendChild(handle);
         }
 
         const arcPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -4729,20 +4802,49 @@ export function initModelCanvas() {
         badgeG.addEventListener('click', handleQeClick);
         badgeG.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
         edgesLayer.appendChild(badgeG);
+
+        // Handle to adjust curvature in editor mode (appended AFTER hitPath & badgeG)
+        if (isSelected) {
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', handleX);
+          handle.setAttribute('cy', handleY);
+          handle.setAttribute('r', '6');
+          handle.setAttribute('fill', effectiveQeColor);
+          handle.setAttribute('stroke', '#ffffff');
+          handle.setAttribute('stroke-width', '1.5');
+          handle.setAttribute('data-export-ui', 'true');
+          handle.setAttribute('pointer-events', 'all');
+          handle.style.pointerEvents = 'all';
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', (event) => {
+            if (event.button === 0) {
+              event.stopPropagation();
+              event.preventDefault();
+              if (!isCurved) {
+                qe.curved = true;
+                qe.curvature = 0;
+              }
+              draggingCurve = qe;
+            }
+          });
+          edgesLayer.appendChild(handle);
+        }
       } else {
         // --- RESULTS MODE: SmartPLS 4 style accent circle construct labeled '{P} x / {P}' with dashed line ---
         const isCurved = qe.curved === true;
-        const qeCurv = typeof qe.curvature === 'number' ? qe.curvature : 28;
+        const resQeCurv = typeof qe.curvature === 'number' ? qe.curvature : 28;
         const qdx = landX - startX, qdy = landY - startY, qlen = Math.hypot(qdx, qdy) || 1;
         const qnx = -qdy / qlen, qny = qdx / qlen;
-        const midHandleX = (startX + landX) / 2 + qnx * qeCurv;
-        const midHandleY = (startY + landY) / 2 + qny * qeCurv;
+        const resArcMidX = (startX + landX) / 2 + qnx * resQeCurv;
+        const resArcMidY = (startY + landY) / 2 + qny * resQeCurv;
+        const resHandleX = isCurved ? ((startX + landX) / 2 + qnx * (resQeCurv / 2)) : ((startX + landX) / 2);
+        const resHandleY = isCurved ? ((startY + landY) / 2 + qny * (resQeCurv / 2)) : ((startY + landY) / 2);
         const qeDasharray = qe.strokeDasharray !== undefined ? qe.strokeDasharray : (isCurved ? '4 4' : '4 4');
         const qeArrow = qe.arrowhead !== undefined ? qe.arrowhead : 'circle';
 
         let d = `M ${startX} ${startY}`;
         if (isCurved) {
-          d += ` Q ${midHandleX} ${midHandleY} ${landX} ${landY}`;
+          d += ` Q ${resArcMidX} ${resArcMidY} ${landX} ${landY}`;
         } else {
           d += ` L ${landX} ${landY}`;
         }
@@ -4766,27 +4868,6 @@ export function initModelCanvas() {
           haloNode.setAttribute('stroke-width', '3');
           haloNode.setAttribute('stroke-opacity', '0.6');
           edgesLayer.appendChild(haloNode);
-
-          // Curvature / bend handle
-          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          handle.setAttribute('cx', isCurved ? midHandleX : (startX + landX) / 2);
-          handle.setAttribute('cy', isCurved ? midHandleY : (startY + landY) / 2);
-          handle.setAttribute('r', '5');
-          handle.setAttribute('fill', effectiveQeColor);
-          handle.setAttribute('data-export-ui', 'true');
-          handle.style.cursor = isCurved ? 'move' : 'crosshair';
-          handle.addEventListener('mousedown', (event) => {
-            if (event.button === 0) {
-              event.stopPropagation();
-              if (!isCurved) {
-                qe.curved = true;
-                qe.curvature = 28;
-              }
-              draggingCurve = qe;
-              render();
-            }
-          });
-          edgesLayer.appendChild(handle);
         }
 
         // Dashed line from circle to path midpoint
@@ -4869,12 +4950,6 @@ export function initModelCanvas() {
         qeText2.setAttribute('pointer-events', 'none');
         qeText2.textContent = `${pNode.label}`;
         qeGroup.appendChild(qeText2);
-        qeText2.setAttribute('font-size', '10.5');
-        qeText2.setAttribute('font-weight', '700');
-        qeText2.setAttribute('font-family', 'var(--font-sans, system-ui)');
-        qeText2.setAttribute('pointer-events', 'none');
-        qeText2.textContent = `${pNode.label}`;
-        qeGroup.appendChild(qeText2);
 
         // Mouse drag handler for Quadratic node
         qeCircle.addEventListener('mousedown', (e) => {
@@ -4901,14 +4976,51 @@ export function initModelCanvas() {
         qeCircle.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
         edgesLayer.appendChild(qeGroup);
 
-        // Collect result badge for Quadratic dashed line
+        // Curvature / bend handle for QE in results mode (appended AFTER hitPath & qeGroup)
+        if (isSelected) {
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', resHandleX);
+          handle.setAttribute('cy', resHandleY);
+          handle.setAttribute('r', '6');
+          handle.setAttribute('fill', effectiveQeColor);
+          handle.setAttribute('stroke', '#ffffff');
+          handle.setAttribute('stroke-width', '1.5');
+          handle.setAttribute('data-export-ui', 'true');
+          handle.setAttribute('pointer-events', 'all');
+          handle.style.pointerEvents = 'all';
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', (event) => {
+            if (event.button === 0) {
+              event.stopPropagation();
+              event.preventDefault();
+              if (!isCurved) {
+                qe.curved = true;
+                qe.curvature = 0;
+              }
+              draggingCurve = qe;
+            }
+          });
+          edgesLayer.appendChild(handle);
+        }
+
+        // Collect result badge for Quadratic dashed line (offset at t = 0.35 so handle at t = 0.5 is free)
         const qeDetails = getQuadraticEffectDetails(qe);
         if (qeDetails && qeDetails.beta !== null && qeDetails.beta !== undefined) {
+          let bX, bY;
+          if (isCurved) {
+            const t = 0.35;
+            const invT = 1 - t;
+            bX = invT * invT * startX + 2 * invT * t * resArcMidX + t * t * landX;
+            bY = invT * invT * startY + 2 * invT * t * resArcMidY + t * t * landY;
+          } else {
+            bX = startX + 0.35 * (landX - startX);
+            bY = startY + 0.35 * (landY - startY);
+          }
           quadBadgesToRender.push({
             qe,
             qeDetails,
-            badgeX: (startX + landX) / 2,
-            badgeY: (startY + landY) / 2,
+            badgeX: bX,
+            badgeY: bY,
             isSelected,
             handleQeClick,
             hitPath
@@ -6138,12 +6250,21 @@ export function initModelCanvas() {
       if (draggingCurve.predictor_construct || draggingCurve.predictor) {
         const qeGeo = getQuadraticEffectGeometry(draggingCurve);
         if (qeGeo) {
-          const { arcStartX, arcStartY, landX, landY } = qeGeo;
-          const dx = landX - arcStartX, dy = landY - arcStartY, length = Math.hypot(dx, dy) || 1;
-          const nx = -dy / length, ny = dx / length;
-          const curv = (cursor.x - (arcStartX + landX) / 2) * nx + (cursor.y - (arcStartY + landY) / 2) * ny;
-          draggingCurve.curvature = Math.max(-160, Math.min(160, curv));
-          render();
+          if (!activeResults) {
+            const { arcStartX, arcStartY, landX, landY, cnx, cny } = qeGeo;
+            const proj = (cursor.x - (arcStartX + landX) / 2) * cnx + (cursor.y - (arcStartY + landY) / 2) * cny;
+            draggingCurve.curvature = Math.max(-180, Math.min(180, Math.round(2 * proj)));
+            draggingCurve.curved = true;
+            render();
+          } else {
+            const { startX, startY, landX, landY } = qeGeo;
+            const dx = landX - startX, dy = landY - startY, len = Math.hypot(dx, dy) || 1;
+            const rnx = -dy / len, rny = dx / len;
+            const proj = (cursor.x - (startX + landX) / 2) * rnx + (cursor.y - (startY + landY) / 2) * rny;
+            draggingCurve.curvature = Math.max(-180, Math.min(180, Math.round(2 * proj)));
+            draggingCurve.curved = true;
+            render();
+          }
         }
         return;
       }
@@ -6151,11 +6272,9 @@ export function initModelCanvas() {
       if (draggingCurve.source_construct || (draggingCurve.id && gaussianCopulas.some(g => g.id === draggingCurve.id))) {
         const gcGeo = getGaussianCopulaGeometry(draggingCurve);
         if (gcGeo) {
-          const { startX, startY, landX, landY } = gcGeo;
-          const dx = landX - startX, dy = landY - startY, length = Math.hypot(dx, dy) || 1;
-          const nx = -dy / length, ny = dx / length;
-          const curv = (cursor.x - (startX + landX) / 2) * nx + (cursor.y - (startY + landY) / 2) * ny;
-          draggingCurve.curvature = Math.max(-160, Math.min(160, curv));
+          const { startX, startY, landX, landY, gnx, gny } = gcGeo;
+          const proj = (cursor.x - (startX + landX) / 2) * gnx + (cursor.y - (startY + landY) / 2) * gny;
+          draggingCurve.curvature = Math.max(-180, Math.min(180, Math.round(2 * proj)));
           draggingCurve.curved = true;
           render();
         }

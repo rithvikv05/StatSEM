@@ -947,7 +947,7 @@ const Dashboard = () => {
                               </span>
                               <span className="study-row__time">{study.lastModified}</span>
                               <span className="study-row__chevron">
-                                <span className="material-symbols-outlined study-chevron" style={{transform: isExpanded || isEmpty ? 'rotate(90deg)' : 'rotate(90deg)'}}>
+                                <span className="material-symbols-outlined study-chevron">
                                   {isExpanded && !isEmpty ? 'expand_more' : 'chevron_right'}
                                 </span>
                               </span>

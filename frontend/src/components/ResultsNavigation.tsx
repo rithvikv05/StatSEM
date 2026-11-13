@@ -277,9 +277,13 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                           marginLeft: '6px',
                         }}
                         viewBox="0 0 24 24"
-                        fill="currentColor"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       >
-                        <path d="M8 5v14l11-7z" />
+                        <polyline points="9 18 15 12 9 6" />
                       </svg>
                     </button>
 
@@ -356,8 +360,8 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                         )
                       }
                     >
-                      <svg className={open ? 'open' : ''} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M8 5v14l11-7z" />
+                      <svg className={open ? 'open' : ''} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="9 18 15 12 9 6" />
                       </svg>
                       <span>{group.label}</span>
                     </button>

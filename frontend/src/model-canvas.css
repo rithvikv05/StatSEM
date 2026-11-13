@@ -1173,7 +1173,7 @@ summary.calculation-menu__heading { cursor: pointer; }
 .calculation-existing > div > div:first-child, .calculation-existing > div > div:last-child { background: var(--color-bg-surface) !important; border-color: var(--color-border-subtle) !important; }
 .calculation-existing > div > div:nth-child(2) { overflow-y: auto; }
 .calculation-existing label { color: var(--color-text-secondary) !important; }
-.calculation-existing input:not([type=checkbox]), .calculation-existing select { color: var(--color-text-primary) !important; background: var(--color-bg-surface) !important; border-color: var(--color-border-strong) !important; font-family: var(--font-sans); }
+.calculation-existing input:not([type=checkbox]), .calculation-existing select { color: var(--color-text-primary) !important; background-color: var(--color-bg-surface) !important; border-color: var(--color-border-strong) !important; font-family: var(--font-sans); }
 
 /* Calculation forms follow the compact controls used in application settings. */
 .calculation-menu { width: 300px; padding: 6px; }

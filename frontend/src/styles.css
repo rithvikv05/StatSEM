@@ -4715,11 +4715,31 @@ body.is-tab-sliding * {
 
 
 /* A single, subtle disclosure indicator for native selection controls. */
-select {
-  -webkit-appearance: none;
-  appearance: none;
+select,
+.modal__input select,
+select.modal__input,
+.settings-select,
+.calculation-overlay select,
+.calculation-dialog select,
+.calculation-existing select,
+.dataset-control select,
+.results-export-select {
+  -webkit-appearance: none !important;
+  appearance: none !important;
   padding-right: 30px !important;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4.5 6.25 3.5 3.5 3.5-3.5' stroke='%23858b98' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
-  background-position: right 9px center !important;
+  background-position: right 10px center !important;
   background-repeat: no-repeat !important;
+}
+
+[data-theme="dark"] select,
+[data-theme="dark"] .modal__input select,
+[data-theme="dark"] select.modal__input,
+[data-theme="dark"] .settings-select,
+[data-theme="dark"] .calculation-overlay select,
+[data-theme="dark"] .calculation-dialog select,
+[data-theme="dark"] .calculation-existing select,
+[data-theme="dark"] .dataset-control select,
+[data-theme="dark"] .results-export-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4.5 6.25 3.5 3.5 3.5-3.5' stroke='%23a1a7b5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
 }

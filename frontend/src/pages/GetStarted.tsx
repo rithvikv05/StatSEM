@@ -192,7 +192,7 @@ const GetStarted = () => {
                     <span className="material-symbols-outlined">folder_open</span>
                     <span>Import / Open</span>
                     <span className="material-symbols-outlined" style={{ fontSize: '18px', marginLeft: '-2px' }}>
-                      {isImportMenuOpen ? 'arrow_drop_up' : 'arrow_drop_down'}
+                      {isImportMenuOpen ? 'expand_less' : 'expand_more'}
                     </span>
                     <kbd className="kbd">⌘O</kbd>
                   </button>

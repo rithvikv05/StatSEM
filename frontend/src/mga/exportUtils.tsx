@@ -206,7 +206,7 @@ export const TableExportBar: React.FC<TableExportBarProps> = ({ payload, compact
         >
           <Download size={13} />
           <span>Export</span>
-          <span className="material-symbols-outlined" style={{ fontSize: 14, marginLeft: -2 }}>expand_more</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: menuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
         </button>
         {menuOpen && (
           <div className="subheader__dropdown-menu" role="menu" style={{ minWidth: 165 }}>

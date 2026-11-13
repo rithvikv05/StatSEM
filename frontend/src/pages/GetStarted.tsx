@@ -191,9 +191,7 @@ const GetStarted = () => {
                   >
                     <span className="material-symbols-outlined">folder_open</span>
                     <span>Import / Open</span>
-                    <span className="material-symbols-outlined" style={{ fontSize: '18px', marginLeft: '-2px' }}>
-                      {isImportMenuOpen ? 'expand_less' : 'expand_more'}
-                    </span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14, marginLeft: '-2px', transform: isImportMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
                     <kbd className="kbd">⌘O</kbd>
                   </button>
 

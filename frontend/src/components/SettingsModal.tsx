@@ -475,9 +475,23 @@ export const SettingsModal: React.FC = () => {
                       <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>build</span>
                       Developer Test Sandbox (Mint Test Licenses)
                     </span>
-                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
-                      {showDevSandbox ? 'expand_less' : 'expand_more'}
-                    </span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{
+                        width: 14,
+                        height: 14,
+                        transform: showDevSandbox ? 'rotate(180deg)' : 'none',
+                        transition: 'transform var(--transition-fast)',
+                        color: 'var(--color-text-muted)'
+                      }}
+                    >
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
                   </button>
 
                   {showDevSandbox && (

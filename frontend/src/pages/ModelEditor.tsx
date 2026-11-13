@@ -2340,7 +2340,7 @@ const ModelEditor = () => {
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: 13, height: 13 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
           <span>{isCalculating ? 'Calculating...' : (isValidating ? 'Validating...' : 'Calculate')}</span>
-          <span className="material-symbols-outlined" style={{ fontSize: 16, marginLeft: -1 }}>expand_more</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14, marginLeft: -1, transform: isCalcMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
         </button>
         {isCalcMenuOpen && (
           <CalculationMenu
@@ -3709,7 +3709,7 @@ const ModelEditor = () => {
             >
               <Download size={13} />
               <span>Export</span>
-              <span className="material-symbols-outlined" style={{ fontSize: 14, marginLeft: -2 }}>expand_more</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: isExportMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
             </button>
             {isExportMenuOpen && (
               <div className="subheader__dropdown-menu" role="menu" style={{ left: 0, right: 'auto', minWidth: 190 }}>

@@ -211,14 +211,23 @@ export function performAutoLayout(
   const IH         = options.indicatorHeight ?? 26;
   const IGAP       = options.indicatorGap    ?? 10;
 
-  // Gap between construct rim and nearest indicator edge — must clear badge
-  const IND_SIDE_GAP = Math.max(56, Math.ceil(BW / 2) + 14);  // left/right indicator arm
-  const IND_TB_GAP   = Math.max(50, Math.ceil(BW / 2) + 10);  // top/bottom indicator arm
-  const OFF_SIDE = R + IND_SIDE_GAP;   // construct-centre → indicator-centre (horizontal)
-  const OFF_TB   = R + IND_TB_GAP;     // construct-centre → indicator-centre (vertical)
+  // ── Indicator offset: arrow length must fit the badge comfortably ──────────
+  //
+  // Arrow goes from indicator edge to construct rim:
+  //   arrow_length = OFF_SIDE − IW/2 − R
+  //
+  // We need: arrow_length ≥ BW + 40  (20 px margin each side of badge)
+  //   OFF_SIDE ≥ BW + 40 + IW/2 + R
+  //
+  const BADGE_MARGIN  = 24;   // px clearance on each side of the badge
+  const OFF_SIDE = Math.ceil(BW + BADGE_MARGIN * 2 + IW / 2 + R);
+  //
+  // Same logic vertically (badges on loading arrows are horizontal, so vertical
+  // clearance only needs half-badge-height + margin):
+  const OFF_TB   = Math.ceil(BW + BADGE_MARGIN * 2 + IH / 2 + R);
 
   // Inter-column clearance: must fit badge + visual breathing room on both sides
-  const COL_GAP = Math.max(100, BW + 60);
+  const COL_GAP = Math.max(110, BW + 70);
 
   // ── Latent adjacency ─────────────────────────────────────────────────────────
   const latentSet = new Set(latents.map(n => n.id));

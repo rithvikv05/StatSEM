@@ -212,7 +212,7 @@ const StudyModal = ({ isOpen, onClose, workspaceId }: StudyModalProps) => {
     <div className="modal-overlay active" style={{ display: 'flex' }} onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal__header">
-          <h2 className="modal__title">Import / New Study</h2>
+          <h2 className="modal__title">Create New Study</h2>
           <button className="icon-btn icon-btn--sm" type="button" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
           </button>

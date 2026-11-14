@@ -12,6 +12,7 @@ interface WorkspaceModalProps {
   initialImportProject?: string | null;
   initialProjectName?: string | null;
   onClearInitialImportProject?: () => void;
+  onCreated?: (workspace: { id: string; name: string; path: string }) => void | Promise<void>;
 }
 
 const WorkspaceModal = ({
@@ -20,6 +21,7 @@ const WorkspaceModal = ({
   initialImportProject,
   initialProjectName,
   onClearInitialImportProject,
+  onCreated,
 }: WorkspaceModalProps) => {
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
@@ -103,6 +105,14 @@ const WorkspaceModal = ({
     let resolvedPath = calculatedPath;
     let backendOffline = false;
     try {
+      if (onCreated) {
+        const existingWorkspace = await api.openWorkspace(calculatedPath);
+        if (existingWorkspace?.path && !existingWorkspace.error) {
+          setError('A workspace already exists at this location. Choose it from the existing workspace list or use a different name.');
+          setIsCreating(false);
+          return;
+        }
+      }
       const res = await api.createWorkspace(calculatedPath, cleanName);
 
       if (res?.error) {
@@ -201,6 +211,13 @@ const WorkspaceModal = ({
       } catch (importErr: any) {
         console.warn('Failed to import initial study:', importErr);
       }
+    }
+
+    if (onCreated) {
+      await onCreated({ id: workspaceId, name: cleanName, path: resolvedPath });
+      setIsCreating(false);
+      onClose();
+      return;
     }
 
     setActiveWorkspace(workspaceId);

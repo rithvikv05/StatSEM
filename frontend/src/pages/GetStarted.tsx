@@ -6,6 +6,8 @@ import AppSidebar from '../components/AppSidebar';
 import InputDialog from '../components/InputDialog';
 import { api } from '../utils/api';
 import { promptOpenWorkspaceFolder } from '../utils/workspace-import';
+import { SampleStudyDialog } from './SamplesView';
+import { BETA_RELEASE_DATE } from '../utils/release-notes';
 
 const GetStarted = () => {
   const navigate = useNavigate();
@@ -25,6 +27,7 @@ const GetStarted = () => {
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   });
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
+  const [isSampleDialogOpen, setIsSampleDialogOpen] = useState(false);
   const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
   const [inputDialogConfig, setInputDialogConfig] = useState<{isOpen: boolean; title: string; placeholder: string; submitLabel: string; initialValue?: string; onSubmit: (val: string) => void}>({
     isOpen: false, title: '', placeholder: '', submitLabel: '', onSubmit: () => {}
@@ -102,7 +105,7 @@ const GetStarted = () => {
   };
 
   const handleOpenSampleStudy = () => {
-    openTab({ id: 'tab-samples', type: 'samples', title: 'Sample Studies' });
+    setIsSampleDialogOpen(true);
   };
 
   const handleOpenWebsite = () => {
@@ -397,39 +400,27 @@ const GetStarted = () => {
               <div className="lower-col">
                 <div className="section-header">
                   <h2 className="section-header__title">Release Notes</h2>
-                  <span className="release-card__version">v1.1.0</span>
+                  <span className="release-card__version">Beta</span>
                 </div>
 
                 <div className="release-card">
                   <div className="release-card__items">
                     <div className="release-item">
                       <div>
-                        <span className="release-item__title">HTMT2 Discriminant Validity:</span>{' '}
-                        Inference criteria implementing Henseler et al. (2023) unbiased geometric mean ratios.
-                      </div>
-                    </div>
-                    <div className="release-item">
-                      <div>
-                        <span className="release-item__title">AVX-512 Matrix Subsystem:</span>{' '}
-                        Vectorized LAPACK dense solver delivering 4.8x acceleration in inverse covariance decomposition.
-                      </div>
-                    </div>
-                    <div className="release-item">
-                      <div>
-                        <span className="release-item__title">Consistent PLSc:</span>{' '}
-                        Asymptotic normality correction for composite structures with parallel multi-core resampling.
+                        <span className="release-item__title">Welcome to the StatSEM beta.</span>{' '}
+                        We hope you enjoy exploring the app. Please share any issues, suggestions, or other feedback as you test it.
                       </div>
                     </div>
                   </div>
 
                   <div className="release-card__footer">
-                    <span className="release-card__date">November 18, 2024</span>
+                    <span className="release-card__date">{BETA_RELEASE_DATE}</span>
                     <button
                       className="release-card__changelog"
                       type="button"
                       onClick={() => openTab({ type: 'changelog', title: 'Changelog' })}
                     >
-                      Technical Changelog
+                      Changelog
                       <span className="material-symbols-outlined">arrow_forward</span>
                     </button>
                   </div>
@@ -460,62 +451,13 @@ const GetStarted = () => {
                   >
                     <div className="project-card__content" style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                       <div className="project-card__info" style={{ minWidth: 0, flex: 1 }}>
-                        <h3 className="project-card__title">Corporate Reputation Model</h3>
-                        <p className="project-card__desc">
-                          Reflective-formative benchmark assessing competence and likeability on customer retention.
-                        </p>
+                        <h3 className="project-card__title">Service experience and customer loyalty</h3>
+                        <p className="project-card__desc">PLS-SEM</p>
                       </div>
                       <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
                     </div>
                   </div>
 
-                  <div
-                    onClick={handleOpenSampleStudy}
-                    className="project-card"
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <div className="project-card__content" style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                      <div className="project-card__info" style={{ minWidth: 0, flex: 1 }}>
-                        <h3 className="project-card__title">Customer Satisfaction Index (ACSI/ECSI)</h3>
-                        <p className="project-card__desc">
-                          Classic standard with consistent PLSc correction for purely reflective latent construct paths.
-                        </p>
-                      </div>
-                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={handleOpenSampleStudy}
-                    className="project-card"
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <div className="project-card__content" style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                      <div className="project-card__info" style={{ minWidth: 0, flex: 1 }}>
-                        <h3 className="project-card__title">Technology Acceptance Model (TAM 3)</h3>
-                        <p className="project-card__desc">
-                          Moderated mediation investigating perceived usefulness and ease of use with interaction terms.
-                        </p>
-                      </div>
-                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={handleOpenSampleStudy}
-                    className="project-card"
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <div className="project-card__content" style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                      <div className="project-card__info" style={{ minWidth: 0, flex: 1 }}>
-                        <h3 className="project-card__title">Meta-Analysis &amp; Moderation</h3>
-                        <p className="project-card__desc">
-                          Two-stage PLS-SEM tutorial template with random-effects weighting and latent moderation analysis.
-                        </p>
-                      </div>
-                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -602,6 +544,7 @@ const GetStarted = () => {
       </div>
 
       <WorkspaceModal isOpen={isWorkspaceModalOpen} onClose={() => setIsWorkspaceModalOpen(false)} />
+      <SampleStudyDialog isOpen={isSampleDialogOpen} onClose={() => setIsSampleDialogOpen(false)} />
       <InputDialog 
         isOpen={inputDialogConfig.isOpen} 
         onClose={() => setInputDialogConfig(prev => ({...prev, isOpen: false}))}

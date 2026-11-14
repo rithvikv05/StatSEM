@@ -1,170 +1,127 @@
 import React, { useState } from 'react';
 import AppSidebar from '../components/AppSidebar';
-
-interface FeedbackReport {
-  id: string;
-  type: 'Bug' | 'Feature' | 'Performance' | 'Question';
-  title: string;
-  description: string;
-  status: 'Open' | 'Under Review' | 'Resolved';
-  timestamp: string;
-}
-
-const INITIAL_REPORTS: FeedbackReport[] = [
-  {
-    id: 'rep-1',
-    type: 'Feature',
-    title: 'Support for higher-order formative constructs (type II/IV)',
-    description: 'Two-stage indicator reuse approach directly configured in latent construct node properties.',
-    status: 'Under Review',
-    timestamp: '2 days ago',
-  },
-  {
-    id: 'rep-2',
-    type: 'Performance',
-    title: 'Parallel bootstrap acceleration on Apple Silicon (M-series)',
-    description: 'Multiprocessing pool scaling gracefully up to 10,000 resamples without memory pressure.',
-    status: 'Resolved',
-    timestamp: '1 week ago',
-  },
-];
+import { api } from '../utils/api';
 
 export const FeedbackView: React.FC = () => {
-  const [reports, setReports] = useState<FeedbackReport[]>(INITIAL_REPORTS);
-  const [reportType, setReportType] = useState<FeedbackReport['type']>('Bug');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const email = 'f20230352@hyderabad.bits-pilani.ac.in';
+  const mailtoUrl = `mailto:${email}?subject=StatSEM%20Feedback`;
+  const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=StatSEM%20Feedback`;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleCopy = () => {
+    navigator.clipboard.writeText(email);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleOpenMail = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!title.trim() || !description.trim()) return;
+    api.openExternalUrl(mailtoUrl);
+  };
 
-    const newReport: FeedbackReport = {
-      id: `rep_${Date.now()}`,
-      type: reportType,
-      title: title.trim(),
-      description: description.trim(),
-      status: 'Open',
-      timestamp: 'Just now',
-    };
-
-    setReports([newReport, ...reports]);
-    setTitle('');
-    setDescription('');
-    setSubmitted(true);
-    setTimeout(() => setSubmitted(false), 3000);
+  const handleOpenGmail = (e: React.MouseEvent) => {
+    e.preventDefault();
+    api.openExternalUrl(gmailUrl);
   };
 
   return (
     <div className="app-body">
       <AppSidebar activeNav="feedback" />
 
-      <main className="main-content">
-        <div className="main-content__inner">
-          <div className="page-header animate-fade-in">
-            <div className="page-header__text">
-              <h1 className="page-header__title">Feedback &amp; Reports</h1>
-              <p className="page-header__subtitle">Submit bug reports, feature suggestions, or methodological inquiries.</p>
+      <main className="ws-main">
+        <div className="ws-inner">
+          <div className="ws-header animate-fade-in">
+            <div className="ws-header__left">
+              <h1 className="ws-title-editable" style={{ cursor: 'default' }}>Feedback &amp; Support</h1>
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="release-card animate-fade-in" style={{ padding: '20px', gap: '14px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              {(['Bug', 'Feature', 'Performance', 'Question'] as const).map((t) => (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px', width: '100%' }}>
+            <div
+              className="release-card animate-fade-in"
+              style={{
+                width: '100%',
+                padding: '24px 28px',
+                borderRadius: 'var(--radius-lg)',
+                border: '1px solid var(--color-border-default)',
+                backgroundColor: 'var(--color-bg-surface)',
+                boxShadow: 'var(--shadow-xs)',
+                boxSizing: 'border-box',
+              }}
+            >
+              <p style={{ margin: '0 0 16px 0', fontSize: '14px', color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
+                If you have any problems, questions, or bug reports, mail here:{' '}
+                <a
+                  href={mailtoUrl}
+                  onClick={handleOpenMail}
+                  style={{ color: 'var(--color-accent)', fontWeight: 600, textDecoration: 'none', cursor: 'pointer' }}
+                >
+                  {email}
+                </a>
+              </p>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 <button
-                  key={t}
                   type="button"
-                  onClick={() => setReportType(t)}
+                  onClick={handleOpenMail}
+                  className="btn btn-primary"
                   style={{
-                    padding: '4px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '12px',
-                    fontWeight: 500,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    fontWeight: 600,
                     cursor: 'pointer',
-                    border: '1px solid',
-                    borderColor: reportType === t ? 'var(--color-accent)' : 'var(--color-border-default)',
-                    backgroundColor: reportType === t ? 'var(--color-accent-subtle)' : 'var(--color-bg-surface)',
-                    color: reportType === t ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-                    transition: 'all 0.15s ease',
+                    borderRadius: 'var(--radius-md)',
                   }}
                 >
-                  {t}
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>mail</span>
+                  <span>Mail Support</span>
                 </button>
-              ))}
-            </div>
 
-            <input
-              type="text"
-              placeholder="Title or summary…"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--color-border-default)',
-                background: 'var(--color-bg-surface)',
-                color: 'var(--color-text-primary)',
-                fontSize: '13px',
-                outline: 'none',
-              }}
-            />
+                <button
+                  type="button"
+                  onClick={handleOpenGmail}
+                  className="btn btn-secondary"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 14px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                  title="Compose in Gmail Web"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>open_in_browser</span>
+                  <span>Open in Gmail</span>
+                </button>
 
-            <textarea
-              placeholder="Detailed description, steps to reproduce, or desired behavior…"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              required
-              rows={4}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--color-border-default)',
-                background: 'var(--color-bg-surface)',
-                color: 'var(--color-text-primary)',
-                fontSize: '13px',
-                outline: 'none',
-                fontFamily: 'inherit',
-                resize: 'vertical',
-              }}
-            />
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '12px', color: submitted ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
-                {submitted ? 'Thank you! Report submitted.' : 'Your report helps improve StatSEM.'}
-              </span>
-              <button
-                type="submit"
-                className="btn btn-primary"
-                style={{ padding: '6px 16px', fontSize: '13px' }}
-              >
-                Submit Report
-              </button>
-            </div>
-          </form>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', margin: '8px 0 4px 0' }}>
-              Recent Reports
-            </h3>
-            <div className="doc-list animate-fade-in">
-              {reports.map((rep) => (
-                <div key={rep.id} className="doc-card" style={{ cursor: 'default' }}>
-                  <div className="doc-card__header">
-                    <span className="doc-card__title">
-                      <span className="material-symbols-outlined" style={{ color: 'var(--color-accent)' }}>
-                        {rep.type === 'Bug' ? 'bug_report' : rep.type === 'Feature' ? 'lightbulb' : 'speed'}
-                      </span>
-                      {rep.title}
-                    </span>
-                    <span className="doc-card__read-time">{rep.status}</span>
-                  </div>
-                  <p className="doc-card__desc">{rep.description}</p>
-                </div>
-              ))}
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="btn btn-secondary"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 14px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                  title="Copy email address"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                    {copied ? 'check' : 'content_copy'}
+                  </span>
+                  <span>{copied ? 'Copied' : 'Copy Address'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

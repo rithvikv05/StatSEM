@@ -1,179 +1,74 @@
 import React, { useState } from 'react';
-import { useStore } from '../store';
 import AppSidebar from '../components/AppSidebar';
+import WorkspaceModal from '../components/WorkspaceModal';
+import { useStore, type Model, type Workspace } from '../store';
 import { api } from '../utils/api';
+import { processData } from '../utils/dataset-parser';
+import type { ParsedDataset } from '../utils/dataset-parser';
 
-interface SampleStudy {
-  id: string;
-  title: string;
-  tag: string;
-  constructs: number;
-  indicators: number;
-  sampleSize: number;
-  description: string;
+export function SampleStudyDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { workspaces, activeWorkspaceId, addStudy, addModel, setStudyDatasets, setActiveWorkspace, setActiveStudy, openTab } = useStore();
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [workspaceId, setWorkspaceId] = useState(activeWorkspaceId || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const install = async (workspace: Pick<Workspace, 'id' | 'name' | 'path'>) => {
+    if (!workspace.path) { setError('Choose a workspace with a saved folder.'); return; }
+    setBusy(true); setError('');
+    let projectPath = '';
+    try {
+      const sample: any = (await import('../assets/service-experience.json')).default;
+      const workspaceData = await api.openWorkspace(workspace.path);
+      if (workspaceData.error || !workspaceData.workspace) throw new Error(workspaceData.error || 'Could not open the workspace.');
+      const baseName = 'Service Experience — PLS-SEM Sample';
+      const usedNames = new Set([...(workspaceData.workspace.projects || []), ...(workspaceData.workspace.archived_projects || [])].map(p => p.name.toLowerCase()));
+      let name = baseName;
+      for (let suffix = 2; usedNames.has(name.toLowerCase()); suffix++) name = `${baseName} (${suffix})`;
+      const project = await api.addProject(workspace.path, name);
+      if (project.error || !project.project_path) throw new Error(project.error || 'Could not create the sample study.');
+      projectPath = project.project_path;
+      const datasets: ParsedDataset[] = [];
+      for (const dataset of sample.datasets) {
+        const data = processData(dataset.name, dataset.columns, dataset.rows);
+        data.id = dataset.id; data.dataGroups = dataset.groups;
+        const saved = await api.saveProjectDataJson(projectPath, dataset.name, dataset.columns, dataset.rows, undefined, undefined, dataset.id, dataset.groups);
+        if (saved.error) throw new Error(saved.error);
+        datasets.push(data);
+      }
+      const modelNames = ['Quality and loyalty', 'Satisfaction mediation', 'Quality, value and loyalty', 'Value moderates quality', 'Formative value', 'Quadratic effect', 'Gaussian copula', 'Combined effects'];
+      const modelIds = new Map<string, string>();
+      const installedModels: Model[] = [];
+      for (const [index, model] of sample.models.entries()) {
+        const id = `model-${crypto.randomUUID()}`;
+        modelIds.set(model.id, id);
+        const saved = await api.saveProjectModel(projectPath, model.spec, model.layout, id);
+        if (saved.error) throw new Error(saved.error);
+        installedModels.push({ id, studyId: projectPath, name: `${String(index + 1).padStart(2, '0')} · ${modelNames[index] || 'Sample model'}`, type: 'PLS-SEM', datasetId: model.spec.dataset_id, lastModified: 'Just now' });
+      }
+      for (const snapshot of sample.snapshots) {
+        const saved = await api.saveSnapshot({ projectPath, name: snapshot.name, description: snapshot.description, algorithm: snapshot.algorithm, results: snapshot.results, spec: snapshot.spec, diagramLayout: snapshot.layout, sourceModelId: modelIds.get(snapshot.sourceModelId) });
+        if (saved.error) throw new Error(saved.error);
+      }
+      addStudy({ id: projectPath, workspaceId: workspace.id, name: project.project_name || 'Service Experience — PLS-SEM Sample', type: 'PLS-SEM', description: 'Simulated customer survey for learning model estimation, mediation, prediction, IPMA and group comparisons.', lastModified: 'Just now', path: projectPath });
+      setStudyDatasets(projectPath, datasets);
+      installedModels.forEach(addModel);
+      setActiveWorkspace(workspace.id); setActiveStudy(projectPath);
+      openTab({ type: 'workspace', title: workspace.name, workspaceId: workspace.id });
+      onClose();
+    } catch (err) { setError(`${err instanceof Error ? err.message : 'Could not add sample study.'}${projectPath ? ` A partially created study remains at ${projectPath}.` : ''}`); }
+    finally { setBusy(false); }
+  };
+  return <>
+    {isOpen && !creatingWorkspace && <div className="modal-overlay active" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="sample-title"><div className="modal__header"><h2 id="sample-title" className="modal__title">Add sample study</h2><button className="calculation-close" aria-label="Close" disabled={busy} onClick={onClose}>×</button></div><div className="modal__body"><p className="calculation-note">Includes simulated datasets, eight models and a saved result snapshot.</p><label className="modal__field"><span className="modal__label">Existing workspace</span><select className="modal__input" value={workspaceId} onChange={e => setWorkspaceId(e.target.value)}><option value="">Select a workspace</option>{workspaces.filter(w => w.path).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>{error && <p role="alert" className="calculation-error">{error}</p>}</div><div className="modal__footer"><button type="button" className="modal__btn-cancel" disabled={busy} onClick={() => setCreatingWorkspace(true)}>Create workspace</button><button type="button" className="modal__btn-create" disabled={busy || !workspaces.some(w => w.id === workspaceId && w.path)} onClick={() => { const ws = workspaces.find(w => w.id === workspaceId); if (ws) void install(ws); }}>{busy ? 'Adding…' : 'Add to workspace'}</button></div></div></div>}
+    <WorkspaceModal isOpen={creatingWorkspace} onClose={() => setCreatingWorkspace(false)} onCreated={install}/>
+  </>;
 }
 
-const SAMPLE_STUDIES: SampleStudy[] = [
-  {
-    id: 'corp-rep',
-    title: 'Corporate Reputation Model',
-    tag: 'Reflective-Formative',
-    constructs: 6,
-    indicators: 21,
-    sampleSize: 344,
-    description: 'Benchmark study from Hair et al. (2022). Examines how Competence and Likeability drive Customer Satisfaction and Loyalty.',
-  },
-  {
-    id: 'acsi-ecsi',
-    title: 'Customer Satisfaction Index (ACSI / ECSI)',
-    tag: 'Reflective Paths',
-    constructs: 7,
-    indicators: 24,
-    sampleSize: 250,
-    description: 'Classic European customer satisfaction index with structural paths between Expectations, Quality, Value, and Retention.',
-  },
-  {
-    id: 'tam',
-    title: 'Technology Acceptance Model (TAM 3)',
-    tag: 'Moderation / Interaction',
-    constructs: 5,
-    indicators: 18,
-    sampleSize: 280,
-    description: 'Venkatesh & Bala TAM 3 architecture with Perceived Usefulness, Perceived Ease of Use, Subjective Norm, and Job Relevance.',
-  },
-  {
-    id: 'brand-equity',
-    title: 'Consumer Brand Equity Model',
-    tag: 'Hierarchical Component',
-    constructs: 4,
-    indicators: 16,
-    sampleSize: 420,
-    description: 'Higher-order formative construct model analyzing Brand Awareness, Associations, Perceived Quality, and Brand Loyalty.',
-  },
-  {
-    id: 'job-perf',
-    title: 'Job Performance & Leadership Study',
-    tag: 'Mediation Model',
-    constructs: 5,
-    indicators: 15,
-    sampleSize: 195,
-    description: 'Organizational behavior study exploring how Transformational Leadership impacts Task Performance via Psychological Empowerment.',
-  },
-  {
-    id: 'online-trust',
-    title: 'E-Commerce Trust & Purchase Intention',
-    tag: 'Multi-Group Ready',
-    constructs: 6,
-    indicators: 20,
-    sampleSize: 512,
-    description: 'Consumer trust model across Mobile vs. Desktop shoppers, evaluating Structural Assurance, Perceived Security, and Repeat Purchase.',
-  },
-  {
-    id: 'healthcare',
-    title: 'Healthcare Patient Loyalty Framework',
-    tag: 'Non-Linear & Complex',
-    constructs: 5,
-    indicators: 19,
-    sampleSize: 310,
-    description: 'Service quality assessment in outpatient clinics evaluating Doctor-Patient Communication, Empathy, and Hospital Reputation.',
-  },
-  {
-    id: 'green-purchase',
-    title: 'Sustainable Consumption & Green Marketing',
-    tag: 'Environmental SEM',
-    constructs: 5,
-    indicators: 17,
-    sampleSize: 365,
-    description: 'Pro-environmental behavioral research linking Environmental Concern, Green Value, and Willingness to Pay Premium Prices.',
-  },
-];
-
-const SamplesView: React.FC = () => {
-  const { workspaces, activeWorkspaceId, setActiveWorkspace, openTab, addWorkspace } = useStore();
-
-  const handleOpenSample = async (study: SampleStudy) => {
-    const existingWs = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
-    if (study.id === 'corp-rep' && existingWs?.path) {
-      try {
-        await api.loadCorporateReputationTemplate(existingWs.path);
-      } catch (err) {
-        console.warn('Template load warning:', err);
-      }
-    }
-
-    if (existingWs) {
-      setActiveWorkspace(existingWs.id);
-      openTab({ type: 'workspace', title: existingWs.name, workspaceId: existingWs.id });
-    } else {
-      const sampleWsId = `sample_ws_${Date.now()}`;
-      addWorkspace({
-        id: sampleWsId,
-        name: study.title,
-        path: '',
-      });
-      setActiveWorkspace(sampleWsId);
-      openTab({ type: 'workspace', title: study.title, workspaceId: sampleWsId });
-    }
-  };
-
-  return (
-    <div className="app-body">
-      <AppSidebar activeNav="samples" />
-
-      <main className="main-content">
-        <div className="main-content__inner">
-          <div className="page-header animate-fade-in">
-            <div className="page-header__text">
-              <h1 className="page-header__title">Sample Studies</h1>
-              <p className="page-header__subtitle">Explore guided models and standard benchmark datasets to get started.</p>
-            </div>
-          </div>
-
-          <div className="project-list animate-fade-in">
-            {SAMPLE_STUDIES.map((study) => (
-              <div
-                key={study.id}
-                className="project-card"
-                onClick={() => handleOpenSample(study)}
-                style={{ cursor: 'pointer' }}
-              >
-                <div className="project-card__content">
-                  <div className="project-card__icon">
-                    <span className="material-symbols-outlined">science</span>
-                  </div>
-                  <div className="project-card__info">
-                    <div className="project-card__title-row">
-                      <h3 className="project-card__title">{study.title}</h3>
-                      <span className="project-card__badge project-card__badge--accent">{study.tag}</span>
-                    </div>
-                    <p className="project-card__desc">{study.description}</p>
-                    <div className="project-card__meta">
-                      <span>{study.constructs} constructs</span>
-                      <span className="project-card__meta-dot">·</span>
-                      <span>{study.indicators} indicators</span>
-                      <span className="project-card__meta-dot">·</span>
-                      <span>N = {study.sampleSize}</span>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  className="project-card__open-btn"
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenSample(study);
-                  }}
-                >
-                  <span>Open</span>
-                  <span className="material-symbols-outlined">arrow_forward</span>
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-};
-
-export default SamplesView;
+export default function SamplesView() {
+  const [choosing, setChoosing] = useState(false);
+  return <div className="app-body"><AppSidebar activeNav="samples"/><main className="ws-main"><div className="ws-inner">
+    <header className="ws-header"><div className="ws-header__left"><h1 className="ws-title-editable" style={{ cursor: 'default' }}>Sample Studies</h1></div></header>
+    <div className="project-list" style={{ marginTop: 24 }}><div className="project-card"><div className="project-card__content"><div className="project-card__info"><h3 className="project-card__title">Service experience and customer loyalty</h3><p className="project-card__desc">PLS-SEM</p></div></div><button type="button" className="project-card__open-btn" onClick={() => setChoosing(true)}>Add study</button></div></div>
+    <SampleStudyDialog isOpen={choosing} onClose={() => setChoosing(false)}/>
+  </div></main></div>;
+}

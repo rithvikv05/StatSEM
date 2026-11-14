@@ -472,6 +472,22 @@ fn route(
             )
         }
         ("POST", "/power/calculate") => power_route(&body),
+        ("POST", "/system/open-url") => {
+            let url = text(&body, query, "url").ok_or("url parameter required")?;
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
+            Ok(json!({"status": "success"}))
+        }
         ("GET", "/power/table") => Ok(
             json!({"status":"success","results":power::table(query.get("alpha").and_then(|v|v.parse().ok()).unwrap_or(0.05),query.get("target_power").and_then(|v|v.parse().ok()).unwrap_or(0.8))?}),
         ),

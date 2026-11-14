@@ -4,7 +4,6 @@ import { useStore, getStudyDatasets, type Study } from '../store';
 import WorkspaceModal from '../components/WorkspaceModal';
 import StudyModal from '../components/StudyModal';
 import StudyWorkspaceDropdown from '../components/StudyWorkspaceDropdown';
-import { ModelComparisonModal } from '../components/ModelComparisonModal';
 import InputDialog from '../components/InputDialog';
 import { parseDatasetFile } from '../utils/dataset-parser';
 import type { ParsedDataset } from '../utils/dataset-parser';
@@ -83,7 +82,6 @@ const Dashboard = () => {
   const [expandedStudies, setExpandedStudies] = useState<Set<string>>(new Set());
   
   const [isStudyModalOpen, setIsStudyModalOpen] = useState(false);
-  const [comparisonStudy, setComparisonStudy] = useState<any | null>(null);
   const [workspaceDropdownConfig, setWorkspaceDropdownConfig] = useState<{
     isOpen: boolean;
     mode: 'move' | 'copy';
@@ -490,7 +488,7 @@ const Dashboard = () => {
         <AppSidebar activeNav="workspace" />
 
         <main className="ws-main">
-          <div className="ws-inner">
+          <div className="ws-inner ws-inner--workspace">
             
             <div className="ws-header animate-fade-in">
               <div className="ws-header__left">
@@ -776,12 +774,6 @@ const Dashboard = () => {
                                   icon: 'add',
                                   action: () => { setModelModalStudyId(study.id); setModelName(''); setModelType('PLS-SEM'); setModelModalOpen(true); },
                                 },
-                                ...(studySnapshots.length >= 2 ? [{
-                                  id: 'compare-models',
-                                  label: 'Compare Models…',
-                                  icon: 'compare_arrows',
-                                  action: () => setComparisonStudy(study),
-                                }] : []),
                                 {
                                   id: 'new-study',
                                   label: 'New Study',
@@ -1346,12 +1338,92 @@ const Dashboard = () => {
               <input className="modal__input" id="modal-model-name" value={modelName} onChange={e => setModelName(e.target.value)} type="text" placeholder="e.g., Structural Model" autoComplete="off" spellCheck="false" autoFocus />
             </div>
             <div className="modal__field">
-              <label className="modal__label" htmlFor="modal-model-type">Model Type</label>
-              <select className="modal__input" id="modal-model-type" value={modelType} onChange={e => setModelType(e.target.value)} style={{cursor: 'pointer'}}>
-                <option value="PLS-SEM">PLS-SEM</option>
-                <option value="CB-SEM">CB-SEM</option>
-                <option value="Regression">Regression</option>
-              </select>
+              <label className="modal__label">Model Type</label>
+              <div
+                className="subheader__switcher"
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  padding: '3px',
+                  borderRadius: 'var(--radius-md, 6px)',
+                  background: 'var(--color-bg-raised, rgba(0, 0, 0, 0.04))',
+                  border: '1px solid var(--color-border-subtle)',
+                  boxSizing: 'border-box',
+                  gap: '4px'
+                }}
+              >
+                <button
+                  type="button"
+                  className="subheader__switcher-btn active"
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'var(--color-bg-base)',
+                    color: 'var(--color-accent, #6B4EE6)',
+                    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+                    cursor: 'default',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <span>PLS-SEM</span>
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="subheader__switcher-btn"
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--color-text-muted)',
+                    opacity: 0.45,
+                    cursor: 'not-allowed',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  title="CB-SEM is under development"
+                >
+                  <span>CB-SEM</span>
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="subheader__switcher-btn"
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--color-text-muted)',
+                    opacity: 0.45,
+                    cursor: 'not-allowed',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  title="Regression is under development"
+                >
+                  <span>Regression</span>
+                </button>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>info</span>
+                <span>CB-SEM and Regression are under development.</span>
+              </div>
             </div>
           </div>
           <div className="modal__footer">
@@ -1360,15 +1432,6 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-      )}
-
-      {comparisonStudy && (
-        <ModelComparisonModal
-          isOpen={!!comparisonStudy}
-          onClose={() => setComparisonStudy(null)}
-          projectPath={comparisonStudy.path || ''}
-          studyName={comparisonStudy.name}
-        />
       )}
     </>
   );

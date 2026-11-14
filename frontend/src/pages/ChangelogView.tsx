@@ -1,5 +1,7 @@
 import React from 'react';
 import AppSidebar from '../components/AppSidebar';
+import { useStore } from '../store';
+import { BETA_RELEASE_DATE } from '../utils/release-notes';
 
 interface ReleaseEntry {
   version: string;
@@ -10,69 +12,28 @@ interface ReleaseEntry {
 
 const RELEASES: ReleaseEntry[] = [
   {
-    version: 'v1.1.0',
-    date: 'November 18, 2024',
-    tag: 'Latest Release',
+    version: 'Beta testing',
+    date: BETA_RELEASE_DATE,
+    tag: 'Latest',
     highlights: [
       {
-        title: 'HTMT2 Discriminant Validity Metric',
-        description: 'Implemented Henseler et al. (2023) unbiased geometric mean ratios for accurate discriminant validity checking between correlated latent constructs.',
+        title: 'Welcome',
+        description: 'Thank you for trying StatSEM. We hope you enjoy exploring the app and using it to build and analyze your models.',
       },
       {
-        title: 'AVX-512 Matrix Subsystem Acceleration',
-        description: 'Vectorized dense solver delivering 4.8x acceleration in inverse covariance decomposition and parallel bootstrap resamples.',
+        title: 'Explore',
+        description: 'Try the sample study, create a workspace, build a model, and explore the available analyses and results.',
       },
       {
-        title: 'Consistent PLSc Mode',
-        description: 'Added asymptotic normality correction for composite structures with parallel multi-core resampling.',
-      },
-      {
-        title: 'Customizable Pastel Color Schemes',
-        description: 'Application-wide custom accent hue selector with pastel palettes and native theme persistence.',
-      },
-    ],
-  },
-  {
-    version: 'v1.0.4',
-    date: 'October 29, 2024',
-    tag: 'Maintenance',
-    highlights: [
-      {
-        title: 'Interactive Canvas Variable Drag-and-Drop',
-        description: 'Direct indicator assignment from dataset panel onto canvas constructs with automatic type inferencing.',
-      },
-      {
-        title: 'High-Resolution Vector Export (SVG / PDF / PNG)',
-        description: 'Lossless publication-ready diagram exports with DPI scaling and custom font embedding.',
-      },
-      {
-        title: 'CSV Delimiter & Encoding Auto-Detection',
-        description: 'Robust parser detecting UTF-8, Latin-1, commas, semicolons, and tab delimiters automatically.',
-      },
-    ],
-  },
-  {
-    version: 'v1.0.0',
-    date: 'September 12, 2024',
-    tag: 'Initial Release',
-    highlights: [
-      {
-        title: 'Core PLS-SEM Algorithm Engine',
-        description: 'Path weighting, centroid, and factor weighting schemes with iterative Wold estimation.',
-      },
-      {
-        title: 'Complete Measurement Model Evaluation',
-        description: 'Indicator reliability, composite reliability (rho_A, rho_C), Cronbach’s alpha, and AVE convergence metrics.',
-      },
-      {
-        title: 'Multi-Core Bootstrapping Subsystem',
-        description: 'Parallelized studentized t-values, p-values, and percentile confidence interval estimation.',
+        title: 'Share your feedback',
+        description: 'Please let us know about any bugs, confusing interactions, or ideas for improvement you encounter during testing.',
       },
     ],
   },
 ];
 
 export const ChangelogView: React.FC = () => {
+  const openTab = useStore(state => state.openTab);
   return (
     <div className="app-body">
       <AppSidebar activeNav="changelog" />
@@ -81,8 +42,8 @@ export const ChangelogView: React.FC = () => {
         <div className="main-content__inner">
           <div className="page-header animate-fade-in">
             <div className="page-header__text">
-              <h1 className="page-header__title">Technical Changelog</h1>
-              <p className="page-header__subtitle">Version release history, algorithm optimizations, and platform updates.</p>
+              <h1 className="page-header__title">Changelog</h1>
+              <p className="page-header__subtitle">Updates from the StatSEM beta.</p>
             </div>
           </div>
 
@@ -108,6 +69,11 @@ export const ChangelogView: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                </div>
+                <div className="release-card__footer">
+                  <button className="release-card__changelog" type="button" onClick={() => openTab({ type: 'feedback', title: 'Feedback & Support' })}>
+                    Send feedback <span className="material-symbols-outlined">arrow_forward</span>
+                  </button>
                 </div>
               </div>
             ))}

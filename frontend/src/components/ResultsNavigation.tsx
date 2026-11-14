@@ -66,7 +66,6 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
       ['outer_loadings', 'Outer loadings'],
       ['outer_weights', 'Outer weights'],
       ['construct_scores', 'Construct scores'],
-      ['hypotheses', 'Hypotheses testing'],
       ...(!snapshot ? [['bootstrap_significance', 'Bootstrap inference']] : []),
     ] },
     { label: 'Model checks', items: [

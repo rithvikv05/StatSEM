@@ -27,6 +27,10 @@ export function prepareDiagramSvg(source: SVGSVGElement, options: DiagramExportO
     const copy = copies[index] as SVGElement | undefined;
     if (!copy?.style) return;
     const style = window.getComputedStyle(original);
+    const strokeVal = style.getPropertyValue('stroke') || '';
+    const strokeW = style.getPropertyValue('stroke-width') || '';
+    const isHitPath = strokeVal.includes('0.001') || strokeVal.includes('0.01') || (parseFloat(strokeW) >= 16 && strokeVal.includes('rgba('));
+
     const isEdge = !!original.closest('#edges-layer, [data-export-edge]') && !original.closest('.edge-result-badge, [data-export-badge]');
     const isMarker = !!original.closest('marker');
     for (const property of STYLE_PROPERTIES) {
@@ -36,7 +40,7 @@ export function prepareDiagramSvg(source: SVGSVGElement, options: DiagramExportO
       if (options.background === 'white' && (isEdge || isMarker) && (property === 'stroke' || (isMarker && property === 'fill') || (isEdge && original.tagName.toLowerCase() === 'text' && property === 'fill')) && isNearWhite(value)) value = '#1f2937';
       copy.style.setProperty(property, value);
     }
-    if (options.appearance === 'monochrome') {
+    if (options.appearance === 'monochrome' && !isHitPath) {
       const tag = original.tagName.toLowerCase();
       const fill = style.getPropertyValue('fill');
       const stroke = style.getPropertyValue('stroke');
@@ -48,7 +52,21 @@ export function prepareDiagramSvg(source: SVGSVGElement, options: DiagramExportO
       if (stroke && stroke !== 'none') copy.style.setProperty('stroke', '#000000');
     }
   });
-  clone.querySelectorAll('#bg-color-rect, #bg-rect, #guides-layer, [data-export-ui], .selection-marquee, .canvas-hidden-indicators-icon-btn, .copula-hover-indicator, .quadratic-hover-indicator').forEach(element => element.remove());
+
+  // Remove non-exportable and invisible hit elements after style resolution so 1-to-1 index stays intact
+  clone.querySelectorAll(
+    '#bg-color-rect, #bg-rect, #guides-layer, [data-export-ui], .selection-marquee, ' +
+    '.canvas-hidden-indicators-icon-btn, .copula-hover-indicator, .quadratic-hover-indicator, ' +
+    '.edge-halo, .hit-path, [data-hit-path]'
+  ).forEach(element => element.remove());
+
+  clone.querySelectorAll('path').forEach(p => {
+    const s = p.getAttribute('style') || '';
+    if (s.includes('0.001') || s.includes('0.01') || p.style.stroke?.includes('0.001') || p.style.stroke?.includes('0.01')) {
+      p.remove();
+    }
+  });
+
   if (!options.includeIndicators) clone.querySelectorAll('[data-export-indicator="true"], .indicator-badge').forEach(element => element.remove());
   clone.setAttribute('width', String(options.width));
   clone.setAttribute('height', String(options.height));

@@ -3003,16 +3003,6 @@ export const AdvancedResultPanels: React.FC<AdvancedResultPanelsProps> = ({
     );
   }
 
-  // 19. AUTOMATED HYPOTHESIS TESTING SUMMARY TABLE (APA 7TH)
-  if (activeTab === 'hypotheses' || activeTab === 'hypothesis_testing') {
-    return (
-      <HypothesisTestingPanel
-        results={results}
-        onExportExcel={onExportExcel}
-      />
-    );
-  }
-
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--color-text-muted)' }}>
       <h4 style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>Analysis Not Yet Run</h4>

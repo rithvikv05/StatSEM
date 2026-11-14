@@ -110,6 +110,28 @@ export interface LoadModelResponse {
 }
 
 export const api = {
+  async openExternalUrl(url: string): Promise<void> {
+    if ('__TAURI_INTERNALS__' in window) {
+      try {
+        await invoke('open_url', { url });
+        return;
+      } catch (err) {
+        console.warn('Tauri open_url command failed, falling back to HTTP:', err);
+      }
+    }
+    try {
+      const res = await fetch(`${API_BASE}/system/open-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      if (res.ok) return;
+    } catch (err) {
+      console.warn('Backend open-url failed, falling back to window location:', err);
+    }
+    window.location.href = url;
+  },
+
   async getHealth(): Promise<{ status?: string; backend?: string; home_dir?: string | null } | null> {
     try {
       const res = await fetch(`${API_BASE}/health`);

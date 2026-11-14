@@ -13,6 +13,7 @@ export const ACCENT_PRESETS: AccentPreset[] = [
   { id: 'red', name: 'Red', color: '#F43F5E' },
   { id: 'yellow', name: 'Yellow', color: '#F59E0B' },
   { id: 'green', name: 'Green', color: '#10B981' },
+  { id: 'teal', name: 'Teal', color: '#0D9488' },
 ];
 
 export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {

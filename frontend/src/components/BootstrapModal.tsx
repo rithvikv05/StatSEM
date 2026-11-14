@@ -228,6 +228,7 @@ export const BootstrapModal: React.FC<BootstrapModalProps> = ({
         setStage('completed');
         if (data.results) {
           onComplete(data.results);
+          onClose();
         }
       };
 

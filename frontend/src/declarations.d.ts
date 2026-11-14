@@ -3,6 +3,7 @@ declare module '*/utils/model-canvas' {
   const content: any;
   export default content;
   export const initModelCanvas: any;
+  export const fitToScreen: () => void;
   export const ModelCanvas: any;
   export const exportModelSpec: () => any;
   export const getModelCanvasState: () => any;

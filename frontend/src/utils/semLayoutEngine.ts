@@ -229,8 +229,8 @@ export function performAutoLayout(
   const IH         = options.indicatorHeight ?? 26;
   const IGAP       = options.indicatorGap    ?? 10;
 
-  // Arrow length must comfortably fit result badges
-  const BADGE_MARGIN  = 24;
+  // Arrow length must comfortably fit result badges with generous publication clearance
+  const BADGE_MARGIN  = 40;
   const OFF_SIDE = Math.ceil(BW + BADGE_MARGIN * 2 + IW / 2 + R);
   const OFF_TB   = Math.ceil(BW + BADGE_MARGIN * 2 + IH / 2 + R);
 
@@ -362,21 +362,20 @@ export function performAutoLayout(
         const vY = nodeY.get(v.id) ?? 0;
         const t = (d - uD) / (wD - uD);
         const lineY = uY + t * (wY - uY);
-        const CLEAR_ZONE = R + 44; // Circle radius + label height + safe margin
+        const CLEAR_BELOW = R + 62; // Circle radius + label height + safe margin + badge height
+        const CLEAR_ABOVE = R + 38;
 
-        if (Math.abs(vY - lineY) < CLEAR_ZONE) {
-          if (uY >= vY) {
-            // Line passes below v: ensure lineY >= vY + CLEAR_ZONE
-            const neededU = (vY + CLEAR_ZONE - t * wY) / (1 - t);
-            if (neededU > (nodeY.get(u) ?? 0)) {
-              nodeY.set(u, Math.round(neededU));
-            }
-          } else {
-            // Line passes above v: ensure lineY <= vY - CLEAR_ZONE
-            const neededU = (vY - CLEAR_ZONE - t * wY) / (1 - t);
-            if (neededU < (nodeY.get(u) ?? 0)) {
-              nodeY.set(u, Math.round(neededU));
-            }
+        if (lineY >= vY && lineY < vY + CLEAR_BELOW) {
+          // Line passes below v: ensure lineY >= vY + CLEAR_BELOW
+          const neededU = (vY + CLEAR_BELOW - t * wY) / (1 - t);
+          if (neededU > (nodeY.get(u) ?? 0)) {
+            nodeY.set(u, Math.round(neededU));
+          }
+        } else if (lineY < vY && lineY > vY - CLEAR_ABOVE) {
+          // Line passes above v: ensure lineY <= vY - CLEAR_ABOVE
+          const neededU = (vY - CLEAR_ABOVE - t * wY) / (1 - t);
+          if (neededU < (nodeY.get(u) ?? 0)) {
+            nodeY.set(u, Math.round(neededU));
           }
         }
       });
@@ -449,6 +448,53 @@ export function performAutoLayout(
       n.indicatorDirection = indDir.get(n.id);
     });
   });
+
+  // 6b. Post-placement exact path-construct & path-label collision elimination
+  // Using actual X coordinates, guarantees straight skip edges (e.g. LIKE -> CUSL)
+  // NEVER cut through intermediate constructs or their titles (e.g. CUSA)
+  for (let iter = 0; iter < 3; iter++) {
+    let adjusted = false;
+    edges.forEach(e => {
+      const u = nodes.find(n => n.id === e.sourceId);
+      const w = nodes.find(n => n.id === e.targetId);
+      if (!u || !w || !flowLatentSet.has(u.id) || !flowLatentSet.has(w.id)) return;
+      const uD = depth.get(u.id) ?? 0, wD = depth.get(w.id) ?? 0;
+      if (wD - uD < 2) return;
+
+      for (let d = uD + 1; d < wD; d++) {
+        layers[d]?.forEach(v => {
+          if (!v || v.id === u.id || v.id === w.id) return;
+          const spanX = w.x - u.x;
+          if (spanX <= 0) return;
+          const t = (v.x - u.x) / spanX;
+          const lineY = u.y + t * (w.y - u.y);
+
+          // Clearances:
+          // Below: R (36) + label (30) + badge half-height (14) + padding (18) = 98px
+          // Above: R (36) + badge half-height (14) + padding (18) = 68px
+          const CLEAR_BELOW = R + 62;
+          const CLEAR_ABOVE = R + 38;
+
+          if (lineY >= v.y && lineY < v.y + CLEAR_BELOW) {
+            const neededU = Math.round((v.y + CLEAR_BELOW - t * w.y) / (1 - t));
+            if (neededU > u.y) {
+              u.y = neededU;
+              nodeY.set(u.id, u.y);
+              adjusted = true;
+            }
+          } else if (lineY < v.y && lineY > v.y - CLEAR_ABOVE) {
+            const neededU = Math.round((v.y - CLEAR_ABOVE - t * w.y) / (1 - t));
+            if (neededU < u.y) {
+              u.y = neededU;
+              nodeY.set(u.id, u.y);
+              adjusted = true;
+            }
+          }
+        });
+      }
+    });
+    if (!adjusted) break;
+  }
 
   // ── 7. Position Pure Moderator Constructs (Multi-Moderator & Chained) ───────
   const directMods: ModerationEffect[] = [];

@@ -10,6 +10,23 @@ fn desktop_platform() -> &'static str {
     std::env::consts::OS
 }
 
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -56,6 +73,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_runner::backend_url,
             desktop_platform,
+            open_url,
             license::get_license_status,
             license::activate_license,
             license::deactivate_license,

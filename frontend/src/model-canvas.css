@@ -293,18 +293,23 @@ summary.calculation-menu__heading { cursor: pointer; }
   gap: 4px;
   flex-shrink: 0;
 }
-.var-sidebar__header-actions .icon-btn {
+.var-sidebar__header-actions .icon-btn,
+.var-sidebar__dataset-switch {
   width: 22px;
   height: 22px;
   color: var(--color-text-muted);
+  flex-shrink: 0;
 }
-.var-sidebar__header-actions .icon-btn .material-symbols-outlined {
+.var-sidebar__header-actions .icon-btn .material-symbols-outlined,
+.var-sidebar__dataset-switch .material-symbols-outlined {
   font-size: 16px;
   color: var(--color-text-muted);
   transition: color var(--transition-fast);
 }
 .var-sidebar__header-actions .icon-btn:hover .material-symbols-outlined,
-.var-sidebar__header-actions .icon-btn.active .material-symbols-outlined {
+.var-sidebar__header-actions .icon-btn.active .material-symbols-outlined,
+.var-sidebar__dataset-switch:hover .material-symbols-outlined,
+.var-sidebar__dataset-switch.active .material-symbols-outlined {
   color: var(--color-text-primary);
 }
 
@@ -407,8 +412,23 @@ summary.calculation-menu__heading { cursor: pointer; }
 
 .canvas-area {
   flex: 1; position: relative; overflow: hidden;
+  min-width: 0; min-height: 0;
   background-color: var(--color-bg-base);
   display: flex; align-items: center; justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .var-sidebar { width: 200px; }
+  .subheader { gap: 8px; padding-inline: 10px; }
+  .subheader__breadcrumb { min-width: 0; overflow: hidden; white-space: nowrap; }
+  .subheader__breadcrumb-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .subheader__actions { flex-shrink: 0; gap: 4px; }
+}
+
+@media (max-width: 600px) {
+  .var-sidebar { width: 155px; }
+  .canvas-toolbar .tb-btn { width: 26px; height: 28px; flex-shrink: 0; }
+  .canvas-toolbar .tb-divider { margin-inline: 2px; }
 }
 
 #model-svg {
@@ -458,6 +478,13 @@ summary.calculation-menu__heading { cursor: pointer; }
   gap: 2px;
   z-index: 30;
   user-select: none;
+}
+
+@media (max-width: 900px) {
+  .canvas-toolbar { max-width: calc(100% - 16px); box-sizing: border-box; padding: 4px 6px; }
+}
+@media (max-width: 600px) {
+  .canvas-toolbar { gap: 0; }
 }
 
 .tb-btn {

@@ -50,16 +50,101 @@ export function prepareDiagramSvg(source: SVGSVGElement, options: DiagramExportO
   });
   clone.querySelectorAll('#bg-color-rect, #bg-rect, #guides-layer, [data-export-ui], .selection-marquee, .canvas-hidden-indicators-icon-btn, .copula-hover-indicator, .quadratic-hover-indicator').forEach(element => element.remove());
   if (!options.includeIndicators) clone.querySelectorAll('[data-export-indicator="true"], .indicator-badge').forEach(element => element.remove());
-  clone.setAttribute('width', String(options.width));
-  clone.setAttribute('height', String(options.height));
-  clone.setAttribute('viewBox', `0 0 ${options.width} ${options.height}`);
-  clone.style.width = `${options.width}px`;
-  clone.style.height = `${options.height}px`;
+
+  // Determine true diagram bounds without user zoom/pan clipping
+  const zoomLayer = clone.querySelector('#zoom-layer') as SVGGraphicsElement | null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  if (zoomLayer) {
+    // Reset any transform on zoom layer so coordinates are in true canvas space
+    if (typeof zoomLayer.removeAttribute === 'function') {
+      zoomLayer.removeAttribute('transform');
+    } else if (typeof zoomLayer.setAttribute === 'function') {
+      zoomLayer.setAttribute('transform', '');
+    }
+
+    // Attempt getBBox by mounting clone offscreen in the document
+    if (typeof document !== 'undefined' && document.body && typeof document.createElement === 'function') {
+      const tempWrapper = document.createElement('div');
+      tempWrapper.style.position = 'fixed';
+      tempWrapper.style.top = '-99999px';
+      tempWrapper.style.left = '-99999px';
+      tempWrapper.style.visibility = 'hidden';
+      tempWrapper.style.display = 'block';
+      tempWrapper.appendChild(clone);
+      document.body.appendChild(tempWrapper);
+      try {
+        if (typeof zoomLayer.getBBox === 'function') {
+          const rawBox = zoomLayer.getBBox();
+          if (rawBox && rawBox.width > 20 && rawBox.height > 20) {
+            minX = rawBox.x;
+            minY = rawBox.y;
+            maxX = rawBox.x + rawBox.width;
+            maxY = rawBox.y + rawBox.height;
+          }
+        }
+      } catch (e) {
+        // Fall back to coordinate parsing below
+      } finally {
+        if (typeof tempWrapper.remove === 'function') {
+          tempWrapper.remove();
+        } else if (tempWrapper.parentNode) {
+          tempWrapper.parentNode.removeChild(tempWrapper);
+        }
+      }
+    }
+
+    // Fallback: parse transform translate coordinates from nodes and circles if getBBox didn't work
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || maxX <= minX) {
+      clone.querySelectorAll('#nodes-layer > g, #edges-layer > path').forEach(el => {
+        const trans = el.getAttribute('transform');
+        if (trans) {
+          const match = trans.match(/translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)/);
+          if (match) {
+            const x = Number(match[1]);
+            const y = Number(match[2]);
+            if (Number.isFinite(x) && Number.isFinite(y)) {
+              minX = Math.min(minX, x - 70);
+              minY = Math.min(minY, y - 70);
+              maxX = Math.max(maxX, x + 70);
+              maxY = Math.max(maxY, y + 70);
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // If bounds couldn't be determined, use options width/height
+  const pad = 40;
+  let finalX = 0;
+  let finalY = 0;
+  let finalWidth = options.width || 800;
+  let finalHeight = options.height || 500;
+
+  if (Number.isFinite(minX) && Number.isFinite(maxX) && maxX > minX && maxY > minY) {
+    finalX = Math.round(minX - pad);
+    finalY = Math.round(minY - pad);
+    finalWidth = Math.round(maxX - minX + pad * 2);
+    finalHeight = Math.round(maxY - minY + pad * 2);
+  }
+
+  clone.setAttribute('width', String(finalWidth));
+  clone.setAttribute('height', String(finalHeight));
+  clone.setAttribute('viewBox', `${finalX} ${finalY} ${finalWidth} ${finalHeight}`);
+  clone.style.width = `${finalWidth}px`;
+  clone.style.height = `${finalHeight}px`;
   clone.style.background = 'transparent';
+
   if (options.background === 'white') {
     const background = document.createElementNS(SVG_NS, 'rect');
-    background.setAttribute('width', '100%');
-    background.setAttribute('height', '100%');
+    background.setAttribute('x', String(finalX));
+    background.setAttribute('y', String(finalY));
+    background.setAttribute('width', String(finalWidth));
+    background.setAttribute('height', String(finalHeight));
     background.setAttribute('fill', '#ffffff');
     clone.insertBefore(background, clone.querySelector('#zoom-layer'));
   }

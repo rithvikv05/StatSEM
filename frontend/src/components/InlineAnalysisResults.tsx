@@ -10,7 +10,7 @@ const labels: Record<string, string> = {
   quadratic: 'Nonlinear effects', ipma: 'Importance and performance',
   hcm: 'Higher-order constructs', micom: 'Measurement invariance',
   mga: 'Group comparisons', otg: 'Group differences',
-  pca: 'Principal components', fimix: 'Finite mixture segmentation', pos: 'Prediction-oriented segmentation',
+  pca: 'Principal components',
   ex_post: 'Ex post segmentation', power: 'Power and sample size',
   copula: 'Endogeneity diagnostics', nca: 'Necessary conditions',
 };

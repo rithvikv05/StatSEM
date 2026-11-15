@@ -392,6 +392,9 @@ export const useStore = create<AppState>()(
       isLicenseLoading: false,
       machineFingerprint: '',
       loadLicenseStatus: async () => {
+        // Licensing disabled
+        set({ isLicenseActive: true, isLicenseLoading: false });
+        /*
         set({ isLicenseLoading: true });
         try {
           const [status, fp] = await Promise.all([
@@ -411,6 +414,7 @@ export const useStore = create<AppState>()(
           console.error('[store] loadLicenseStatus error:', err);
           set({ isLicenseLoading: false });
         }
+        */
       },
       activateLicenseKey: async (tokenString: string) => {
         set({ isLicenseLoading: true });
@@ -911,7 +915,7 @@ export const useStore = create<AppState>()(
 
         for (const s of sourceStudies) {
           const newStudyId = `study_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-          const fileName = s.path ? s.path.replace(/\\/g, '/').split('/').pop() : `${s.name}.pls`;
+          const fileName = s.path ? s.path.replace(/\\/g, '/').split('/').pop() : `${s.name}.stsm`;
           const newStudyPath = targetPath ? `${targetPath.replace(/[/\\]+$/, '')}/${fileName}` : s.path;
 
           newStudies.push({

@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 //! Native numerical core. The Python oracle is development tooling only.
 pub mod analysis;
 pub mod blindfolding;
@@ -9,7 +10,6 @@ pub mod data_groups;
 pub mod derived;
 pub mod effects;
 pub mod ex_post;
-pub mod fimix;
 pub mod fit;
 pub mod grouping;
 pub mod hcm;
@@ -27,7 +27,6 @@ pub mod otg;
 pub mod pca;
 pub mod pipeline;
 pub mod pls;
-pub mod pos;
 pub mod power;
 pub mod predict;
 pub mod project_store;
@@ -117,28 +116,6 @@ pub enum Request {
         settings: Value,
         #[serde(default)]
         options: otg::Options,
-    },
-    Pos {
-        columns: Vec<String>,
-        rows: Vec<Vec<Value>>,
-        spec: Value,
-        #[serde(default)]
-        settings: Value,
-        #[serde(default)]
-        options: pos::Options,
-    },
-    FimixEm {
-        equations: Vec<fimix::Equation>,
-        options: fimix::EmOptions,
-    },
-    Fimix {
-        columns: Vec<String>,
-        rows: Vec<Vec<Value>>,
-        spec: Value,
-        #[serde(default)]
-        settings: Value,
-        #[serde(default)]
-        options: fimix::Options,
     },
     RngDistributions {
         entropy: Vec<u32>,
@@ -467,41 +444,6 @@ pub fn evaluate(request: Request) -> Result<Value, String> {
             settings,
             options,
             &std::sync::atomic::AtomicBool::new(false),
-        ),
-        Request::Pos {
-            columns,
-            rows,
-            spec,
-            settings,
-            options,
-        } => pos::run(
-            columns,
-            rows,
-            spec,
-            settings,
-            options,
-            &std::sync::atomic::AtomicBool::new(false),
-            &|_| {},
-        ),
-        Request::FimixEm { equations, options } => fimix::em(
-            equations,
-            options,
-            &std::sync::atomic::AtomicBool::new(false),
-        ),
-        Request::Fimix {
-            columns,
-            rows,
-            spec,
-            settings,
-            options,
-        } => fimix::run(
-            columns,
-            rows,
-            spec,
-            settings,
-            options,
-            &std::sync::atomic::AtomicBool::new(false),
-            &|_| {},
         ),
         Request::RngDistributions {
             entropy,

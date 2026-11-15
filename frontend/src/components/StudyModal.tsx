@@ -53,7 +53,7 @@ const StudyModal = ({ isOpen, onClose, workspaceId }: StudyModalProps) => {
   const effectiveName = getNextUniqueStudyName(cleanName, currentWorkspace?.id, studies);
   const isNameCollision = Boolean(cleanName && effectiveName && effectiveName.toLowerCase() !== cleanName.toLowerCase());
 
-  const fileName = effectiveName ? `${effectiveName.replace(/[/\\?%*:|"<>]/g, '_')}.pls` : '';
+  const fileName = effectiveName ? `${effectiveName.replace(/[/\\?%*:|"<>]/g, '_')}.stsm` : '';
   const wsPath = currentWorkspace?.path || '';
   const separator = wsPath.includes('\\') ? '\\' : '/';
   const studyFilePath = fileName && wsPath ? `${wsPath.replace(/[/\\]+$/, '')}${separator}${fileName}` : '';
@@ -114,11 +114,11 @@ const StudyModal = ({ isOpen, onClose, workspaceId }: StudyModalProps) => {
           const selected = await open({
             multiple: false,
             directory: false,
-            title: 'Import Study File (.zip, .pls)',
+            title: 'Import Study File (.zip, .stsm, .pls)',
             filters: [
               {
-                name: 'Study Archive or Project',
-                extensions: ['zip', 'pls', 'splsm'],
+                name: 'StatSEM Study File',
+                extensions: ['stsm', 'zip', 'pls', 'splsm'],
               },
             ],
           });
@@ -131,7 +131,7 @@ const StudyModal = ({ isOpen, onClose, workspaceId }: StudyModalProps) => {
         const fallback = window.prompt(
           targetType === 'folder'
             ? 'Enter study folder directory path:'
-            : 'Enter study file path (.zip, .pls):'
+            : 'Enter study file path (.zip, .stsm, .pls):'
         );
         if (fallback) {
           selectedPath = fallback;
@@ -275,7 +275,7 @@ const StudyModal = ({ isOpen, onClose, workspaceId }: StudyModalProps) => {
                   className="btn btn-secondary"
                   onClick={() => handleImportStudy('file')}
                   disabled={isSubmitting}
-                  title="Import a study archive (.zip) or project file (.pls)"
+                  title="Import a study archive (.zip) or project file (.stsm, .pls)"
                   style={{
                     padding: '6px 10px',
                     fontSize: '12px',
@@ -291,7 +291,7 @@ const StudyModal = ({ isOpen, onClose, workspaceId }: StudyModalProps) => {
                   }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>draft</span>
-                  <span>From File (.zip, .pls)</span>
+                  <span>From File (.zip, .stsm, .pls)</span>
                 </button>
                 <button
                   type="button"

@@ -16,7 +16,11 @@ import {
   LayoutGrid,
   RotateCcw,
   GitCompare,
+  FileDown,
 } from 'lucide-react';
+import { TableActionToolbar } from '../components/TableActionToolbar';
+import { ReportExportModal } from '../components/ReportExportModal';
+import { copyAllTablesFromContainer } from '../utils/tableExport';
 import { getCanvasGridColors } from '../utils/model-canvas';
 import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { ResultsNavigation } from '../components/ResultsNavigation';
@@ -171,6 +175,8 @@ export const SnapshotView: React.FC = () => {
   const [newModelName, setNewModelName] = useState('');
   const [isCreatingModel, setIsCreatingModel] = useState(false);
   const [copyToast, setCopyToast] = useState<string | null>(null);
+  const [isReportExportModalOpen, setIsReportExportModalOpen] = useState(false);
+  const [copiedPageTable, setCopiedPageTable] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -860,21 +866,20 @@ export const SnapshotView: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleCopyTable = () => {
-    const table = document.querySelector('.scientific-table');
-    if (!table) return;
-    let tsv = '';
-    const rows = table.querySelectorAll('tr');
-    rows.forEach(r => {
-      const cells = r.querySelectorAll('th, td');
-      const rowVals: string[] = [];
-      cells.forEach(c => rowVals.push(c.textContent?.trim() || ''));
-      tsv += rowVals.join('\t') + '\n';
-    });
-    navigator.clipboard.writeText(tsv).then(() => {
-      setCopyToast('Table copied to clipboard');
+  const handleCopyTable = async () => {
+    const container = document.querySelector('.table-container, .scientific-table-wrap') as HTMLElement | null;
+    const res = await copyAllTablesFromContainer(container, reportTabDetails.title);
+    if (res.success) {
+      setCopiedPageTable(true);
+      setCopyToast(res.tableCount > 1 ? `Copied ${res.tableCount} tables to clipboard` : 'Table copied to clipboard');
+      setTimeout(() => {
+        setCopiedPageTable(false);
+        setCopyToast(null);
+      }, 2500);
+    } else {
+      setCopyToast('No table found to copy');
       setTimeout(() => setCopyToast(null), 2500);
-    });
+    }
   };
 
   const handleExportCSV = () => {
@@ -1043,12 +1048,31 @@ export const SnapshotView: React.FC = () => {
                     <GitCompare size={13} />
                     <span>Compare</span>
                   </button>
+                  <button
+                    className="results-tool-btn"
+                    type="button"
+                    onClick={() => setIsReportExportModalOpen(true)}
+                    title="Export comprehensive report (PDF / DOCX)"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      backgroundColor: 'var(--color-accent-subtle, #eef2ff)',
+                      color: 'var(--color-accent, #6366f1)',
+                      fontWeight: 600,
+                      border: '1px solid var(--color-accent, #6366f1)',
+                    }}
+                  >
+                    <FileDown size={13} />
+                    <span>Export Report</span>
+                  </button>
                   <select
                     className="results-tool-btn results-export-select"
                     aria-label="Export snapshot results"
                     value=""
                     onChange={(event) => {
                       switch (event.target.value) {
+                        case 'report': setIsReportExportModalOpen(true); break;
                         case 'csv': handleExportCSV(); break;
                         case 'json': handleExportJSON(); break;
                         case 'print': window.print(); break;
@@ -1056,6 +1080,7 @@ export const SnapshotView: React.FC = () => {
                     }}
                   >
                     <option value="" disabled>Export</option>
+                    <option value="report">Comprehensive Report (PDF / DOCX)</option>
                     <option value="csv">Current table as CSV</option>
                     <option value="json">Snapshot as JSON</option>
                     <option value="print">Print / save as PDF</option>
@@ -1081,11 +1106,28 @@ export const SnapshotView: React.FC = () => {
                         type="button"
                         onClick={handleCopyTable}
                         title="Copy table to clipboard"
+                        style={copiedPageTable ? { color: 'var(--color-success, #10b981)', borderColor: 'var(--color-success, #10b981)' } : undefined}
                       >
                         <Copy size={13} />
-                        <span>Copy Table</span>
+                        <span>{copiedPageTable ? 'Copied!' : 'Copy Table'}</span>
                       </button>
-
+                      <button
+                        className="results-tool-btn"
+                        type="button"
+                        onClick={() => setIsReportExportModalOpen(true)}
+                        title="Export comprehensive report (PDF / DOCX)"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          backgroundColor: 'var(--color-accent-subtle, #eef2ff)',
+                          color: 'var(--color-accent, #6366f1)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <FileDown size={13} />
+                        <span>Export Report</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1093,6 +1135,13 @@ export const SnapshotView: React.FC = () => {
                 {/* Table Container */}
                 <div className="table-container">
                   <div className="scientific-table-wrap">
+                    {results && activeResultTab !== 'hypotheses' && (
+                      <TableActionToolbar
+                        title={reportTabDetails.title}
+                        subtitle={reportTabDetails.badge}
+                        filename={`${snapshot?.name || 'Snapshot'}_${activeResultTab}`}
+                      />
+                    )}
                     {activeResultTab === 'specific_indirect_effects' ? (
                       <SpecificIndirectResults results={results} />
                     ) : activeResultTab === 'run_details' ? (
@@ -3399,6 +3448,27 @@ export const SnapshotView: React.FC = () => {
           projectPath={activeStudy?.path || ''}
           initialSnapshotId={activeTab?.snapshotId || snapshot?.id}
           studyName={activeStudy?.name}
+        />
+
+        {/* ═══ Comprehensive Report Export Modal ═══ */}
+        <ReportExportModal
+          isOpen={isReportExportModalOpen}
+          onClose={() => setIsReportExportModalOpen(false)}
+          config={{
+            modelName: snapshot?.name || activeTab?.title || 'Model Snapshot',
+            studyName: activeStudy?.name,
+            datasetName: snapshot?.dataset_name,
+            plsResults: results,
+            modelSpec: snapshot?.model_state || snapshot?.model,
+            getConstructName,
+            getIndicatorName,
+            svgElement: svgRef.current,
+            formatNumber: fmt,
+          }}
+          onSuccessToast={(msg) => {
+            setCopyToast(msg);
+            setTimeout(() => setCopyToast(null), 3000);
+          }}
         />
 
       </div>

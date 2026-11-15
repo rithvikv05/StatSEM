@@ -1,5 +1,5 @@
 mod backend_runner;
-mod license;
+// mod license;
 #[cfg(target_os = "macos")]
 mod macos_titlebar;
 
@@ -56,12 +56,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_runner::backend_url,
             desktop_platform,
-            license::get_license_status,
-            license::activate_license,
-            license::deactivate_license,
-            license::get_machine_fingerprint,
-            license::export_license_token,
-            license::dev_mint_token,
+            // license::get_license_status,
+            // license::activate_license,
+            // license::deactivate_license,
+            // license::get_machine_fingerprint,
+            // license::export_license_token,
+            // license::dev_mint_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

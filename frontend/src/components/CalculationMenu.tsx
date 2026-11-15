@@ -19,8 +19,6 @@ const groups = [
     ['mga_consistent', 'Consistent multigroup analysis'],
     ['permutation', 'Permutation (Data groups)...'],
     ['mga_groups', 'Multigroup analysis (Data groups)...'],
-    ['fimix', 'Finite mixture segmentation (FIMIX)'],
-    ['pos', 'Prediction-oriented segmentation (POS)'],
   ] },
 ];
 

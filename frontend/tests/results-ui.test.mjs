@@ -102,8 +102,8 @@ test('result and calculation search matches labels and identifiers without case 
 test('calculation menu contains only the requested supported analyses', () => {
   const html = render(components.CalculationMenu, { onSelect() {} });
   assert.doesNotMatch(html, /<details|Search calculations|disabled/);
-  for (const label of ['PLS-SEM', 'Bootstrap inference', 'Consistent PLS-SEM', 'Prediction and CVPAT', 'IPMA', 'tetrad', 'Multigroup', 'FIMIX', 'segmentation']) assert.ok(html.includes(label), label);
-  assert.doesNotMatch(html, /Blindfolding|Mediation|Measurement invariance|Omnibus|endogeneity|Sample size|redundancy|Model fit/);
+  for (const label of ['PLS-SEM', 'Bootstrap inference', 'Consistent PLS-SEM', 'Prediction and CVPAT', 'IPMA', 'tetrad', 'Multigroup']) assert.ok(html.includes(label), label);
+  assert.doesNotMatch(html, /FIMIX|POS|segmentation|Blindfolding|Mediation|Measurement invariance|Omnibus|endogeneity|Sample size|redundancy|Model fit/i);
 });
 
 test('model fit reads the native backend’s nested saturated and estimated values', () => {

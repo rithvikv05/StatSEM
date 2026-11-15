@@ -20,6 +20,7 @@ const nativeFetch = window.fetch.bind(window);
 
 async function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers || {});
+  /*
   try {
     const token = await getCachedTokenString();
     if (token && !headers.has('X-License-Token')) {
@@ -28,6 +29,7 @@ async function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   } catch {
     // Ignore in case Tauri invoke fails or in browser environment
   }
+  */
   return nativeFetch(input, { ...init, headers });
 }
 
@@ -1175,114 +1177,6 @@ export const api = {
       return await res.json();
     } catch (err: any) {
       return { error: err?.message || 'Failed to run MGA' };
-    }
-  },
-
-  async analyzeFimix(data: {
-    projectPath: string;
-    modelId?: string;
-    minSegments?: number;
-    maxSegments?: number;
-    maxIter?: number;
-    tolerance?: number;
-    repetitions?: number;
-    datasetId?: string;
-    seed?: number;
-    settings?: {
-      inner_weighting: string;
-      max_iter: number;
-      tolerance: number;
-      missing_treatment?: string;
-      initial_weights?: string;
-      individual_initial_weights?: Record<string, number> | null;
-      data_filter?: { column: string; value: unknown } | null;
-      ipma_predecessors?: string;
-    };
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/fimix`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          min_segments: data.minSegments || 1,
-          max_segments: data.maxSegments ?? 4,
-          max_iter: data.maxIter,
-          tol: data.tolerance,
-          n_repetitions: data.repetitions,
-          dataset_id: data.datasetId,
-          seed: data.seed ?? 42,
-          settings: data.settings,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run FIMIX-PLS' };
-    }
-  },
-
-  async analyzePos(data: {
-    projectPath: string;
-    modelId?: string;
-    nSegments?: number;
-    maxIter?: number;
-    searchDepth?: number;
-    initialSeparation?: 'random' | 'fimix';
-    criterion?: 'weighted_r2' | 'sum_r2' | 'target_r2';
-    targetConstruct?: string;
-    preSegmentation?: boolean;
-    fimixOptions?: { max_iter: number; tol: number; n_repetitions: number };
-    minSegmentSize?: number;
-    datasetId?: string;
-    seed?: number;
-    settings?: {
-      inner_weighting: string;
-      max_iter: number;
-      tolerance: number;
-      missing_treatment?: string;
-      initial_weights?: string;
-      individual_initial_weights?: Record<string, number> | null;
-      data_filter?: { column: string; value: unknown } | null;
-      ipma_predecessors?: string;
-    };
-    spec?: any;
-    columns?: string[];
-    rows?: any[][];
-  }): Promise<any> {
-    try {
-      const res = await fetch(`${API_BASE}/analysis/pos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_path: data.projectPath,
-          model_id: data.modelId || 'default',
-          n_segments: data.nSegments || 2,
-          max_iter: data.maxIter ?? 50,
-          search_depth: data.searchDepth,
-          initial_separation: data.initialSeparation,
-          criterion: data.criterion,
-          target_construct: data.targetConstruct,
-          pre_segmentation: data.preSegmentation,
-          fimix_options: data.fimixOptions,
-          min_segment_size: data.minSegmentSize || 15,
-          dataset_id: data.datasetId,
-          seed: data.seed ?? 42,
-          settings: data.settings,
-          spec: data.spec,
-          columns: data.columns,
-          rows: data.rows,
-        }),
-      });
-      return await res.json();
-    } catch (err: any) {
-      return { error: err?.message || 'Failed to run PLS-POS' };
     }
   },
 

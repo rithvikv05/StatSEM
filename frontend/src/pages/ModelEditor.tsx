@@ -17,6 +17,9 @@ import { InlineAnalysisResults } from '../components/InlineAnalysisResults';
 import RedundancyWizardModal from '../components/RedundancyWizardModal';
 import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { DiagramExportModal } from '../components/DiagramExportModal';
+import { TableActionToolbar } from '../components/TableActionToolbar';
+import { ReportExportModal } from '../components/ReportExportModal';
+import { copyAllTablesFromContainer } from '../utils/tableExport';
 import { PermutationDialog } from '../mga/PermutationDialog';
 import { MgaDialog } from '../mga/MgaDialog';
 import type { ParsedDataset } from '../utils/dataset-parser';
@@ -26,7 +29,7 @@ import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/num
 
 import {
   Upload, Trash2, RotateCcw, AlertTriangle, History, Check,
-  GitCompare, Copy, Download
+  GitCompare, Copy, Download, FileDown
 } from 'lucide-react';
 import AppSidebar from '../components/AppSidebar';
 import '../model-canvas.css';
@@ -522,6 +525,8 @@ const ModelEditor = () => {
   const [snapshotTargetStudyId, setSnapshotTargetStudyId] = useState<string>('');
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isReportExportModalOpen, setIsReportExportModalOpen] = useState(false);
+  const [copiedPageTable, setCopiedPageTable] = useState(false);
 
   useEffect(() => {
     (window as any).openExportDiagramModal = () => setIsExportModalOpen(true);
@@ -1776,19 +1781,22 @@ const ModelEditor = () => {
     }
   }, [activeResultTab]);
 
-  const handleCopyCurrentTable = () => {
-    const tableEl = document.querySelector('.scientific-table');
-    if (!tableEl) return;
-    let tsv = '';
-    const rows = tableEl.querySelectorAll('tr');
-    rows.forEach(r => {
-      const cells = r.querySelectorAll('th, td');
-      const line = Array.from(cells).map(c => c.textContent?.trim().replace(/\s+/g, ' ') || '').join('\t');
-      tsv += line + '\n';
-    });
-    navigator.clipboard.writeText(tsv);
-    setValidationSuccessToast('Table copied to clipboard (TSV format)');
-    setTimeout(() => setValidationSuccessToast(null), 2500);
+  const handleCopyCurrentTable = async () => {
+    const tableContainer = document.querySelector('.table-container') as HTMLElement | null;
+    const res = await copyAllTablesFromContainer(tableContainer, reportTabDetails.title);
+    if (res.success) {
+      setCopiedPageTable(true);
+      setTimeout(() => setCopiedPageTable(false), 2200);
+      setValidationSuccessToast(
+        res.tableCount > 1
+          ? `Copied all ${res.tableCount} tables on this page to clipboard (${res.rowCount} rows)`
+          : `Table copied to clipboard (${res.rowCount} rows)`
+      );
+      setTimeout(() => setValidationSuccessToast(null), 2500);
+    } else {
+      setValidationSuccessToast('No table found on this page to copy.');
+      setTimeout(() => setValidationSuccessToast(null), 2500);
+    }
   };
 
   const handleExportCurrentTable = () => {
@@ -2078,7 +2086,7 @@ const ModelEditor = () => {
       </span>
       <span className="subheader__breadcrumb-sep">/</span>
       <span className="subheader__breadcrumb-link" style={{color: 'var(--color-accent)', fontWeight: 600}}>
-        {activeModel ? `${activeModel.name}.splsm` : 'Untitled model.splsm'}
+        {activeModel ? `${activeModel.name}.stsm` : 'Untitled model.stsm'}
       </span>
 
       <div className="subheader__divider" style={{ margin: '0 8px' }} />
@@ -3497,6 +3505,15 @@ const ModelEditor = () => {
           <button
             className="results-tool-btn results-tool-btn--accent"
             type="button"
+            onClick={() => setIsReportExportModalOpen(true)}
+            title="Export full comprehensive report (PDF / Word) with all tables and model diagram"
+          >
+            <FileDown size={13} />
+            <span>Export Report</span>
+          </button>
+          <button
+            className="results-tool-btn"
+            type="button"
             onClick={handleOpenSnapshotModal}
             title="Save results and model diagram as a snapshot in this study"
           >
@@ -3525,13 +3542,27 @@ const ModelEditor = () => {
               <span className="material-symbols-outlined" style={{ fontSize: 14, marginLeft: -2 }}>expand_more</span>
             </button>
             {isExportMenuOpen && (
-              <div className="subheader__dropdown-menu" role="menu" style={{ left: 0, right: 'auto', minWidth: 190 }}>
+              <div className="subheader__dropdown-menu" role="menu" style={{ left: 0, right: 'auto', minWidth: 220 }}>
+                <button
+                  type="button"
+                  className="subheader__dropdown-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsExportMenuOpen(false);
+                    setIsReportExportModalOpen(true);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <FileDown size={14} color="var(--color-accent, #2563eb)" />
+                  <strong>Comprehensive Report (PDF / DOCX)</strong>
+                </button>
+                <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '4px 0' }} />
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportCurrentTable(); }}>Current table as CSV</button>
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); void handleExportExcel(); }}>Current table as Excel</button>
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportHtml(); }}>Current table as HTML</button>
                 <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleCreateDataFile(); }}>Construct scores as CSV</button>
-                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleCreateReport(); }}>Print / save as PDF</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); setIsReportExportModalOpen(true); }}>Print / save as PDF</button>
               </div>
             )}
           </div>
@@ -3625,12 +3656,25 @@ const ModelEditor = () => {
                 className="results-tool-btn"
                 type="button"
                 onClick={handleCopyCurrentTable}
-                title="Copy table to clipboard"
+                title="Copy all tables on this page to clipboard"
+                style={{
+                  backgroundColor: copiedPageTable ? 'rgba(34, 197, 94, 0.12)' : undefined,
+                  color: copiedPageTable ? '#16a34a' : undefined,
+                  borderColor: copiedPageTable ? '#16a34a' : undefined,
+                }}
               >
-                <Copy size={13} />
-                <span>Copy Table</span>
+                {copiedPageTable ? <Check size={13} strokeWidth={2.5} /> : <Copy size={13} />}
+                <span>{copiedPageTable ? 'Copied!' : 'Copy Table'}</span>
               </button>
-
+              <button
+                className="results-tool-btn results-tool-btn--accent"
+                type="button"
+                onClick={() => setIsReportExportModalOpen(true)}
+                title="Export comprehensive report (PDF / Word) with all tables and model diagram"
+              >
+                <FileDown size={13} />
+                <span>Export Report</span>
+              </button>
             </div>
           </div>
         </div>
@@ -3638,6 +3682,13 @@ const ModelEditor = () => {
         {/* Dynamic Table Area */}
         <div className="table-container">
           <div className="scientific-table-wrap">
+            {plsResults && !['discriminant', 'collinearity', 'hypotheses'].includes(activeResultTab) && (
+              <TableActionToolbar
+                title={reportTabDetails.title}
+                subtitle={reportTabDetails.badge}
+                filename={`${activeModel?.name || 'Model'}_${activeResultTab}`}
+              />
+            )}
             {activeResultTab === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
               <>
                 {analysisLoading.mediation && <p className="results-empty-note">Loading mediation results...</p>}
@@ -4240,11 +4291,12 @@ const ModelEditor = () => {
               </table>
             ) : activeResultTab === 'discriminant' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-                <div>
-                  <h4 style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>
-                    Heterotrait-Monotrait Ratio (HTMT)
-                    <span style={{ marginLeft: '8px', fontSize: '11px', fontWeight: 400, color: '#64748b' }}>(Threshold &lt; 0.85 / 0.90)</span>
-                  </h4>
+                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
+                  <TableActionToolbar
+                    title="Heterotrait-Monotrait Ratio (HTMT)"
+                    subtitle="(Threshold < 0.85 / 0.90)"
+                    filename={`${activeModel?.name || 'Model'}_htmt`}
+                  />
                   {getTableMode('htmt') === 'matrix' ? (
                     <table className="scientific-table">
                       <thead>
@@ -4349,11 +4401,12 @@ const ModelEditor = () => {
                   )}
                 </div>
 
-                <div>
-                  <h4 style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>
-                    Fornell-Larcker Criterion
-                    <span style={{ marginLeft: '8px', fontSize: '11px', fontWeight: 400, color: '#64748b' }}>(Diagonal: √AVE, Off-diagonal: construct correlations)</span>
-                  </h4>
+                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
+                  <TableActionToolbar
+                    title="Fornell-Larcker Criterion"
+                    subtitle="(Diagonal: √AVE, Off-diagonal: construct correlations)"
+                    filename={`${activeModel?.name || 'Model'}_fornell_larcker`}
+                  />
                   <table className="scientific-table">
                     <thead>
                       <tr>
@@ -4390,8 +4443,12 @@ const ModelEditor = () => {
               </div>
             ) : activeResultTab === 'collinearity' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-                <div>
-                  <h4 style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>Inner Model VIF (Predictors of Endogenous Constructs)</h4>
+                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
+                  <TableActionToolbar
+                    title="Inner Model VIF (Predictors of Endogenous Constructs)"
+                    subtitle="Threshold < 3.3 / 5.0"
+                    filename={`${activeModel?.name || 'Model'}_inner_vif`}
+                  />
                   <table className="scientific-table">
                     <thead>
                       <tr>
@@ -4431,8 +4488,12 @@ const ModelEditor = () => {
                   </table>
                 </div>
 
-                <div>
-                  <h4 style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>Outer Model VIF (Indicators)</h4>
+                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
+                  <TableActionToolbar
+                    title="Outer Model VIF (Indicators)"
+                    subtitle="Threshold < 3.3 / 5.0"
+                    filename={`${activeModel?.name || 'Model'}_outer_vif`}
+                  />
                   <table className="scientific-table">
                     <thead>
                       <tr>
@@ -4908,6 +4969,27 @@ const ModelEditor = () => {
     onClose={() => setIsExportModalOpen(false)}
     svgElement={typeof document !== 'undefined' ? (document.getElementById('model-svg') as unknown as SVGSVGElement) : null}
     modelName={activeModel?.name || 'model_diagram'}
+  />
+
+  <ReportExportModal
+    isOpen={isReportExportModalOpen}
+    onClose={() => setIsReportExportModalOpen(false)}
+    config={{
+      modelName: activeModel?.name || 'Model',
+      studyName: activeStudy?.name || 'Study',
+      datasetName: activeDataset?.filename || 'Dataset',
+      plsResults,
+      modelSpec: exportModelSpec(),
+      analysisResultsMap,
+      getConstructName,
+      getIndicatorName,
+      svgElement: typeof document !== 'undefined' ? (document.getElementById('model-svg') as unknown as SVGSVGElement) : null,
+      formatNumber: fmt,
+    }}
+    onSuccessToast={(msg) => {
+      setValidationSuccessToast(msg);
+      setTimeout(() => setValidationSuccessToast(null), 3000);
+    }}
   />
 
   {/* ─── Validation Error Modal ─── */}

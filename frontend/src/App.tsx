@@ -61,7 +61,7 @@ function App() {
 
     // Check on startup
     syncWorkspaces();
-    useStore.getState().loadLicenseStatus();
+    // useStore.getState().loadLicenseStatus();
 
     // Check when window regains focus (user deleted folder in Finder/Terminal and clicked back to app)
     const handleFocus = () => {

@@ -13,7 +13,7 @@ pub fn run(
 }
 
 /// Internal analyses that need only scores/coefficients can omit the fit SVDs.
-pub(crate) fn run_without_fit(
+pub fn run_without_fit(
     columns: Vec<String>,
     rows: Vec<Vec<Value>>,
     spec: Value,
@@ -238,6 +238,9 @@ fn run_inner(
     }
     result["algorithm"] = json!("pls");
     result["construct_names"] = Value::Object(names);
+    result["retained_rows"] = json!(retained);
+    result["indicator_columns"] = json!(required);
+    result["indicator_data_original"] = json!(prepared);
     // Output names use the resolved indicator-column mapping, like Python.
     result["indicator_names"] = Value::Object(
         parsed

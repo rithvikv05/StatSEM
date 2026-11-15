@@ -288,7 +288,7 @@ fn route(
                 .filter(|s| !s.trim().is_empty())
                 .ok_or("project_name is required")?;
             let mut ws = workspace(&folder)?;
-            let filename = format!("{}.pls", safe_name(&name));
+            let filename = format!("{}.stsm", safe_name(&name));
             let path = folder.join(&filename);
             Store::new(&path).create(&name)?;
             let canonical_project_path = canonicalize_or_normalize(&path);
@@ -992,8 +992,6 @@ fn analysis(path: &str, body: &Value, query: &HashMap<String, String>) -> Result
         "/analysis/nca" => "nca",
         "/analysis/predict" => "predict",
         "/analysis/blindfolding" => "blindfolding",
-        "/analysis/fimix" => "fimix",
-        "/analysis/pos" => "pos",
         "/analysis/otg" => "otg",
         "/analysis/mga" => "mga",
         "/analysis/micom" => "micom",
@@ -1024,7 +1022,7 @@ fn analysis(path: &str, body: &Value, query: &HashMap<String, String>) -> Result
     let mut results = crate::evaluate(request)?;
     if results.is_object() {
         let mut run_settings = serde_json::Map::new();
-        for key in ["seed", "n_boot", "n_permutations", "alpha", "n_segments", "min_segments", "max_segments", "max_iter", "tol", "n_repetitions", "search_depth", "initial_separation", "criterion", "target_construct", "pre_segmentation", "fimix_options", "k_folds", "repetitions", "cvpat_resamples", "antecedents"] {
+        for key in ["seed", "n_boot", "n_permutations", "alpha", "k_folds", "repetitions", "cvpat_resamples", "antecedents", "use_unstandardized_scores", "estimate_intercept", "min_sample_size"] {
             if let Some(value) = body.get(key).filter(|v| !v.is_null()) { run_settings.insert(key.into(), value.clone()); }
         }
         if let Some(settings) = body.get("settings").filter(|v| v.is_object()) { run_settings.insert("model".into(), settings.clone()); }
@@ -1178,7 +1176,7 @@ mod tests {
         let added = route("POST", "/workspace/add-project", &add_query, json!({})).unwrap();
         assert_eq!(
             added["project_path"].as_str().unwrap(),
-            canon_ws.join("StudyOne.pls").to_string_lossy().as_ref()
+            canon_ws.join("StudyOne.stsm").to_string_lossy().as_ref()
         );
         fs::remove_dir_all(base).unwrap();
     }

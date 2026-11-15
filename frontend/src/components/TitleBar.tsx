@@ -64,9 +64,10 @@ export const TitleBar: React.FC = () => {
           <span className="material-symbols-outlined">settings</span>
         </button>
 
+        {/* ─── License Status Indicator (Green/Red) & Hover Details (DISABLED) ─── */}
+        {false && (
+        <>
         <span className="v-divider" />
-
-        {/* ─── License Status Indicator (Green/Red) & Hover Details ─── */}
         <div 
           className="license-indicator-wrapper" 
           style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
@@ -85,7 +86,7 @@ export const TitleBar: React.FC = () => {
               alignItems: 'center',
               justifyContent: 'center',
             }}
-            title={isLicenseActive ? `License Active: ${licenseStatus ? getTierLabel(licenseStatus.tier) : LICENSE_INFO.type}` : 'License Inactive'}
+            title={isLicenseActive ? `License Active: ${licenseStatus ? getTierLabel((licenseStatus as any).tier) : LICENSE_INFO.type}` : 'License Inactive'}
             onClick={() => {
               openSettings('about');
               setIsLicenseHovered(false);
@@ -126,7 +127,7 @@ export const TitleBar: React.FC = () => {
                   {isLicenseActive ? 'Active' : 'Inactive'}
                 </span>
                 <span className="license-popup-card__type">
-                  {licenseStatus ? getTierLabel(licenseStatus.tier) : LICENSE_INFO.type}
+                  {licenseStatus ? getTierLabel((licenseStatus as any).tier) : LICENSE_INFO.type}
                 </span>
               </div>
 
@@ -139,8 +140,8 @@ export const TitleBar: React.FC = () => {
                   <span className="license-popup-card__key-label">Expiry</span>
                   <span className="license-popup-card__key-value">
                     {isLicenseActive
-                      ? (licenseStatus?.expires_at
-                          ? `${licenseStatus.days_remaining} days (${new Date(licenseStatus.expires_at).toLocaleDateString()})`
+                      ? ((licenseStatus as any)?.expires_at
+                          ? `${(licenseStatus as any).days_remaining} days (${new Date((licenseStatus as any).expires_at).toLocaleDateString()})`
                           : `${LICENSE_INFO.daysRemaining} days (${LICENSE_INFO.expiryDate})`)
                       : 'Inactive'}
                   </span>
@@ -187,6 +188,8 @@ export const TitleBar: React.FC = () => {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </header>
   );

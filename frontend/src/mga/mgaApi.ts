@@ -15,6 +15,7 @@ async function mgaFetch(path: string, init?: RequestInit): Promise<any> {
   if (!headers.has('Content-Type') && init?.method === 'POST') {
     headers.set('Content-Type', 'application/json');
   }
+  /*
   try {
     const token = await getCachedTokenString();
     if (token && !headers.has('X-License-Token')) {
@@ -23,6 +24,7 @@ async function mgaFetch(path: string, init?: RequestInit): Promise<any> {
   } catch {
     // ignore in browser dev mode
   }
+  */
   const res = await window.fetch(`${backendUrl()}${path}`, { ...init, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok && !data.error) {

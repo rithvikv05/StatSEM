@@ -18,6 +18,10 @@
     "@tauri-apps/plugin-fs": "^2.5.2",
     "autoprefixer": "^10.6.0",
     "buffer": "^6.0.3",
+    "docx": "^9.15.3",
+    "exceljs": "^4.4.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
     "lucide-react": "^1.45.0",
     "papaparse": "^5.7.0",
     "postcss": "^8.5.28",
@@ -26,7 +30,6 @@
     "react-router-dom": "^7.18.3",
     "sav-reader": "^2.0.8",
     "tailwindcss": "^4.3.3",
-    "exceljs": "^4.4.0",
     "zustand": "^5.0.15"
   },
   "overrides": {

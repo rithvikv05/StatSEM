@@ -34,6 +34,14 @@
     "externalBin": [
       "binaries/statsem-backend"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["stsm"],
+        "name": "StatSEM Study",
+        "description": "StatSEM Study File",
+        "role": "Editor"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

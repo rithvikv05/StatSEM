@@ -211,7 +211,8 @@ export const SettingsModal: React.FC = () => {
                 )}
               </div>
 
-              {/* ─── LICENSE DETAILS ─── */}
+              {/* ─── LICENSE DETAILS (COMMENTED OUT) ─── */}
+              {false && (
               <div className="settings-section" id="settings-license-section">
                 <div className="settings-section__header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>License Details</span>
@@ -235,7 +236,7 @@ export const SettingsModal: React.FC = () => {
                 <div className="settings-row">
                   <div className="settings-row__label">License Type</div>
                   <span className="settings-badge" style={{ fontWeight: 600 }}>
-                    {licenseStatus ? getTierLabel(licenseStatus.tier) : LICENSE_INFO.type}
+                    {licenseStatus ? getTierLabel((licenseStatus as any).tier) : LICENSE_INFO.type}
                   </span>
                 </div>
 
@@ -257,8 +258,8 @@ export const SettingsModal: React.FC = () => {
                   <div className="settings-row__label">Expiry Date</div>
                   <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-primary)' }}>
                     {isLicenseActive
-                      ? (licenseStatus?.expires_at
-                          ? `${licenseStatus.days_remaining} days remaining (${new Date(licenseStatus.expires_at).toLocaleDateString()})`
+                      ? ((licenseStatus as any)?.expires_at
+                          ? `${(licenseStatus as any).days_remaining} days remaining (${new Date((licenseStatus as any).expires_at).toLocaleDateString()})`
                           : `${LICENSE_INFO.daysRemaining} days remaining (${LICENSE_INFO.expiryDate})`)
                       : 'Inactive'}
                   </div>
@@ -569,6 +570,7 @@ export const SettingsModal: React.FC = () => {
                   )}
                 </div>
               </div>
+              )}
 
               <div className="settings-section">
                 <div className="settings-section__header">Links</div>

@@ -142,6 +142,9 @@ fn copy_dir_without_journals(src: &Path, dst: &Path) -> Result<(), String> {
         if name_str.ends_with(".pls-journal")
             || name_str.ends_with(".pls-wal")
             || name_str.ends_with(".pls-shm")
+            || name_str.ends_with(".stsm-journal")
+            || name_str.ends_with(".stsm-wal")
+            || name_str.ends_with(".stsm-shm")
         {
             continue;
         }

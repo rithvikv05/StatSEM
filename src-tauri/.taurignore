@@ -6,4 +6,8 @@ Workspaces/
 *.pls-journal
 *.pls-wal
 *.pls-shm
+*.stsm
+*.stsm-journal
+*.stsm-wal
+*.stsm-shm
 

@@ -4,7 +4,6 @@ import { useStore, getStudyDatasets, type Study } from '../store';
 import WorkspaceModal from '../components/WorkspaceModal';
 import StudyModal from '../components/StudyModal';
 import StudyWorkspaceDropdown from '../components/StudyWorkspaceDropdown';
-import { ModelComparisonModal } from '../components/ModelComparisonModal';
 import InputDialog from '../components/InputDialog';
 import { parseDatasetFile } from '../utils/dataset-parser';
 import type { ParsedDataset } from '../utils/dataset-parser';
@@ -51,12 +50,15 @@ const Dashboard = () => {
     if (!activeWorkspaceId) return;
     const wsStudies = studies.filter(s => s.workspaceId === activeWorkspaceId);
     wsStudies.forEach(study => {
-      if (study.path && !snapshotsByStudy[study.path] && !snapshotsInFlight.current.has(study.path)) {
+      if (study.path && !snapshotsInFlight.current.has(study.path)) {
         const path = study.path;
         snapshotsInFlight.current.add(path);
         api.listSnapshots(path).then(snaps => {
           if (Array.isArray(snaps)) {
             setStudySnapshots(path, snaps);
+            if (study.id) {
+              setStudySnapshots(study.id, snaps);
+            }
           }
         }).catch(() => {}).finally(() => snapshotsInFlight.current.delete(path));
       }
@@ -70,7 +72,7 @@ const Dashboard = () => {
         }).catch(() => {}).finally(() => mgaReportsInFlight.current.delete(path));
       }
     });
-  }, [activeWorkspaceId, studies, snapshotsByStudy, setStudySnapshots, mgaReportsByStudy, setStudyMgaReports]);
+  }, [activeWorkspaceId, studies, setStudySnapshots, mgaReportsByStudy, setStudyMgaReports]);
 
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
   const [isWorkspaceSearchOpen, setIsWorkspaceSearchOpen] = useState(false);
@@ -80,7 +82,6 @@ const Dashboard = () => {
   const [expandedStudies, setExpandedStudies] = useState<Set<string>>(new Set());
   
   const [isStudyModalOpen, setIsStudyModalOpen] = useState(false);
-  const [comparisonStudy, setComparisonStudy] = useState<any | null>(null);
   const [workspaceDropdownConfig, setWorkspaceDropdownConfig] = useState<{
     isOpen: boolean;
     mode: 'move' | 'copy';
@@ -487,7 +488,7 @@ const Dashboard = () => {
         <AppSidebar activeNav="workspace" />
 
         <main className="ws-main">
-          <div className="ws-inner">
+          <div className="ws-inner ws-inner--workspace">
             
             <div className="ws-header animate-fade-in">
               <div className="ws-header__left">
@@ -716,8 +717,7 @@ const Dashboard = () => {
                   const studyModels = models.filter(m => m.studyId === study.id);
                   const studyDatasets = getStudyDatasets(datasetsByStudy, study.id);
                   const studySnapshots = (study.path ? snapshotsByStudy[study.path] : null) || snapshotsByStudy[study.id] || [];
-                  const studyMgaReports = (study.path ? mgaReportsByStudy[study.path] : null) || mgaReportsByStudy[study.id] || [];
-                  const totalItems = studyModels.length + studyDatasets.length + studySnapshots.length + studyMgaReports.length;
+                  const totalItems = studyModels.length + studyDatasets.length + studySnapshots.length;
                   const isEmpty = totalItems === 0;
                   const isExpanded = expandedStudies.has(study.id);
                   
@@ -774,12 +774,6 @@ const Dashboard = () => {
                                   icon: 'add',
                                   action: () => { setModelModalStudyId(study.id); setModelName(''); setModelType('PLS-SEM'); setModelModalOpen(true); },
                                 },
-                                ...(studySnapshots.length >= 2 ? [{
-                                  id: 'compare-models',
-                                  label: 'Compare Models…',
-                                  icon: 'compare_arrows',
-                                  action: () => setComparisonStudy(study),
-                                }] : []),
                                 {
                                   id: 'new-study',
                                   label: 'New Study',
@@ -912,9 +906,23 @@ const Dashboard = () => {
                                 Restore
                               </button>
                               <span className="study-row__chevron" style={{ marginLeft: '-2px' }}>
-                                <span className="material-symbols-outlined study-chevron">
-                                  {isExpanded ? 'expand_less' : 'expand_more'}
-                                </span>
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth={2}
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  style={{
+                                    width: 14,
+                                    height: 14,
+                                    transform: isExpanded ? 'rotate(180deg)' : 'none',
+                                    transition: 'transform var(--transition-fast)',
+                                    color: 'var(--color-text-muted)'
+                                  }}
+                                >
+                                  <polyline points="6 9 12 15 18 9" />
+                                </svg>
                               </span>
                             </>
                           ) : (
@@ -945,9 +953,23 @@ const Dashboard = () => {
                               </span>
                               <span className="study-row__time">{study.lastModified}</span>
                               <span className="study-row__chevron">
-                                <span className="material-symbols-outlined study-chevron" style={{transform: isExpanded || isEmpty ? 'rotate(90deg)' : 'rotate(90deg)'}}>
-                                  {isExpanded && !isEmpty ? 'expand_more' : 'chevron_right'}
-                                </span>
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth={2}
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  style={{
+                                    width: 14,
+                                    height: 14,
+                                    transform: isExpanded && !isEmpty ? 'rotate(90deg)' : 'none',
+                                    transition: 'transform var(--transition-fast)',
+                                    color: 'var(--color-text-muted)'
+                                  }}
+                                >
+                                  <polyline points="9 18 15 12 9 6" />
+                                </svg>
                               </span>
                             </>
                           )}
@@ -1198,6 +1220,7 @@ const Dashboard = () => {
                                             if (study.path) {
                                               await api.deleteSnapshot(study.path, snapshot.id);
                                               removeStudySnapshot(study.path, snapshot.id);
+                                              if (study.id) removeStudySnapshot(study.id, snapshot.id);
                                             }
                                           }
                                         });
@@ -1213,82 +1236,6 @@ const Dashboard = () => {
                                 </div>
                                 <div className="file-row__meta">
                                   <span className="file-row__time">{new Date(snapshot.created_at).toLocaleDateString()}</span>
-                                  <span style={{ width: '16px' }}></span>
-                                </div>
-                              </div>
-                            ))}
-                            {studyMgaReports.map(report => (
-                              <div
-                                key={report.id}
-                                className="file-row"
-                                onClick={() => {
-                                  setActiveStudy(study.id);
-                                  openTab({
-                                    type: 'mga-report',
-                                    title: report.title,
-                                    reportId: report.id,
-                                    reportType: report.reportType,
-                                    modelId: report.modelKey,
-                                    studyId: study.id,
-                                    workspaceId: activeWorkspaceId,
-                                  });
-                                }}
-                                onContextMenu={e => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  useStore.getState().openContextMenu(e.clientX, e.clientY, [
-                                    {
-                                      id: 'open-mga-report',
-                                      label: 'Open Report',
-                                      icon: 'visibility',
-                                      action: () => {
-                                        setActiveStudy(study.id);
-                                        openTab({
-                                          type: 'mga-report',
-                                          title: report.title,
-                                          reportId: report.id,
-                                          reportType: report.reportType,
-                                          modelId: report.modelKey,
-                                          studyId: study.id,
-                                          workspaceId: activeWorkspaceId,
-                                        });
-                                      }
-                                    },
-                                    {
-                                      id: 'delete-mga-report',
-                                      label: 'Delete Report',
-                                      icon: 'delete',
-                                      danger: true,
-                                      action: () => {
-                                        requestDelete({
-                                          title: 'Delete Multigroup Report',
-                                          itemName: report.title,
-                                          message: 'Are you sure? This report will be permanently deleted.',
-                                          onConfirm: async () => {
-                                            if (study.path) {
-                                              await mgaApi.deleteReport(study.path, report.id);
-                                              removeStudyMgaReport(study.path, report.id);
-                                            } else {
-                                              removeStudyMgaReport(study.id, report.id);
-                                            }
-                                          }
-                                        });
-                                      }
-                                    }
-                                  ]);
-                                }}
-                              >
-                                <div className="file-row__left">
-                                  <span className="material-symbols-outlined" style={{ color: 'var(--color-accent)' }}>
-                                    {report.reportType === 'permutation' ? 'shuffle' : 'compare_arrows'}
-                                  </span>
-                                  <span>{report.title}</span>
-                                  <span className="file-badge file-badge--accent" style={{ fontSize: '10px' }}>
-                                    {report.reportType === 'permutation' ? 'Permutation' : 'MGA'}
-                                  </span>
-                                </div>
-                                <div className="file-row__meta">
-                                  <span className="file-row__time">{new Date(report.createdAt).toLocaleString()}</span>
                                   <span style={{ width: '16px' }}></span>
                                 </div>
                               </div>
@@ -1391,12 +1338,92 @@ const Dashboard = () => {
               <input className="modal__input" id="modal-model-name" value={modelName} onChange={e => setModelName(e.target.value)} type="text" placeholder="e.g., Structural Model" autoComplete="off" spellCheck="false" autoFocus />
             </div>
             <div className="modal__field">
-              <label className="modal__label" htmlFor="modal-model-type">Model Type</label>
-              <select className="modal__input" id="modal-model-type" value={modelType} onChange={e => setModelType(e.target.value)} style={{cursor: 'pointer'}}>
-                <option value="PLS-SEM">PLS-SEM</option>
-                <option value="CB-SEM">CB-SEM</option>
-                <option value="Regression">Regression</option>
-              </select>
+              <label className="modal__label">Model Type</label>
+              <div
+                className="subheader__switcher"
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  padding: '3px',
+                  borderRadius: 'var(--radius-md, 6px)',
+                  background: 'var(--color-bg-raised, rgba(0, 0, 0, 0.04))',
+                  border: '1px solid var(--color-border-subtle)',
+                  boxSizing: 'border-box',
+                  gap: '4px'
+                }}
+              >
+                <button
+                  type="button"
+                  className="subheader__switcher-btn active"
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'var(--color-bg-base)',
+                    color: 'var(--color-accent, #6B4EE6)',
+                    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+                    cursor: 'default',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <span>PLS-SEM</span>
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="subheader__switcher-btn"
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--color-text-muted)',
+                    opacity: 0.45,
+                    cursor: 'not-allowed',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  title="CB-SEM is under development"
+                >
+                  <span>CB-SEM</span>
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="subheader__switcher-btn"
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--color-text-muted)',
+                    opacity: 0.45,
+                    cursor: 'not-allowed',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  title="Regression is under development"
+                >
+                  <span>Regression</span>
+                </button>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>info</span>
+                <span>CB-SEM and Regression are under development.</span>
+              </div>
             </div>
           </div>
           <div className="modal__footer">
@@ -1405,15 +1432,6 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-      )}
-
-      {comparisonStudy && (
-        <ModelComparisonModal
-          isOpen={!!comparisonStudy}
-          onClose={() => setComparisonStudy(null)}
-          projectPath={comparisonStudy.path || ''}
-          studyName={comparisonStudy.name}
-        />
       )}
     </>
   );

@@ -30,9 +30,7 @@ export const GenerateDataGroupsDialog: React.FC<GenerateDataGroupsDialogProps> =
   );
 
   const [prefix, setPrefix] = useState('GROUP');
-  const [col0, setCol0] = useState('');
-  const [col1, setCol1] = useState('');
-  const [col2, setCol2] = useState('');
+  const [selectedCols, setSelectedCols] = useState<string[]>([]);
   const [minimumCases, setMinimumCases] = useState<number>(10);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,19 +42,18 @@ export const GenerateDataGroupsDialog: React.FC<GenerateDataGroupsDialogProps> =
         eligibleColumns.find(c => /gender|sex|group|type|segment|marital/i.test(c.name))?.name ||
         eligibleColumns[0]?.name ||
         '';
-      setCol0(preferred);
-      setCol1('');
-      setCol2('');
+      setSelectedCols(preferred ? [preferred] : []);
       setMinimumCases(10);
       setError(null);
       setIsSubmitting(false);
     }
   }, [isOpen, eligibleColumns]);
 
-  const selectedCols = useMemo(
-    () => [col0, col1, col2].filter(c => Boolean(c && c !== 'none')),
-    [col0, col1, col2]
-  );
+  const toggleColumn = (colName: string) => {
+    setSelectedCols(prev =>
+      prev.includes(colName) ? prev.filter(c => c !== colName) : [...prev, colName]
+    );
+  };
 
   const livePreview = useMemo(() => {
     if (!isOpen || selectedCols.length === 0) {
@@ -69,8 +66,8 @@ export const GenerateDataGroupsDialog: React.FC<GenerateDataGroupsDialogProps> =
 
   const handleOk = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!col0) {
-      setError('Please select Group column 0.');
+    if (selectedCols.length === 0) {
+      setError('Please select at least one grouping column.');
       return;
     }
     setIsSubmitting(true);
@@ -141,110 +138,118 @@ export const GenerateDataGroupsDialog: React.FC<GenerateDataGroupsDialogProps> =
                 </div>
 
                 <div className="modal__field" style={{ marginBottom: 0 }}>
-                  <label className="modal__label" htmlFor="mga-gen-col0">Group column 0 (required)</label>
-                  <select
-                    id="mga-gen-col0"
-                    className="modal__input"
-                    value={col0}
-                    onChange={e => setCol0(e.target.value)}
-                    style={{ cursor: 'pointer' }}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <label className="modal__label" style={{ margin: 0 }}>Group columns</label>
+                    {eligibleColumns.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedCols.length === eligibleColumns.length) {
+                            setSelectedCols([]);
+                          } else {
+                            setSelectedCols(eligibleColumns.map(c => c.name));
+                          }
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          fontSize: '11px',
+                          color: 'var(--color-accent)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {selectedCols.length === eligibleColumns.length ? 'Deselect all' : 'Select all'}
+                      </button>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: '180px',
+                      overflowY: 'auto',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--color-border-subtle)',
+                      background: 'var(--color-bg-base)',
+                      padding: '4px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                    }}
                   >
-                    <option value="">Select column…</option>
-                    {eligibleColumns.map(c => (
-                      <option key={c.name} value={c.name}>
-                        {c.name} ({c.uniqueCount} unique values)
-                      </option>
-                    ))}
-                  </select>
+                    {eligibleColumns.map(c => {
+                      const isChecked = selectedCols.includes(c.name);
+                      return (
+                        <label
+                          key={c.name}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '6px 8px',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            background: isChecked ? 'var(--color-accent-subtle)' : 'transparent',
+                            transition: 'background 0.12s ease',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleColumn(c.name)}
+                            style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+                          />
+                          <span style={{ fontSize: '12.5px', color: 'var(--color-text-primary)', fontWeight: isChecked ? 600 : 400 }}>
+                            {c.name}
+                          </span>
+                          <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginLeft: 'auto' }}>
+                            {c.uniqueCount} unique values
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="modal__field" style={{ marginBottom: 0 }}>
-                  <label className="modal__label" htmlFor="mga-gen-col1">Group column 1 (optional)</label>
-                  <select
-                    id="mga-gen-col1"
+                  <label className="modal__label" htmlFor="mga-gen-min">Minimum cases</label>
+                  <input
+                    id="mga-gen-min"
+                    type="number"
+                    min={0}
                     className="modal__input"
-                    value={col1}
-                    onChange={e => setCol1(e.target.value)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <option value="">None</option>
-                    {eligibleColumns
-                      .filter(c => c.name !== col0)
-                      .map(c => (
-                        <option key={c.name} value={c.name}>
-                          {c.name} ({c.uniqueCount} unique values)
-                        </option>
-                      ))}
-                  </select>
+                    value={minimumCases}
+                    onChange={e => setMinimumCases(Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
+                  />
                 </div>
 
-                <div className="modal__field" style={{ marginBottom: 0 }}>
-                  <label className="modal__label" htmlFor="mga-gen-col2">Group column 2 (optional)</label>
-                  <select
-                    id="mga-gen-col2"
-                    className="modal__input"
-                    value={col2}
-                    onChange={e => setCol2(e.target.value)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <option value="">None</option>
-                    {eligibleColumns
-                      .filter(c => c.name !== col0 && c.name !== col1)
-                      .map(c => (
-                        <option key={c.name} value={c.name}>
-                          {c.name} ({c.uniqueCount} unique values)
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
-                <div style={{
-                  padding: '12px 14px',
-                  borderRadius: '8px',
-                  background: 'var(--color-bg-surface)',
-                  border: '1px solid var(--color-border-subtle)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px',
-                }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                    Prune groups
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', alignItems: 'center' }}>
-                    <div style={{ fontSize: '12.5px', color: 'var(--color-text-secondary)' }}>
-                      <div>Total: <strong style={{ color: 'var(--color-text-primary)' }}>{livePreview.totalCombinations}</strong></div>
-                      <div style={{ marginTop: '2px', fontSize: '11.5px', color: 'var(--color-text-muted)' }}>
-                        After pruning: <strong style={{ color: livePreview.keptCount > 0 ? '#16a34a' : '#dc2626' }}>{livePreview.keptCount}</strong>
-                        {livePreview.prunedCount > 0 ? ` (${livePreview.prunedCount} removed)` : ''}
-                      </div>
-                    </div>
-                    <div className="modal__field" style={{ marginBottom: 0 }}>
-                      <label className="modal__label" htmlFor="mga-gen-min">Minimum cases</label>
-                      <input
-                        id="mga-gen-min"
-                        type="number"
-                        min={0}
-                        className="modal__input"
-                        value={minimumCases}
-                        onChange={e => setMinimumCases(Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
-                      />
-                    </div>
-                  </div>
+                <div style={{ fontSize: '12.5px', color: 'var(--color-text-secondary)', display: 'flex', gap: '18px', alignItems: 'center', paddingTop: '2px' }}>
+                  <span>Total combinations: <strong style={{ color: 'var(--color-text-primary)' }}>{livePreview.totalCombinations}</strong></span>
+                  <span>After pruning: <strong style={{ color: livePreview.keptCount > 0 ? '#16a34a' : 'var(--color-text-primary)' }}>{livePreview.keptCount}</strong>{livePreview.prunedCount > 0 ? ` (${livePreview.prunedCount} pruned)` : ''}</span>
                 </div>
               </>
             )}
           </div>
 
-          <div className="modal__footer">
+          <div className="modal__footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
+            {selectedCols.length === 0 && (
+              <span style={{ fontSize: '11px', color: '#ef4444', fontWeight: 500, marginRight: '4px' }}>
+                Select at least one
+              </span>
+            )}
             <button className="modal__btn-cancel" type="button" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </button>
             <button
               className="modal__btn-create"
               type="submit"
-              disabled={isSubmitting || !col0 || livePreview.keptCount === 0}
+              disabled={isSubmitting || selectedCols.length === 0 || livePreview.keptCount === 0}
+              style={{
+                opacity: (isSubmitting || selectedCols.length === 0 || livePreview.keptCount === 0) ? 0.45 : 1,
+                cursor: (isSubmitting || selectedCols.length === 0 || livePreview.keptCount === 0) ? 'not-allowed' : 'pointer',
+                filter: (selectedCols.length === 0 || livePreview.keptCount === 0) ? 'grayscale(0.6)' : 'none',
+              }}
             >
-              {isSubmitting ? 'Generating…' : 'OK'}
+              {isSubmitting ? 'Generating…' : 'Generate'}
             </button>
           </div>
         </form>
@@ -252,4 +257,3 @@ export const GenerateDataGroupsDialog: React.FC<GenerateDataGroupsDialogProps> =
     </div>
   );
 };
-

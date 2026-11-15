@@ -112,9 +112,23 @@ export const ArchiveView: React.FC = () => {
                           Restore
                         </button>
                         <span className="study-row__chevron" style={{ marginLeft: '-2px' }}>
-                          <span className="material-symbols-outlined study-chevron">
-                            {isExpanded ? 'expand_less' : 'expand_more'}
-                          </span>
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            style={{
+                              width: 14,
+                              height: 14,
+                              transform: isExpanded ? 'rotate(180deg)' : 'none',
+                              transition: 'transform var(--transition-fast)',
+                              color: 'var(--color-text-muted)'
+                            }}
+                          >
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
                         </span>
                       </div>
                     </div>

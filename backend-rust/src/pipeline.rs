@@ -175,17 +175,22 @@ fn run_inner(
             .collect();
         // Pandas homogeneous column blocks feed a Fortran-contiguous ndarray;
         // reduce each column using the already-verified contiguous vector path.
-        let standardized: Vec<Vec<f64>> = indices
+        let result_type = settings["result_type"].as_str().unwrap_or("standardized");
+        let transformed: Vec<Vec<f64>> = indices
             .iter()
             .map(|&j| {
                 let column: Vec<_> = prepared.iter().map(|r| r[j]).collect();
                 let mean = stats::mean(&column, weights.as_deref());
                 let sd = stats::std(&column, weights.as_deref(), 0);
                 let sd = if sd == 0.0 { 1.0 } else { sd };
-                column.iter().map(|v| (v - mean) / sd).collect()
+                match result_type {
+                    "unstandardized" => column,
+                    "mean_centered" => column.iter().map(|v| v - mean).collect(),
+                    _ => column.iter().map(|v| (v - mean) / sd).collect(),
+                }
             })
             .collect();
-        block.data = matrix::transpose(&standardized);
+        block.data = matrix::transpose(&transformed);
     }
     let has_weights = weights.is_some();
     let mut result = pls::estimate(parsed.blocks.clone(), parsed.paths.clone(), cfg, weights)?;

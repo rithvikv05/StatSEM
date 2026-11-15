@@ -3,6 +3,7 @@
  * Pure Vanilla JS + SVG implementation for professional vector diagramming.
  */
 import { performAutoLayout, resolveBadgePositions } from './semLayoutEngine';
+import { getCanvasFitTransform } from './fit-canvas';
 import {
   formatNumber,
   formatPValue,
@@ -761,24 +762,38 @@ export function initModelCanvas() {
       maxX = Math.max(maxX, n.x + halfW);
       maxY = Math.max(maxY, n.y + halfH);
     });
+    // Include the rendered labels and effect paths, which can extend beyond nodes.
+    for (const layer of [nodesLayer, edgesLayer]) {
+      try {
+        const box = layer?.getBBox();
+        if (box && (box.width || box.height)) {
+          minX = Math.min(minX, box.x); minY = Math.min(minY, box.y);
+          maxX = Math.max(maxX, box.x + box.width); maxY = Math.max(maxY, box.y + box.height);
+        }
+      } catch (_) { /* Keep the node bounds if the SVG is not measurable yet. */ }
+    }
     const rect = svg.getBoundingClientRect();
-    const modelWidth = Math.max(maxX - minX, 100);
-    const modelHeight = Math.max(maxY - minY, 100);
-    const padding = 60;
-    const availW = Math.max(rect.width - padding * 2, 100);
-    const availH = Math.max(rect.height - padding * 2, 100);
-    const scale = Math.min(availW / modelWidth, availH / modelHeight, 1.2);
-    const k = Math.max(Math.min(scale, 1.2), 0.2);
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    transform = {
-      x: (rect.width / 2) - (cx * k),
-      y: (rect.height / 2) - (cy * k),
-      k: k
-    };
+    const fit = getCanvasFitTransform({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }, rect.width, rect.height);
+    if (!fit) return;
+    transform = fit;
     applyTransform();
   }
   document.getElementById('hud-fit')?.addEventListener('click', fitToScreen);
+
+  // Refit after a window or sidebar resize; ignore the hidden results view.
+  if (typeof ResizeObserver !== 'undefined') {
+    let lastWidth = 0, lastHeight = 0;
+    const resizeObserver = new ResizeObserver(entries => {
+      const rect = entries[0]?.contentRect;
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      if (rect.width === lastWidth && rect.height === lastHeight) return;
+      lastWidth = rect.width;
+      lastHeight = rect.height;
+      fitToScreen();
+    });
+    resizeObserver.observe(svg);
+    signal.addEventListener('abort', () => resizeObserver.disconnect(), { once: true });
+  }
 
   const zoomLevelEl = document.getElementById('hud-zoom-level');
   if (zoomLevelEl) {
@@ -907,12 +922,45 @@ export function initModelCanvas() {
       delete e.strokeWidth;
       delete e.strokeDasharray;
       delete e.arrowhead;
+      delete e.curved;
+      delete e.curvature;
     });
     moderatingEffects.forEach(m => {
       delete m.color;
       delete m.strokeWidth;
       delete m.strokeDasharray;
       delete m.arrowhead;
+      delete m.curved;
+      delete m.curvature;
+      delete m.waypoints;
+    });
+    gaussianCopulas.forEach(gc => {
+      delete gc.color;
+      delete gc.strokeWidth;
+      delete gc.strokeDasharray;
+      delete gc.arrowhead;
+      delete gc.curved;
+      delete gc.curvature;
+      delete gc.waypoints;
+      delete gc.node_x;
+      delete gc.node_y;
+      delete gc.x;
+      delete gc.y;
+    });
+    quadraticEffects.forEach(qe => {
+      delete qe.color;
+      delete qe.strokeWidth;
+      delete qe.strokeDasharray;
+      delete qe.arrowhead;
+      qe.curved = true;
+      delete qe.curvature;
+      delete qe.curveOffsetX;
+      delete qe.curveOffsetY;
+      delete qe.waypoints;
+      delete qe.node_x;
+      delete qe.node_y;
+      delete qe.x;
+      delete qe.y;
     });
 
     // Reset canvas background and grid to default
@@ -984,6 +1032,7 @@ export function initModelCanvas() {
       selectedIds.clear();
       render();
       isUndoRedo = false;
+      window.dispatchEvent(new CustomEvent('canvas-changed'));
     }
   }
 
@@ -999,18 +1048,19 @@ export function initModelCanvas() {
       selectedIds.clear();
       render();
       isUndoRedo = false;
+      window.dispatchEvent(new CustomEvent('canvas-changed'));
     }
   }
 
-  document.getElementById('btn-undo')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    undo();
-  });
-
-  document.getElementById('btn-redo')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    redo();
-  });
+  const bindHistoryButton = (id, action) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    if (button._canvasHistoryHandler) button.removeEventListener('click', button._canvasHistoryHandler);
+    button._canvasHistoryHandler = (event) => { event.preventDefault(); action(); };
+    button.addEventListener('click', button._canvasHistoryHandler);
+  };
+  bindHistoryButton('btn-undo', undo);
+  bindHistoryButton('btn-redo', redo);
 
   document.getElementById('btn-delete')?.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1477,9 +1527,12 @@ export function initModelCanvas() {
   document.querySelector('.tb-btn[title="Auto-Align Model"]')?.addEventListener('click', () => {
     if (nodes.length === 0) return;
     const rect = svg.getBoundingClientRect();
+    const { decimalDigits: layoutDp } = getPrecisionSettings();
     const result = performAutoLayout(nodes, edges, {
       containerWidth: rect.width || 1200,
       containerHeight: rect.height || 800,
+      decimalDigits: layoutDp,
+      moderatingEffects: moderatingEffects,
     });
 
     // Update nodes in-place to preserve references
@@ -1488,6 +1541,7 @@ export function initModelCanvas() {
       if (existing) {
         existing.x = rn.x;
         existing.y = rn.y;
+        if (rn.indicatorDirection) existing.indicatorDirection = rn.indicatorDirection;
       }
     });
 
@@ -1495,7 +1549,31 @@ export function initModelCanvas() {
       const existing = edges.find(e => e.id === re.id || (e.sourceId === re.sourceId && e.targetId === re.targetId));
       if (existing) {
         delete existing.waypoints;
+        existing.curved = re.curved;
+        if (re.curvature !== undefined) {
+          existing.curvature = re.curvature;
+        } else {
+          delete existing.curvature;
+        }
       }
+    });
+
+    // Reset manual positions on copulas & quadratic effects so they re-center at new path midpoints
+    gaussianCopulas.forEach(gc => {
+      delete gc.node_x;
+      delete gc.node_y;
+      delete gc.x;
+      delete gc.y;
+      delete gc.curvature;
+    });
+    quadraticEffects.forEach(qe => {
+      delete qe.node_x;
+      delete qe.node_y;
+      delete qe.x;
+      delete qe.y;
+      delete qe.curvature;
+      delete qe.curveOffsetX;
+      delete qe.curveOffsetY;
     });
 
     selectedIds.clear();
@@ -1711,6 +1789,8 @@ export function initModelCanvas() {
           const arrowType = action.replace('arrowhead-', '');
           edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.arrowhead = arrowType);
           moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.arrowhead = arrowType);
+          gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.arrowhead = arrowType);
+          quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.arrowhead = arrowType);
           nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeArrowhead = arrowType);
           render();
           pushHistory();
@@ -1739,6 +1819,26 @@ export function initModelCanvas() {
               m.waypoints = [];
             }
           });
+          gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => {
+            gc.curved = (style === 'curved');
+            if (style === 'solid') gc.strokeDasharray = '';
+            if (style === 'dashed') gc.strokeDasharray = '4 4';
+            if (style === 'dotted') gc.strokeDasharray = '2 4';
+            if (style === 'curved') {
+              gc.strokeDasharray = '4 4';
+              gc.curved = true;
+            }
+          });
+          quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => {
+            qe.curved = (style === 'curved');
+            if (style === 'solid') qe.strokeDasharray = '';
+            if (style === 'dashed') qe.strokeDasharray = '5 4';
+            if (style === 'dotted') qe.strokeDasharray = '2 4';
+            if (style === 'curved') {
+              qe.strokeDasharray = '5 4';
+              qe.curved = true;
+            }
+          });
           nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => {
             n.edgeCurved = false;
             if (style === 'solid') n.edgeStrokeDasharray = '';
@@ -1756,6 +1856,8 @@ export function initModelCanvas() {
           const w = parseFloat(action.replace('weight-', ''));
           edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.strokeWidth = w);
           moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.strokeWidth = w);
+          gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.strokeWidth = w);
+          quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.strokeWidth = w);
           nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeStrokeWidth = w);
           render();
           pushHistory();
@@ -1772,6 +1874,8 @@ export function initModelCanvas() {
     if (color !== undefined) {
       edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.color = color);
       moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.color = color);
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.color = color);
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.color = color);
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeColor = color);
       render();
       pushHistory();
@@ -1806,6 +1910,27 @@ export function initModelCanvas() {
           m.waypoints = [];
         }
       });
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => {
+        gc.curved = (style === 'curved');
+        if (style === 'solid') gc.strokeDasharray = '';
+        if (style === 'dashed') gc.strokeDasharray = '4 4';
+        if (style === 'dotted') gc.strokeDasharray = '2 4';
+        if (style === 'curved') {
+          gc.strokeDasharray = '4 4';
+          gc.curved = true;
+        }
+      });
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => {
+        qe.curved = (style === 'curved' || style === undefined);
+        if (style === 'solid') qe.strokeDasharray = '';
+        if (style === 'dashed') qe.strokeDasharray = '5 4';
+        if (style === 'dotted') qe.strokeDasharray = '2 4';
+        if (style === 'curved') {
+          qe.strokeDasharray = '2 4';
+          qe.curved = true;
+          qe.waypoints = [];
+        }
+      });
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => {
         n.edgeCurved = false;
         if (style === 'solid') n.edgeStrokeDasharray = '';
@@ -1829,6 +1954,8 @@ export function initModelCanvas() {
     if (arrowType) {
       edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.arrowhead = arrowType);
       moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.arrowhead = arrowType);
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.arrowhead = arrowType);
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.arrowhead = arrowType);
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeArrowhead = arrowType);
       render();
       pushHistory();
@@ -1844,6 +1971,8 @@ export function initModelCanvas() {
       const numW = parseFloat(w) || 1.5;
       edges.filter(edge => selectedIds.has(edge.id)).forEach(edge => edge.strokeWidth = numW);
       moderatingEffects.filter(m => selectedIds.has(m.id)).forEach(m => m.strokeWidth = numW);
+      gaussianCopulas.filter(gc => selectedIds.has(gc.id)).forEach(gc => gc.strokeWidth = numW);
+      quadraticEffects.filter(qe => selectedIds.has(qe.id)).forEach(qe => qe.strokeWidth = numW);
       nodes.filter(n => selectedIds.has(`edge_ind_${n.id}`)).forEach(n => n.edgeStrokeWidth = numW);
       render();
       pushHistory();
@@ -1933,7 +2062,7 @@ export function initModelCanvas() {
       spacing = indWidth + gap;
     }
     
-    const offset = (direction === 'top' || direction === 'bottom') ? 140 : 155;
+    const offset = (direction === 'top' || direction === 'bottom') ? 175 : 205;
     
     const totalLength = (indicators.length - 1) * spacing;
     const start = -totalLength / 2;
@@ -2100,7 +2229,7 @@ export function initModelCanvas() {
             label: name,
             isLatent: false,
             parentId: targetNode.id,
-            x: targetNode.x + 155,
+            x: targetNode.x + 205,
             y: targetNode.y + (countNow * 40)
           });
           addedAny = true;
@@ -2135,7 +2264,7 @@ export function initModelCanvas() {
           label: name,
           isLatent: false,
           parentId: newLatent.id,
-          x: newLatent.x + 155,
+          x: newLatent.x + 205,
           y: newLatent.y + start + (idx * spacing)
         });
       });
@@ -2286,6 +2415,14 @@ export function initModelCanvas() {
         return cid;
       }
     }
+    if (struct.path_coefficients) {
+      if (struct.path_coefficients[node.id] || Object.values(struct.path_coefficients).some(p => p && p[node.id] !== undefined)) {
+        return node.id;
+      }
+      if (node.label && (struct.path_coefficients[node.label] || Object.values(struct.path_coefficients).some(p => p && p[node.label] !== undefined))) {
+        return node.label;
+      }
+    }
     return null;
   }
 
@@ -2332,6 +2469,19 @@ export function initModelCanvas() {
         for (const s of sCandidates) {
           if (paths[t][s] !== undefined) {
             return Number(paths[t][s]);
+          }
+        }
+      }
+    }
+
+    // Fallback: case-insensitive match across all targets and sources
+    for (const [t, sMap] of Object.entries(paths)) {
+      const matchT = tCandidates.some(tc => tc && tc.toLowerCase() === t.toLowerCase());
+      if (matchT && sMap) {
+        for (const [s, val] of Object.entries(sMap)) {
+          const matchS = sCandidates.some(sc => sc && sc.toLowerCase() === s.toLowerCase());
+          if (matchS && val !== undefined && val !== null) {
+            return Number(val);
           }
         }
       }
@@ -2766,9 +2916,22 @@ export function initModelCanvas() {
       if (!parentMod) return null;
       const parentGeo = getModerationLineGeometry(parentMod, visited);
       if (!parentGeo) return null;
-      // Landing point: midpoint of the parent dashed arrow line
-      landX = parentGeo.midX;
-      landY = parentGeo.midY;
+
+      // Stagger multiple chained moderations attached to the same parent dashed arrow
+      const chainedSibs = moderatingEffects.filter(m => m.attachToModId === mod.attachToModId);
+      if (chainedSibs.length > 1) {
+        chainedSibs.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        const idx = chainedSibs.findIndex(m => m.id === mod.id);
+        const shift = (idx - (chainedSibs.length - 1) / 2) * 22;
+        const pdx = parentGeo.landX - parentGeo.startX;
+        const pdy = parentGeo.landY - parentGeo.startY;
+        const plen = Math.hypot(pdx, pdy) || 1;
+        landX = parentGeo.midX + (pdx / plen) * shift;
+        landY = parentGeo.midY + (pdy / plen) * shift;
+      } else {
+        landX = parentGeo.midX;
+        landY = parentGeo.midY;
+      }
     } else {
       const sNode   = nodes.find(n => n.id === mod.source);
       const tNode   = nodes.find(n => n.id === mod.target);
@@ -2776,8 +2939,23 @@ export function initModelCanvas() {
       if (!sNode || !tNode || !targetEdge) return null;
 
       const midpoint = getEdgeMidpointAndPoints(sNode, tNode, targetEdge);
-      landX = midpoint.midX;
-      landY = midpoint.midY;
+
+      // Stagger multiple direct moderations attached to the same structural path
+      const directSibs = moderatingEffects.filter(m => !m.attachToModId && m.source === mod.source && m.target === mod.target);
+      if (directSibs.length > 1) {
+        directSibs.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        const idx = directSibs.findIndex(m => m.id === mod.id);
+        const shift = (idx - (directSibs.length - 1) / 2) * 26;
+        const { x1, y1, x2, y2 } = getEdgeCoordinates(sNode, tNode, targetEdge);
+        const edx = x2 - x1;
+        const edy = y2 - y1;
+        const elen = Math.hypot(edx, edy) || 1;
+        landX = midpoint.midX + (edx / elen) * shift;
+        landY = midpoint.midY + (edy / elen) * shift;
+      } else {
+        landX = midpoint.midX;
+        landY = midpoint.midY;
+      }
     }
 
     // Start point: on moderator construct boundary toward landing point
@@ -3071,6 +3249,47 @@ export function initModelCanvas() {
     return true;
   }
 
+  function getEdgePolylineMidpoint(edge, x1, y1, x2, y2) {
+    if (edge && edge.waypoints && edge.waypoints.length > 0) {
+      const pts = [{ x: x1, y: y1 }, ...edge.waypoints, { x: x2, y: y2 }];
+      let totalLen = 0;
+      const segLens = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const segD = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+        segLens.push(segD);
+        totalLen += segD;
+      }
+      const targetD = totalLen / 2;
+      let accumulated = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (accumulated + segLens[i] >= targetD - 0.0001) {
+          const segRemain = targetD - accumulated;
+          const ratio = segLens[i] > 0 ? segRemain / segLens[i] : 0;
+          return {
+            x: pts[i].x + ratio * (pts[i + 1].x - pts[i].x),
+            y: pts[i].y + ratio * (pts[i + 1].y - pts[i].y)
+          };
+        }
+        accumulated += segLens[i];
+      }
+      return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+    } else if (edge && edge.curved) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len = Math.hypot(dx, dy) || 1;
+      const curveVal = typeof edge.curvature === 'number' ? edge.curvature : 40;
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2;
+      const cx = midX + (-dy / len) * curveVal;
+      const cy = midY + (dx / len) * curveVal;
+      return {
+        x: 0.25 * x1 + 0.5 * cx + 0.25 * x2,
+        y: 0.25 * y1 + 0.5 * cy + 0.25 * y2
+      };
+    }
+    return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+  }
+
   function getGaussianCopulaGeometry(gc) {
     const sId = gc.source_construct || gc.source;
     const tId = gc.target_construct || gc.target;
@@ -3099,42 +3318,23 @@ export function initModelCanvas() {
       (m.target === tNode.id || m.target === tId)
     );
 
-    let midX = (x1 + x2) / 2;
-    let midY = (y1 + y2) / 2;
+    const edgeMid = getEdgePolylineMidpoint(edge, x1, y1, x2, y2);
+    const midX = edgeMid.x;
+    const midY = edgeMid.y;
 
-    if (edge.waypoints && edge.waypoints.length > 0) {
-      const numJoints = edge.waypoints.length;
-      if (numJoints % 2 === 1) {
-        const midIdx = Math.floor(numJoints / 2);
-        midX = edge.waypoints[midIdx].x;
-        midY = edge.waypoints[midIdx].y;
-      } else {
-        const idx1 = numJoints / 2 - 1;
-        const idx2 = numJoints / 2;
-        midX = (edge.waypoints[idx1].x + edge.waypoints[idx2].x) / 2;
-        midY = (edge.waypoints[idx1].y + edge.waypoints[idx2].y) / 2;
-      }
-    } else if (edge.curved) {
-      const curveVal = typeof edge.curvature === 'number' ? edge.curvature : 40;
-      const cx = midX + (-dy / len) * curveVal;
-      const cy = midY + (dx / len) * curveVal;
-      midX = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
-      midY = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
-    }
-
-    let landX = midX;
-    let landY = midY;
-    if (hasMod) {
-      landX += ux * 12;
-      landY += uy * 12;
-    }
+    const landX = midX;
+    const landY = midY;
 
     let nodeX = gc.node_x !== undefined ? gc.node_x : gc.x;
     let nodeY = gc.node_y !== undefined ? gc.node_y : gc.y;
 
     if (nodeX === undefined || nodeY === undefined || isNaN(nodeX) || isNaN(nodeY)) {
-      const cand1 = { x: midX + nx * 110, y: midY + ny * 110 };
-      const cand2 = { x: midX - nx * 110, y: midY - ny * 110 };
+      const cands = [
+        { x: midX + nx * 80, y: midY + ny * 80 },
+        { x: midX - nx * 80, y: midY - ny * 80 },
+        { x: midX + nx * 125, y: midY + ny * 125 },
+        { x: midX - nx * 125, y: midY - ny * 125 },
+      ];
 
       const getMinDist = (pt) => {
         let minDist = Infinity;
@@ -3143,30 +3343,62 @@ export function initModelCanvas() {
           if (d < minDist) minDist = d;
         });
         gaussianCopulas.forEach(other => {
-          if (other.id !== gc.id && other.node_x !== undefined) {
-            const d = Math.hypot(other.node_x - pt.x, other.node_y - pt.y);
+          if (other.id !== gc.id && (other.node_x !== undefined || other.x !== undefined)) {
+            const ox = other.node_x !== undefined ? other.node_x : other.x;
+            const oy = other.node_y !== undefined ? other.node_y : other.y;
+            const d = Math.hypot(ox - pt.x, oy - pt.y);
+            if (d < minDist) minDist = d;
+          }
+        });
+        quadraticEffects.forEach(qeOther => {
+          const qx = qeOther.node_x !== undefined ? qeOther.node_x : qeOther.x;
+          const qy = qeOther.node_y !== undefined ? qeOther.node_y : qeOther.y;
+          if (qx !== undefined && qy !== undefined) {
+            const d = Math.hypot(qx - pt.x, qy - pt.y);
             if (d < minDist) minDist = d;
           }
         });
         return minDist;
       };
 
-      const dist1 = getMinDist(cand1);
-      const dist2 = getMinDist(cand2);
-      const chosen = dist1 >= dist2 ? cand1 : cand2;
-      nodeX = chosen.x;
-      nodeY = chosen.y;
+      let bestCand = cands[0];
+      let bestDist = -1;
+      for (const cand of cands) {
+        const d = getMinDist(cand);
+        if (d > bestDist) {
+          bestDist = d;
+          bestCand = cand;
+        }
+      }
+
+      nodeX = bestCand.x;
+      nodeY = bestCand.y;
       gc.node_x = nodeX;
       gc.node_y = nodeY;
     }
 
     const gcRadius = NODE_R * 0.55;
-    const lineDx = landX - nodeX;
-    const lineDy = landY - nodeY;
+    const waypoints = gc.waypoints || [];
+    const firstTargetX = waypoints.length > 0 ? waypoints[0].x : landX;
+    const firstTargetY = waypoints.length > 0 ? waypoints[0].y : landY;
+    const lineDx = firstTargetX - nodeX;
+    const lineDy = firstTargetY - nodeY;
     const lineDist = Math.hypot(lineDx, lineDy) || 1;
 
     const startX = nodeX + (lineDx / lineDist) * gcRadius;
     const startY = nodeY + (lineDy / lineDist) * gcRadius;
+
+    const isCurved = gc.curved === true;
+    const gcCurv = typeof gc.curvature === 'number' ? gc.curvature : 30;
+    const gdx = landX - startX;
+    const gdy = landY - startY;
+    const glen = Math.hypot(gdx, gdy) || 1;
+    const gnx = -gdy / glen;
+    const gny = gdx / glen;
+    const arcMidX = (startX + landX) / 2 + gnx * gcCurv;
+    const arcMidY = (startY + landY) / 2 + gny * gcCurv;
+    const handleX = isCurved ? ((startX + landX) / 2 + gnx * (gcCurv / 2)) : ((startX + landX) / 2);
+    const handleY = isCurved ? ((startY + landY) / 2 + gny * (gcCurv / 2)) : ((startY + landY) / 2);
 
     return {
       sNode,
@@ -3178,7 +3410,16 @@ export function initModelCanvas() {
       startX,
       startY,
       landX,
-      landY
+      landY,
+      isCurved,
+      gcCurv,
+      arcMidX,
+      arcMidY,
+      handleX,
+      handleY,
+      gnx,
+      gny,
+      waypoints
     };
   }
 
@@ -3327,31 +3568,10 @@ export function initModelCanvas() {
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len;
     const uy = dy / len;
-    const nx = -uy;
-    const ny = ux;
 
-    let midX = (x1 + x2) / 2;
-    let midY = (y1 + y2) / 2;
-
-    if (edge.waypoints && edge.waypoints.length > 0) {
-      const numJoints = edge.waypoints.length;
-      if (numJoints % 2 === 1) {
-        const midIdx = Math.floor(numJoints / 2);
-        midX = edge.waypoints[midIdx].x;
-        midY = edge.waypoints[midIdx].y;
-      } else {
-        const idx1 = numJoints / 2 - 1;
-        const idx2 = numJoints / 2;
-        midX = (edge.waypoints[idx1].x + edge.waypoints[idx2].x) / 2;
-        midY = (edge.waypoints[idx1].y + edge.waypoints[idx2].y) / 2;
-      }
-    } else if (edge.curved) {
-      const curveVal = typeof edge.curvature === 'number' ? edge.curvature : 40;
-      const cx = midX + (-dy / len) * curveVal;
-      const cy = midY + (dx / len) * curveVal;
-      midX = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
-      midY = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
-    }
+    const edgeMid = getEdgePolylineMidpoint(edge, x1, y1, x2, y2);
+    const midX = edgeMid.x;
+    const midY = edgeMid.y;
 
     const hasMod = moderatingEffects.some(m =>
       (m.source === pNode.id || m.source === pId) &&
@@ -3362,24 +3582,35 @@ export function initModelCanvas() {
       (gc.target_construct === tNode.id || gc.target === tId)
     );
 
-    let landX = midX;
-    let landY = midY;
-    if (hasMod) {
-      landX += ux * 10;
-      landY += uy * 10;
+    // Normal that points away from the latent variable's label
+    // StatSEM default: label at bottom (y > pNode.y) unless textPosition === 'top'
+    const labelIsTop = pNode.textPosition === 'top';
+    let nx = -uy;
+    let ny = ux;
+    if (!labelIsTop) {
+      // Label is at the bottom: normal MUST point UPWARDS (ny <= 0)
+      if (ny > 0 || (ny === 0 && nx < 0)) {
+        nx = uy;
+        ny = -ux;
+      }
+    } else {
+      // Label is on top: normal MUST point DOWNWARDS (ny >= 0)
+      if (ny < 0 || (ny === 0 && nx > 0)) {
+        nx = uy;
+        ny = -ux;
+      }
     }
-    if (hasGc) {
-      landX -= ux * 10;
-      landY -= uy * 10;
-    }
+
+    const landX = midX;
+    const landY = midY;
 
     // Results node placement
     let nodeX = qe.node_x !== undefined ? qe.node_x : qe.x;
     let nodeY = qe.node_y !== undefined ? qe.node_y : qe.y;
 
     if (nodeX === undefined || nodeY === undefined || isNaN(nodeX) || isNaN(nodeY)) {
-      const cand1 = { x: midX + nx * 115, y: midY + ny * 115 };
-      const cand2 = { x: midX - nx * 115, y: midY - ny * 115 };
+      const cand1 = { x: midX + nx * 85, y: midY + ny * 85 };
+      const cand2 = { x: midX - nx * 85, y: midY - ny * 85 };
 
       const getMinDist = (pt) => {
         let minDist = Infinity;
@@ -3388,15 +3619,21 @@ export function initModelCanvas() {
           if (d < minDist) minDist = d;
         });
         gaussianCopulas.forEach(other => {
-          if (other.node_x !== undefined) {
-            const d = Math.hypot(other.node_x - pt.x, other.node_y - pt.y);
+          const ox = other.node_x !== undefined ? other.node_x : other.x;
+          const oy = other.node_y !== undefined ? other.node_y : other.y;
+          if (ox !== undefined && oy !== undefined) {
+            const d = Math.hypot(ox - pt.x, oy - pt.y);
             if (d < minDist) minDist = d;
           }
         });
         quadraticEffects.forEach(other => {
-          if (other.id !== qe.id && other.node_x !== undefined) {
-            const d = Math.hypot(other.node_x - pt.x, other.node_y - pt.y);
-            if (d < minDist) minDist = d;
+          if (other.id !== qe.id) {
+            const ox = other.node_x !== undefined ? other.node_x : other.x;
+            const oy = other.node_y !== undefined ? other.node_y : other.y;
+            if (ox !== undefined && oy !== undefined) {
+              const d = Math.hypot(ox - pt.x, oy - pt.y);
+              if (d < minDist) minDist = d;
+            }
           }
         });
         return minDist;
@@ -3404,7 +3641,13 @@ export function initModelCanvas() {
 
       const dist1 = getMinDist(cand1);
       const dist2 = getMinDist(cand2);
-      const chosen = dist1 >= dist2 ? cand1 : cand2;
+      let chosen = dist1 >= dist2 ? cand1 : cand2;
+      // Protect the construct label side!
+      if (!labelIsTop && chosen.y > pNode.y + 10 && dist1 >= 60) {
+        chosen = cand1; // Enforce upward side away from bottom label
+      } else if (labelIsTop && chosen.y < pNode.y - 10 && dist2 >= 60) {
+        chosen = cand2; // Enforce downward side away from top label
+      }
       nodeX = chosen.x;
       nodeY = chosen.y;
       qe.node_x = nodeX;
@@ -3412,24 +3655,99 @@ export function initModelCanvas() {
     }
 
     const qeRadius = NODE_R * 0.7;
-    const lineDx = landX - nodeX;
-    const lineDy = landY - nodeY;
+    const isCurved = qe.curved === true;
+    const waypoints = isCurved ? [] : (qe.waypoints || []);
+    const firstTargetX = waypoints.length > 0 ? waypoints[0].x : landX;
+    const firstTargetY = waypoints.length > 0 ? waypoints[0].y : landY;
+    const lineDx = firstTargetX - nodeX;
+    const lineDy = firstTargetY - nodeY;
     const lineDist = Math.hypot(lineDx, lineDy) || 1;
 
     const startX = nodeX + (lineDx / lineDist) * qeRadius;
     const startY = nodeY + (lineDy / lineDist) * qeRadius;
 
-    // Editor mode curved arc control points from predictor construct to landX, landY
+    // Editor mode straight/bent path from predictor construct to landX, landY
+    // Start cleanly in the direction away from the label (never from the bottom where label sits!)
     const pRadius = pNode.width ? Math.max(pNode.width, pNode.height) / 2 : NODE_R;
-    const arcStartX = pNode.x + nx * (pRadius + 2);
-    const arcStartY = pNode.y + ny * (pRadius + 2);
+    const toLandX = landX - pNode.x;
+    const toLandY = landY - pNode.y;
+    const toLandLen = Math.hypot(toLandX, toLandY) || 1;
+    const uLandX = toLandX / toLandLen;
+    const uLandY = toLandY / toLandLen;
 
-    const arcMidX = (arcStartX + landX) / 2 + nx * 38;
-    const arcMidY = (arcStartY + landY) / 2 + ny * 38;
+    let blendX = uLandX * 0.5 + nx * 0.8;
+    let blendY = uLandY * 0.5 + ny * 0.8;
+    if (!labelIsTop) {
+      // Label is at the bottom: departure point MUST be strictly in the upper hemisphere
+      if (blendY > -0.25) {
+        blendY = -Math.max(0.45, Math.abs(blendY));
+      }
+    } else {
+      // Label is on top: departure point MUST be strictly in the lower hemisphere
+      if (blendY < 0.25) {
+        blendY = Math.max(0.45, Math.abs(blendY));
+      }
+    }
+    const blendLen = Math.hypot(blendX, blendY) || 1;
 
-    // Badge location on the bezier curve (t = 0.5)
-    const badgeX = 0.25 * arcStartX + 0.5 * arcMidX + 0.25 * landX;
-    const badgeY = 0.25 * arcStartY + 0.5 * arcMidY + 0.25 * landY;
+    const arcStartX = pNode.x + (blendX / blendLen) * (pRadius + 2);
+    const arcStartY = pNode.y + (blendY / blendLen) * (pRadius + 2);
+
+    const qeCurv = typeof qe.curvature === 'number' ? qe.curvature : 35;
+
+    // Normal to the chord between arcStart and land
+    const cdx = landX - arcStartX;
+    const cdy = landY - arcStartY;
+    const clen = Math.hypot(cdx, cdy) || 1;
+    let cnx = -cdy / clen;
+    let cny = cdx / clen;
+    if (cnx * nx + cny * ny < 0) {
+      cnx = -cnx;
+      cny = -cny;
+    }
+
+    const arcMidX = (arcStartX + landX) / 2 + (Number.isFinite(qe.curveOffsetX) ? qe.curveOffsetX : cnx * qeCurv);
+    const arcMidY = (arcStartY + landY) / 2 + (Number.isFinite(qe.curveOffsetY) ? qe.curveOffsetY : cny * qeCurv);
+
+    // Apex / handle on the curve (at t = 0.5)
+    const handleX = isCurved ? (arcStartX + 2 * arcMidX + landX) / 4 : (arcStartX + landX) / 2;
+    const handleY = isCurved ? (arcStartY + 2 * arcMidY + landY) / 4 : (arcStartY + landY) / 2;
+
+    // Badge location along curve/polyline
+    let badgeX, badgeY;
+    if (isCurved) {
+      const t = 0.32;
+      const invT = 1 - t;
+      badgeX = invT * invT * arcStartX + 2 * invT * t * arcMidX + t * t * landX;
+      badgeY = invT * invT * arcStartY + 2 * invT * t * arcMidY + t * t * landY;
+    } else {
+      if (waypoints && waypoints.length > 0) {
+        const polyPoints = [{ x: arcStartX, y: arcStartY }, ...waypoints, { x: landX, y: landY }];
+        const segs = [];
+        let totalPolyLen = 0;
+        for (let i = 0; i < polyPoints.length - 1; i++) {
+          const slen = Math.hypot(polyPoints[i+1].x - polyPoints[i].x, polyPoints[i+1].y - polyPoints[i].y);
+          segs.push({ p1: polyPoints[i], p2: polyPoints[i+1], len: slen });
+          totalPolyLen += slen;
+        }
+        let targetDist = totalPolyLen * 0.40;
+        let accum = 0;
+        badgeX = (arcStartX + landX) / 2;
+        badgeY = (arcStartY + landY) / 2;
+        for (const s of segs) {
+          if (accum + s.len >= targetDist && s.len > 0) {
+            const st = (targetDist - accum) / s.len;
+            badgeX = s.p1.x + st * (s.p2.x - s.p1.x);
+            badgeY = s.p1.y + st * (s.p2.y - s.p1.y);
+            break;
+          }
+          accum += s.len;
+        }
+      } else {
+        badgeX = (arcStartX + landX) / 2;
+        badgeY = (arcStartY + landY) / 2;
+      }
+    }
 
     return {
       pNode,
@@ -3446,10 +3764,17 @@ export function initModelCanvas() {
       arcStartY,
       arcMidX,
       arcMidY,
+      handleX,
+      handleY,
       badgeX,
       badgeY,
       nx,
-      ny
+      ny,
+      cnx,
+      cny,
+      isCurved,
+      qeCurv,
+      waypoints
     };
   }
 
@@ -3568,7 +3893,8 @@ export function initModelCanvas() {
       predictor_construct: sNode.id,
       target_construct: tNode.id,
       predictor: sNode.id,
-      target: tNode.id
+      target: tNode.id,
+      curved: true
     };
     quadraticEffects.push(newQe);
     render();
@@ -3605,7 +3931,7 @@ export function initModelCanvas() {
       };
     }).filter(Boolean);
 
-    const badgePosMap = resolveBadgePositions(edgesWithCoords);
+    const badgePosMap = resolveBadgePositions(edgesWithCoords, currentDecimalDigits);
 
     // Edges
     edges.forEach(edge => {
@@ -3645,6 +3971,8 @@ export function initModelCanvas() {
       if (isSelected) {
         const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         halo.setAttribute('d', d);
+        halo.setAttribute('data-export-ui', 'true');
+        halo.classList.add('edge-halo');
         halo.setAttribute('fill', 'none');
         halo.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
         halo.setAttribute('stroke-width', String((parseFloat(edge.strokeWidth || '2')) + 5));
@@ -3679,6 +4007,8 @@ export function initModelCanvas() {
       
       const clickPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       clickPath.setAttribute('d', d);
+      clickPath.setAttribute('data-export-ui', 'true');
+      clickPath.classList.add('hit-path');
       clickPath.style.stroke = 'rgba(0,0,0,0.01)';
       clickPath.style.strokeWidth = '16';
       clickPath.style.fill = 'none';
@@ -3732,8 +4062,9 @@ export function initModelCanvas() {
         } else {
           clickPath.style.cursor = 'pointer';
           const hasExistingGc = gaussianCopulas.some(gc => (gc.source_construct === edge.sourceId || gc.source === edge.sourceId) && (gc.target_construct === edge.targetId || gc.target === edge.targetId));
-          const hoverMidX = (x1 + x2) / 2;
-          const hoverMidY = (y1 + y2) / 2;
+          const edgeMid = getEdgePolylineMidpoint(edge, x1, y1, x2, y2);
+          const hoverMidX = edgeMid.x;
+          const hoverMidY = edgeMid.y;
 
           const copulaInd = document.createElementNS('http://www.w3.org/2000/svg', 'g');
           copulaInd.setAttribute('class', 'copula-hover-indicator');
@@ -3773,8 +4104,9 @@ export function initModelCanvas() {
         } else {
           clickPath.style.cursor = 'pointer';
           const hasExistingQe = quadraticEffects.some(qe => (qe.predictor_construct === edge.sourceId || qe.predictor === edge.sourceId || qe.source === edge.sourceId) && (qe.target_construct === edge.targetId || qe.target === edge.targetId));
-          const hoverMidX = (x1 + x2) / 2;
-          const hoverMidY = (y1 + y2) / 2;
+          const edgeMid = getEdgePolylineMidpoint(edge, x1, y1, x2, y2);
+          const hoverMidX = edgeMid.x;
+          const hoverMidY = edgeMid.y;
 
           const quadInd = document.createElementNS('http://www.w3.org/2000/svg', 'g');
           quadInd.setAttribute('class', 'quadratic-hover-indicator');
@@ -4003,7 +4335,7 @@ export function initModelCanvas() {
       const defModColor = isDark ? '#cbd5e1' : 'rgba(107, 78, 230, 0.75)';
       const effectiveModColor = mod.color || defModColor;
 
-      if (isSelected) {
+      if (isSelected && mode !== 'copula') {
         const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         halo.setAttribute('d', geo.path);
         halo.setAttribute('fill', 'none');
@@ -4024,6 +4356,7 @@ export function initModelCanvas() {
       dashLine.style.strokeDasharray = mod.strokeDasharray !== undefined ? mod.strokeDasharray : '2 4';
       dashLine.style.fill = 'none';
       dashLine.style.cursor = 'pointer';
+      if (mode === 'copula') dashLine.style.pointerEvents = 'none';
 
       const modArrow = mod.arrowhead !== undefined ? mod.arrowhead : 'open';
       if (modArrow && modArrow !== 'none') {
@@ -4043,31 +4376,38 @@ export function initModelCanvas() {
       dot.setAttribute('stroke', '#ffffff');
       dot.setAttribute('stroke-width', '1.5');
       dot.style.cursor = 'pointer';
+      if (mode === 'copula') dot.style.pointerEvents = 'none';
       edgesLayer.appendChild(dot);
 
       // 2b. If other moderations chain onto this moderation, render a midpoint dot where they connect
       const hasChildren = moderatingEffects.some(m => m.attachToModId === mod.id);
-      const midDotX = geo.midX;
-      const midDotY = geo.midY;
+      let midDot = null;
+      if (hasChildren) {
+        const midDotX = geo.midX;
+        const midDotY = geo.midY;
 
-      const midDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      midDot.setAttribute('cx', midDotX);
-      midDot.setAttribute('cy', midDotY);
-      midDot.setAttribute('r', hasChildren ? '5' : '4');
-      midDot.setAttribute('fill', hasChildren ? effectiveModColor : (isDark ? '#1e293b' : '#ffffff'));
-      midDot.setAttribute('stroke', effectiveModColor);
-      midDot.setAttribute('stroke-width', '1.5');
-      if (!hasChildren) midDot.setAttribute('stroke-dasharray', '2 2');
-      midDot.style.cursor = 'pointer';
-      edgesLayer.appendChild(midDot);
+        midDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        midDot.setAttribute('cx', midDotX);
+        midDot.setAttribute('cy', midDotY);
+        midDot.setAttribute('r', '5');
+        midDot.setAttribute('fill', effectiveModColor);
+        midDot.setAttribute('stroke', '#ffffff');
+        midDot.setAttribute('stroke-width', '1.5');
+        midDot.style.cursor = 'pointer';
+        if (mode === 'copula') midDot.style.pointerEvents = 'none';
+        edgesLayer.appendChild(midDot);
+      }
 
       // 3. Invisible wide clickable hit-target for moderation line and dot
       const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       hitPath.setAttribute('d', geo.path);
+      hitPath.setAttribute('data-export-ui', 'true');
+      hitPath.classList.add('hit-path');
       hitPath.style.stroke = 'rgba(0,0,0,0.001)';
       hitPath.style.strokeWidth = '32';
       hitPath.style.fill = 'none';
       hitPath.style.cursor = 'pointer';
+      if (mode === 'copula') hitPath.style.pointerEvents = 'none';
 
       const handleModClick = (e) => {
         e.stopPropagation();
@@ -4095,11 +4435,11 @@ export function initModelCanvas() {
 
       hitPath.addEventListener('click', handleModClick);
       dot.addEventListener('click', handleModClick);
-      midDot.addEventListener('click', handleModClick);
+      if (midDot) midDot.addEventListener('click', handleModClick);
       hitPath.addEventListener('contextmenu', (e) => showContextMenu(e, mod.id));
       dot.addEventListener('contextmenu', (e) => showContextMenu(e, mod.id));
       edgesLayer.appendChild(hitPath);
-      if (isSelected) {
+      if (isSelected && mode !== 'copula') {
         if (mod.curved) {
           const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
           handle.setAttribute('cx', geo.midX); handle.setAttribute('cy', geo.midY); handle.setAttribute('r', 5);
@@ -4168,6 +4508,7 @@ export function initModelCanvas() {
       badgeG.setAttribute('class', 'edge-result-badge moderation-badge');
       badgeG.setAttribute('transform', `translate(${badgeX}, ${badgeY})`);
       badgeG.setAttribute('pointer-events', 'auto');
+      if (mode === 'copula') badgeG.style.pointerEvents = 'none';
       badgeG.style.cursor = 'pointer';
 
       const textVal = formatCanvasNumber(modDetails.beta);
@@ -4220,18 +4561,33 @@ export function initModelCanvas() {
     gaussianCopulas.forEach(gc => {
       const geo = getGaussianCopulaGeometry(gc);
       if (!geo) return;
-      const { nodeX, nodeY, gcRadius, startX, startY, landX, landY } = geo;
+      const { nodeX, nodeY, gcRadius, startX, startY, landX, landY, isCurved, gcCurv, arcMidX, arcMidY, handleX, handleY, gnx, gny, waypoints } = geo;
 
       const isSelected = selectedIds.has(gc.id);
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      const defGcColor = isDark ? '#e2e8f0' : '#334155';
+      const defGcColor = 'var(--color-accent, #6B4EE6)';
+      const effectiveGcColor = gc.color || defGcColor;
+      const gcStrokeWidth = gc.strokeWidth !== undefined ? String(gc.strokeWidth) : '1.8';
+      const gcDasharray = gc.strokeDasharray !== undefined ? gc.strokeDasharray : (isCurved ? '4 4' : '4 4');
+
+      let d = `M ${startX} ${startY}`;
+      if (isCurved) {
+        d += ` Q ${arcMidX} ${arcMidY} ${landX} ${landY}`;
+      } else {
+        if (waypoints && waypoints.length > 0) {
+          waypoints.forEach(wp => {
+            d += ` L ${wp.x} ${wp.y}`;
+          });
+        }
+        d += ` L ${landX} ${landY}`;
+      }
 
       if (isSelected) {
         const haloLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        haloLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+        haloLine.setAttribute('d', d);
         haloLine.setAttribute('fill', 'none');
-        haloLine.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
-        haloLine.setAttribute('stroke-width', '6.5');
+        haloLine.setAttribute('stroke', effectiveGcColor);
+        haloLine.setAttribute('stroke-width', String(parseFloat(gcStrokeWidth) + 5));
         haloLine.setAttribute('stroke-opacity', '0.45');
         haloLine.setAttribute('stroke-linecap', 'round');
         edgesLayer.appendChild(haloLine);
@@ -4241,37 +4597,51 @@ export function initModelCanvas() {
         haloNode.setAttribute('cy', nodeY);
         haloNode.setAttribute('r', String(gcRadius + 4));
         haloNode.setAttribute('fill', 'none');
-        haloNode.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
+        haloNode.setAttribute('stroke', effectiveGcColor);
         haloNode.setAttribute('stroke-width', '3');
         haloNode.setAttribute('stroke-opacity', '0.6');
         edgesLayer.appendChild(haloNode);
       }
 
-      // 1. Dotted line from GC node to path midpoint
+      // 1. Line from GC node to path midpoint
       const dotLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      dotLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+      dotLine.setAttribute('d', d);
       dotLine.setAttribute('class', isSelected ? 'copula-line selected' : 'copula-line');
-      dotLine.style.stroke = defGcColor;
-      dotLine.style.strokeWidth = '1.5';
-      dotLine.style.strokeDasharray = '2 4';
+      dotLine.style.stroke = effectiveGcColor;
+      dotLine.style.strokeWidth = gcStrokeWidth;
+      if (gcDasharray) dotLine.style.strokeDasharray = gcDasharray;
+      else dotLine.style.strokeDasharray = '';
       dotLine.style.fill = 'none';
       dotLine.style.cursor = 'pointer';
+
+      const gcArrow = gc.arrowhead !== undefined ? gc.arrowhead : 'none';
+      if (gcArrow && gcArrow !== 'none') {
+        const mId = getOrCreateMarker(gcArrow, effectiveGcColor);
+        dotLine.setAttribute('marker-end', `url(#${mId})`);
+      } else {
+        dotLine.removeAttribute('marker-end');
+      }
       edgesLayer.appendChild(dotLine);
 
-      // 2. Landing dot on the path midpoint
-      const landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      landDot.setAttribute('cx', landX);
-      landDot.setAttribute('cy', landY);
-      landDot.setAttribute('r', '4');
-      landDot.setAttribute('fill', defGcColor);
-      landDot.setAttribute('stroke', '#ffffff');
-      landDot.setAttribute('stroke-width', '1.5');
-      landDot.style.cursor = 'pointer';
-      edgesLayer.appendChild(landDot);
+      // 2. Landing dot on the path midpoint (if not using arrowhead marker)
+      let landDot = null;
+      if (!gcArrow || gcArrow === 'none' || gcArrow === 'circle') {
+        landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        landDot.setAttribute('cx', landX);
+        landDot.setAttribute('cy', landY);
+        landDot.setAttribute('r', '3');
+        landDot.setAttribute('fill', effectiveGcColor);
+        landDot.setAttribute('stroke', '#ffffff');
+        landDot.setAttribute('stroke-width', '1.5');
+        landDot.style.cursor = 'pointer';
+        edgesLayer.appendChild(landDot);
+      }
 
       // 3. Wide invisible hit path for line & landing dot
       const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      hitPath.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+      hitPath.setAttribute('d', d);
+      hitPath.setAttribute('data-export-ui', 'true');
+      hitPath.classList.add('hit-path');
       hitPath.style.stroke = 'rgba(0,0,0,0.001)';
       hitPath.style.strokeWidth = '24';
       hitPath.style.fill = 'none';
@@ -4293,9 +4663,9 @@ export function initModelCanvas() {
       };
 
       hitPath.addEventListener('click', handleGcClick);
-      landDot.addEventListener('click', handleGcClick);
+      if (landDot) landDot.addEventListener('click', handleGcClick);
       hitPath.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
-      landDot.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
+      if (landDot) landDot.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
       edgesLayer.appendChild(hitPath);
 
       // 4. GC Node Circle
@@ -4307,8 +4677,8 @@ export function initModelCanvas() {
       gcCircle.setAttribute('cx', nodeX);
       gcCircle.setAttribute('cy', nodeY);
       gcCircle.setAttribute('r', String(gcRadius));
-      gcCircle.setAttribute('fill', isDark ? '#0f172a' : '#1e293b');
-      gcCircle.setAttribute('stroke', isSelected ? 'var(--color-accent, #6B4EE6)' : '#ffffff');
+      gcCircle.setAttribute('fill', isDark ? '#1e1b4b' : '#ede9fe');
+      gcCircle.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
       gcCircle.setAttribute('stroke-width', '2');
       gcGroup.appendChild(gcCircle);
 
@@ -4317,7 +4687,7 @@ export function initModelCanvas() {
       gcText.setAttribute('y', nodeY);
       gcText.setAttribute('text-anchor', 'middle');
       gcText.setAttribute('dominant-baseline', 'central');
-      gcText.setAttribute('fill', '#ffffff');
+      gcText.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
       gcText.setAttribute('font-size', '11');
       gcText.setAttribute('font-weight', '700');
       gcText.setAttribute('font-family', 'var(--font-sans, system-ui)');
@@ -4350,14 +4720,103 @@ export function initModelCanvas() {
       gcCircle.addEventListener('contextmenu', (e) => showContextMenu(e, gc.id));
       edgesLayer.appendChild(gcGroup);
 
+      // 4b. Straight line bend handles / waypoint handles for GC (appended AFTER hitPath & gcGroup)
+      if (isSelected) {
+        if (isCurved) {
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', handleX);
+          handle.setAttribute('cy', handleY);
+          handle.setAttribute('r', '6');
+          handle.setAttribute('fill', effectiveGcColor);
+          handle.setAttribute('stroke', '#ffffff');
+          handle.setAttribute('stroke-width', '1.5');
+          handle.setAttribute('data-export-ui', 'true');
+          handle.setAttribute('pointer-events', 'all');
+          handle.style.pointerEvents = 'all';
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', (event) => {
+            if (event.button === 0) {
+              event.stopPropagation();
+              event.preventDefault();
+              draggingCurve = gc;
+            }
+          });
+          edgesLayer.appendChild(handle);
+        } else {
+          // Existing waypoint moveable handles
+          if (waypoints && waypoints.length > 0) {
+            waypoints.forEach((wp, idx) => {
+              const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+              handle.setAttribute('cx', wp.x);
+              handle.setAttribute('cy', wp.y);
+              handle.setAttribute('r', '5');
+              handle.setAttribute('fill', effectiveGcColor);
+              handle.setAttribute('stroke', '#ffffff');
+              handle.setAttribute('stroke-width', '1.5');
+              handle.setAttribute('data-export-ui', 'true');
+              handle.setAttribute('pointer-events', 'all');
+              handle.style.pointerEvents = 'all';
+              handle.style.cursor = 'move';
+              handle.addEventListener('mousedown', (e) => {
+                if (e.button === 0) {
+                  e.stopPropagation();
+                  draggingWaypoint = { edge: gc, idx };
+                }
+              });
+              edgesLayer.appendChild(handle);
+            });
+          }
+
+          // Midpoint handles on each straight segment to create a bend/waypoint on drag
+          const points = [{ x: startX, y: startY }, ...(waypoints || []), { x: landX, y: landY }];
+          for (let i = 0; i < points.length - 1; i++) {
+            const midX = (points[i].x + points[i + 1].x) / 2;
+            const midY = (points[i].y + points[i + 1].y) / 2;
+            const midHandle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            midHandle.setAttribute('cx', midX);
+            midHandle.setAttribute('cy', midY);
+            midHandle.setAttribute('r', '5');
+            midHandle.setAttribute('fill', 'rgba(168,85,247,0.8)');
+            midHandle.setAttribute('stroke', '#ffffff');
+            midHandle.setAttribute('stroke-width', '1.5');
+            midHandle.setAttribute('data-export-ui', 'true');
+            midHandle.setAttribute('pointer-events', 'all');
+            midHandle.style.pointerEvents = 'all';
+            midHandle.style.cursor = 'crosshair';
+            midHandle.addEventListener('mousedown', (e) => {
+              if (e.button === 0) {
+                e.stopPropagation();
+                pendingWaypoint = { edge: gc, idx: i, midX, midY };
+              }
+            });
+            edgesLayer.appendChild(midHandle);
+          }
+        }
+      }
+
       // 5. Collect result badge for GC dotted line
       const gcDetails = getGaussianCopulaDetails(gc);
       if (gcDetails && gcDetails.beta !== null && gcDetails.beta !== undefined) {
+        let bX, bY;
+        if (waypoints && waypoints.length > 0) {
+          const pts = [{ x: startX, y: startY }, ...waypoints, { x: landX, y: landY }];
+          const midSeg = Math.floor((pts.length - 1) / 2);
+          bX = (pts[midSeg].x + pts[midSeg + 1].x) / 2;
+          bY = (pts[midSeg].y + pts[midSeg + 1].y) / 2;
+        } else if (isCurved) {
+          const t = 0.35;
+          const invT = 1 - t;
+          bX = invT * invT * startX + 2 * invT * t * arcMidX + t * t * landX;
+          bY = invT * invT * startY + 2 * invT * t * arcMidY + t * t * landY;
+        } else {
+          bX = startX + 0.35 * (landX - startX);
+          bY = startY + 0.35 * (landY - startY);
+        }
         copulaBadgesToRender.push({
           gc,
           gcDetails,
-          badgeX: (startX + landX) / 2,
-          badgeY: (startY + landY) / 2,
+          badgeX: bX,
+          badgeY: bY,
           isSelected,
           handleGcClick,
           hitPath
@@ -4431,7 +4890,30 @@ export function initModelCanvas() {
     quadraticEffects.forEach(qe => {
       const geo = getQuadraticEffectGeometry(qe);
       if (!geo) return;
-      const { pNode, tNode, nodeX, nodeY, qeRadius, startX, startY, landX, landY, arcStartX, arcStartY, arcMidX, arcMidY, badgeX, badgeY } = geo;
+      const {
+        pNode,
+        tNode,
+        nodeX,
+        nodeY,
+        qeRadius,
+        startX,
+        startY,
+        landX,
+        landY,
+        arcStartX,
+        arcStartY,
+        arcMidX,
+        arcMidY,
+        handleX,
+        handleY,
+        badgeX,
+        badgeY,
+        cnx,
+        cny,
+        isCurved,
+        qeCurv,
+        waypoints
+      } = geo;
       const isSelected = selectedIds.has(qe.id);
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
 
@@ -4448,43 +4930,79 @@ export function initModelCanvas() {
         render();
       };
 
+      const effectiveQeColor = qe.color || 'var(--color-accent, #6B4EE6)';
+      const qeStrokeWidth = qe.strokeWidth !== undefined ? String(qe.strokeWidth) : '1.8';
+
       if (!activeResults) {
         // --- EDITOR MODE: Curved arc from predictor to path midpoint with x² badge ---
+        const qeDasharray = qe.strokeDasharray !== undefined ? qe.strokeDasharray : '5 4';
+        const qeArrow = qe.arrowhead !== undefined ? qe.arrowhead : 'open';
+
+        let d = `M ${arcStartX} ${arcStartY}`;
+        if (isCurved) {
+          d += ` Q ${arcMidX} ${arcMidY} ${landX} ${landY}`;
+        } else {
+          if (waypoints && waypoints.length > 0) {
+            waypoints.forEach(wp => {
+              d += ` L ${wp.x} ${wp.y}`;
+            });
+          }
+          d += ` L ${landX} ${landY}`;
+        }
+
         if (isSelected) {
           const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          halo.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
+          halo.setAttribute('d', d);
           halo.setAttribute('fill', 'none');
-          halo.setAttribute('stroke', '#10b981');
-          halo.setAttribute('stroke-width', '6.5');
+          halo.setAttribute('stroke', effectiveQeColor);
+          halo.setAttribute('stroke-width', String(parseFloat(qeStrokeWidth) + 5));
           halo.setAttribute('stroke-opacity', '0.35');
           halo.setAttribute('stroke-linecap', 'round');
           edgesLayer.appendChild(halo);
         }
 
         const arcPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        arcPath.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
+        arcPath.setAttribute('d', d);
+        arcPath.setAttribute('class', isSelected ? 'quadratic-line selected' : 'quadratic-line');
         arcPath.setAttribute('fill', 'none');
-        arcPath.setAttribute('stroke', '#10b981');
-        arcPath.setAttribute('stroke-width', '1.8');
-        arcPath.setAttribute('stroke-dasharray', '5 4');
+        arcPath.setAttribute('stroke', effectiveQeColor);
+        arcPath.setAttribute('stroke-width', qeStrokeWidth);
+        if (qeDasharray) arcPath.setAttribute('stroke-dasharray', qeDasharray);
+        else arcPath.removeAttribute('stroke-dasharray');
+
+        if (qeArrow && qeArrow !== 'none') {
+          const mId = getOrCreateMarker(qeArrow, effectiveQeColor);
+          arcPath.setAttribute('marker-end', `url(#${mId})`);
+        } else {
+          arcPath.removeAttribute('marker-end');
+        }
         edgesLayer.appendChild(arcPath);
 
-        const landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        landDot.setAttribute('cx', landX);
-        landDot.setAttribute('cy', landY);
-        landDot.setAttribute('r', '3.5');
-        landDot.setAttribute('fill', '#10b981');
-        edgesLayer.appendChild(landDot);
+        let landDot = null;
+        if (!qeArrow || qeArrow === 'none' || qeArrow === 'circle') {
+          landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          landDot.setAttribute('cx', landX);
+          landDot.setAttribute('cy', landY);
+          landDot.setAttribute('r', '3');
+          landDot.setAttribute('fill', effectiveQeColor);
+          landDot.setAttribute('stroke', '#ffffff');
+          landDot.setAttribute('stroke-width', '1.5');
+          edgesLayer.appendChild(landDot);
+        }
 
         // Clickable hit area
         const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        hitPath.setAttribute('d', `M ${arcStartX} ${arcStartY} Q ${arcMidX} ${arcMidY} ${landX} ${landY}`);
+        hitPath.setAttribute('d', d);
+        hitPath.setAttribute('data-export-ui', 'true');
+        hitPath.classList.add('hit-path');
         hitPath.setAttribute('fill', 'none');
-        hitPath.setAttribute('stroke', 'rgba(0,0,0,0.01)');
-        hitPath.setAttribute('stroke-width', '16');
+        hitPath.style.stroke = 'rgba(0,0,0,0.01)';
+        hitPath.style.strokeWidth = '16';
         hitPath.style.cursor = 'pointer';
         hitPath.addEventListener('click', handleQeClick);
+        if (landDot) landDot.addEventListener('click', handleQeClick);
         hitPath.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
+        if (landDot) landDot.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
         edgesLayer.appendChild(hitPath);
 
         // Badge with x²
@@ -4498,8 +5016,8 @@ export function initModelCanvas() {
         bg.setAttribute('width', '24');
         bg.setAttribute('height', '18');
         bg.setAttribute('rx', '4');
-        bg.setAttribute('fill', isDark ? '#064e3b' : '#ecfdf5');
-        bg.setAttribute('stroke', isSelected ? 'var(--color-accent, #6B4EE6)' : '#10b981');
+        bg.setAttribute('fill', isDark ? '#1e1b4b' : '#ede9fe');
+        bg.setAttribute('stroke', effectiveQeColor);
         bg.setAttribute('stroke-width', isSelected ? '2' : '1.2');
         badgeG.appendChild(bg);
 
@@ -4508,21 +5026,90 @@ export function initModelCanvas() {
         txt.setAttribute('dominant-baseline', 'central');
         txt.setAttribute('font-size', '11');
         txt.setAttribute('font-weight', '700');
-        txt.setAttribute('fill', isDark ? '#a7f3d0' : '#059669');
+        txt.setAttribute('fill', effectiveQeColor);
         txt.textContent = 'x²';
         badgeG.appendChild(txt);
 
         badgeG.addEventListener('click', handleQeClick);
         badgeG.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
         edgesLayer.appendChild(badgeG);
+
+        // Curves are adjusted by dragging their midpoint; straight lines use waypoints.
+        if (isSelected && isCurved) {
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          handle.setAttribute('cx', handleX);
+          handle.setAttribute('cy', handleY);
+          handle.setAttribute('r', '5');
+          handle.setAttribute('fill', effectiveQeColor);
+          handle.setAttribute('stroke', '#ffffff');
+          handle.setAttribute('stroke-width', '1.5');
+          handle.setAttribute('data-export-ui', 'true');
+          handle.style.cursor = 'move';
+          handle.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            e.preventDefault();
+            draggingCurve = qe;
+          });
+          edgesLayer.appendChild(handle);
+        } else if (isSelected) {
+          // Existing waypoint moveable handles
+          if (waypoints && waypoints.length > 0) {
+            waypoints.forEach((wp, idx) => {
+              const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+              handle.setAttribute('cx', wp.x);
+              handle.setAttribute('cy', wp.y);
+              handle.setAttribute('r', '5');
+              handle.setAttribute('fill', effectiveQeColor);
+              handle.setAttribute('stroke', '#ffffff');
+              handle.setAttribute('stroke-width', '1.5');
+              handle.setAttribute('data-export-ui', 'true');
+              handle.style.cursor = 'move';
+              handle.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                draggingWaypoint = { edge: qe, idx };
+              });
+              edgesLayer.appendChild(handle);
+            });
+          }
+          // Midpoint handles for adding new waypoints
+          const pts = [{ x: arcStartX, y: arcStartY }, ...(waypoints || []), { x: landX, y: landY }];
+          for (let i = 0; i < pts.length - 1; i++) {
+            const midX = (pts[i].x + pts[i+1].x) / 2;
+            const midY = (pts[i].y + pts[i+1].y) / 2;
+            const midHandle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            midHandle.setAttribute('cx', midX);
+            midHandle.setAttribute('cy', midY);
+            midHandle.setAttribute('r', '5');
+            midHandle.setAttribute('fill', 'rgba(168,85,247,0.8)');
+            midHandle.setAttribute('data-export-ui', 'true');
+            midHandle.style.cursor = 'crosshair';
+            midHandle.addEventListener('mousedown', (e) => {
+              e.stopPropagation();
+              pendingWaypoint = { edge: qe, idx: i, midX, midY };
+            });
+            edgesLayer.appendChild(midHandle);
+          }
+        }
       } else {
-        // --- RESULTS MODE: SmartPLS 4 style green circle construct labeled '{P} x / {P}' with dashed line ---
+        // --- RESULTS MODE: SmartPLS 4 style accent circle construct labeled '{P} x / {P}' with dashed line ---
+        const qeDasharray = qe.strokeDasharray !== undefined ? qe.strokeDasharray : '2 4';
+        const qeArrow = qe.arrowhead !== undefined ? qe.arrowhead : 'circle';
+
+        let d = `M ${startX} ${startY}`;
+        if (!isCurved && waypoints && waypoints.length > 0) {
+          waypoints.forEach(wp => {
+            d += ` L ${wp.x} ${wp.y}`;
+          });
+        }
+        d += ` L ${landX} ${landY}`;
+
         if (isSelected) {
           const haloLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          haloLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+          haloLine.setAttribute('d', d);
           haloLine.setAttribute('fill', 'none');
-          haloLine.setAttribute('stroke', '#10b981');
-          haloLine.setAttribute('stroke-width', '6.5');
+          haloLine.setAttribute('stroke', effectiveQeColor);
+          haloLine.setAttribute('stroke-width', String(parseFloat(qeStrokeWidth) + 5));
           haloLine.setAttribute('stroke-opacity', '0.45');
           haloLine.setAttribute('stroke-linecap', 'round');
           edgesLayer.appendChild(haloLine);
@@ -4532,7 +5119,7 @@ export function initModelCanvas() {
           haloNode.setAttribute('cy', nodeY);
           haloNode.setAttribute('r', String(qeRadius + 4));
           haloNode.setAttribute('fill', 'none');
-          haloNode.setAttribute('stroke', '#10b981');
+          haloNode.setAttribute('stroke', effectiveQeColor);
           haloNode.setAttribute('stroke-width', '3');
           haloNode.setAttribute('stroke-opacity', '0.6');
           edgesLayer.appendChild(haloNode);
@@ -4540,26 +5127,41 @@ export function initModelCanvas() {
 
         // Dashed line from circle to path midpoint
         const dotLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        dotLine.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+        dotLine.setAttribute('d', d);
         dotLine.setAttribute('class', isSelected ? 'quadratic-line selected' : 'quadratic-line');
-        dotLine.style.stroke = '#10b981';
-        dotLine.style.strokeWidth = '1.8';
-        dotLine.style.strokeDasharray = '4 4';
+        dotLine.style.stroke = effectiveQeColor;
+        dotLine.style.strokeWidth = qeStrokeWidth;
+        if (qeDasharray) dotLine.style.strokeDasharray = qeDasharray;
+        else dotLine.style.strokeDasharray = '';
         dotLine.style.fill = 'none';
         dotLine.style.cursor = 'pointer';
+
+        if (qeArrow && qeArrow !== 'none') {
+          const mId = getOrCreateMarker(qeArrow, effectiveQeColor);
+          dotLine.setAttribute('marker-end', `url(#${mId})`);
+        } else {
+          dotLine.removeAttribute('marker-end');
+        }
         edgesLayer.appendChild(dotLine);
 
         // Landing dot on the path midpoint
-        const landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        landDot.setAttribute('cx', landX);
-        landDot.setAttribute('cy', landY);
-        landDot.setAttribute('r', '4');
-        landDot.setAttribute('fill', '#10b981');
-        edgesLayer.appendChild(landDot);
+        let landDot = null;
+        if (!qeArrow || qeArrow === 'none' || qeArrow === 'circle') {
+          landDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          landDot.setAttribute('cx', landX);
+          landDot.setAttribute('cy', landY);
+          landDot.setAttribute('r', '3');
+          landDot.setAttribute('fill', effectiveQeColor);
+          landDot.setAttribute('stroke', '#ffffff');
+          landDot.setAttribute('stroke-width', '1.5');
+          edgesLayer.appendChild(landDot);
+        }
 
         // Hit path
         const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        hitPath.setAttribute('d', `M ${startX} ${startY} L ${landX} ${landY}`);
+        hitPath.setAttribute('d', d);
+        hitPath.setAttribute('data-export-ui', 'true');
+        hitPath.classList.add('hit-path');
         hitPath.style.stroke = 'rgba(0,0,0,0.01)';
         hitPath.style.strokeWidth = '16';
         hitPath.style.fill = 'none';
@@ -4577,36 +5179,23 @@ export function initModelCanvas() {
         qeCircle.setAttribute('cx', nodeX);
         qeCircle.setAttribute('cy', nodeY);
         qeCircle.setAttribute('r', String(qeRadius));
-        qeCircle.setAttribute('fill', isDark ? '#064e3b' : '#ecfdf5');
-        qeCircle.setAttribute('stroke', isSelected ? 'var(--color-accent, #6B4EE6)' : '#10b981');
+        qeCircle.setAttribute('fill', isDark ? '#1e1b4b' : '#ede9fe');
+        qeCircle.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
         qeCircle.setAttribute('stroke-width', '2.5');
         qeGroup.appendChild(qeCircle);
 
-        const qeText1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        qeText1.setAttribute('x', nodeX);
-        qeText1.setAttribute('y', nodeY - 6);
-        qeText1.setAttribute('text-anchor', 'middle');
-        qeText1.setAttribute('dominant-baseline', 'central');
-        qeText1.setAttribute('fill', isDark ? '#a7f3d0' : '#065f46');
-        qeText1.setAttribute('font-size', '10.5');
-        qeText1.setAttribute('font-weight', '700');
-        qeText1.setAttribute('font-family', 'var(--font-sans, system-ui)');
-        qeText1.setAttribute('pointer-events', 'none');
-        qeText1.textContent = `${pNode.label} x`;
-        qeGroup.appendChild(qeText1);
-
-        const qeText2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        qeText2.setAttribute('x', nodeX);
-        qeText2.setAttribute('y', nodeY + 8);
-        qeText2.setAttribute('text-anchor', 'middle');
-        qeText2.setAttribute('dominant-baseline', 'central');
-        qeText2.setAttribute('fill', isDark ? '#a7f3d0' : '#065f46');
-        qeText2.setAttribute('font-size', '10.5');
-        qeText2.setAttribute('font-weight', '700');
-        qeText2.setAttribute('font-family', 'var(--font-sans, system-ui)');
-        qeText2.setAttribute('pointer-events', 'none');
-        qeText2.textContent = `${pNode.label}`;
-        qeGroup.appendChild(qeText2);
+        const qeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        qeText.setAttribute('x', nodeX);
+        qeText.setAttribute('y', nodeY);
+        qeText.setAttribute('text-anchor', 'middle');
+        qeText.setAttribute('dominant-baseline', 'central');
+        qeText.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
+        qeText.setAttribute('font-size', '10.5');
+        qeText.setAttribute('font-weight', '700');
+        qeText.setAttribute('font-family', 'var(--font-sans, system-ui)');
+        qeText.setAttribute('pointer-events', 'none');
+        qeText.textContent = 'QE';
+        qeGroup.appendChild(qeText);
 
         // Mouse drag handler for Quadratic node
         qeCircle.addEventListener('mousedown', (e) => {
@@ -4633,14 +5222,84 @@ export function initModelCanvas() {
         qeCircle.addEventListener('contextmenu', (e) => showContextMenu(e, qe.id));
         edgesLayer.appendChild(qeGroup);
 
-        // Collect result badge for Quadratic dashed line
+        // Only explicitly straight effects expose waypoint handles.
+        if (isSelected && !isCurved) {
+          // Existing waypoint moveable handles
+          if (waypoints && waypoints.length > 0) {
+            waypoints.forEach((wp, idx) => {
+              const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+              handle.setAttribute('cx', wp.x);
+              handle.setAttribute('cy', wp.y);
+              handle.setAttribute('r', '5');
+              handle.setAttribute('fill', effectiveQeColor);
+              handle.setAttribute('stroke', '#ffffff');
+              handle.setAttribute('stroke-width', '1.5');
+              handle.setAttribute('data-export-ui', 'true');
+              handle.setAttribute('pointer-events', 'all');
+              handle.style.pointerEvents = 'all';
+              handle.style.cursor = 'move';
+              handle.addEventListener('mousedown', (e) => {
+                if (e.button === 0) {
+                  e.stopPropagation();
+                  draggingWaypoint = { edge: qe, idx };
+                }
+              });
+              edgesLayer.appendChild(handle);
+            });
+          }
+
+          // Midpoint handles on each straight segment to create a bend/waypoint on drag
+          const points = [{ x: startX, y: startY }, ...(waypoints || []), { x: landX, y: landY }];
+          for (let i = 0; i < points.length - 1; i++) {
+            const midX = (points[i].x + points[i + 1].x) / 2;
+            const midY = (points[i].y + points[i + 1].y) / 2;
+            const midHandle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            midHandle.setAttribute('cx', midX);
+            midHandle.setAttribute('cy', midY);
+            midHandle.setAttribute('r', '5');
+            midHandle.setAttribute('fill', 'rgba(168,85,247,0.8)');
+            midHandle.setAttribute('stroke', '#ffffff');
+            midHandle.setAttribute('stroke-width', '1.5');
+            midHandle.setAttribute('data-export-ui', 'true');
+            midHandle.setAttribute('pointer-events', 'all');
+            midHandle.style.pointerEvents = 'all';
+            midHandle.style.cursor = 'crosshair';
+            midHandle.addEventListener('mousedown', (e) => {
+              if (e.button === 0) {
+                e.stopPropagation();
+                pendingWaypoint = { edge: qe, idx: i, midX, midY };
+              }
+            });
+            edgesLayer.appendChild(midHandle);
+          }
+        }
+
+        // Collect result badge for Quadratic dashed line (offset at t = 0.35 so handle at t = 0.5 is free)
         const qeDetails = getQuadraticEffectDetails(qe);
         if (qeDetails && qeDetails.beta !== null && qeDetails.beta !== undefined) {
+          // Result-mode quadratic connections are straight even when the
+          // editor representation is curved, so place the badge on that line.
+          let bX = startX + 0.35 * (landX - startX);
+          let bY = startY + 0.35 * (landY - startY);
+          if (!isCurved && waypoints.length) {
+            const points = [{ x: startX, y: startY }, ...waypoints, { x: landX, y: landY }];
+            const lengths = points.slice(1).map((p, i) => Math.hypot(p.x - points[i].x, p.y - points[i].y));
+            let remaining = lengths.reduce((sum, length) => sum + length, 0) * 0.35;
+            for (let i = 0; i < lengths.length; i++) {
+              if (remaining <= lengths[i] && lengths[i] > 0) {
+                const t = remaining / lengths[i];
+                bX = points[i].x + t * (points[i + 1].x - points[i].x);
+                bY = points[i].y + t * (points[i + 1].y - points[i].y);
+                break;
+              }
+              remaining -= lengths[i];
+            }
+          }
           quadBadgesToRender.push({
             qe,
             qeDetails,
-            badgeX: (startX + landX) / 2,
-            badgeY: (startY + landY) / 2,
+            badgeX: bX,
+            badgeY: bY,
             isSelected,
             handleQeClick,
             hitPath
@@ -4677,9 +5336,9 @@ export function initModelCanvas() {
       bg.setAttribute('rx', '4');
       bg.setAttribute('fill', 'var(--canvas-badge-bg)');
       bg.style.fill = 'var(--canvas-badge-bg)';
-      bg.setAttribute('stroke', isSelected ? 'var(--color-accent)' : '#10b981');
-      bg.style.stroke = isSelected ? 'var(--color-accent)' : '#10b981';
-      bg.setAttribute('stroke-width', '1.5');
+      bg.setAttribute('stroke', isSelected ? 'var(--color-accent)' : 'var(--canvas-badge-border)');
+      bg.style.stroke = isSelected ? 'var(--color-accent)' : 'var(--canvas-badge-border)';
+      bg.setAttribute('stroke-width', '1');
       badgeG.appendChild(bg);
 
       const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -4687,9 +5346,9 @@ export function initModelCanvas() {
       txt.setAttribute('dominant-baseline', 'central');
       txt.setAttribute('font-size', '10.5');
       txt.setAttribute('font-family', 'var(--font-mono, monospace)');
-      txt.setAttribute('font-weight', '700');
-      txt.setAttribute('fill', '#059669');
-      txt.style.fill = '#059669';
+      txt.setAttribute('font-weight', '600');
+      txt.setAttribute('fill', 'var(--canvas-badge-text)');
+      txt.style.fill = 'var(--canvas-badge-text)';
       txt.textContent = textVal;
       badgeG.appendChild(txt);
 
@@ -5024,8 +5683,6 @@ export function initModelCanvas() {
         } else if (textAlign === 'justify') {
           text.setAttribute('x', -rectBox.width / 2 + padX);
           text.setAttribute('text-anchor', 'start');
-          text.setAttribute('textLength', Math.max(10, rectBox.width - padX * 2));
-          text.setAttribute('lengthAdjust', 'spacing');
         } else {
           // center
           text.setAttribute('x', '0');
@@ -5359,6 +6016,10 @@ export function initModelCanvas() {
             // Measurement outer loading badge
             const loading = getOuterLoading(parent, node);
             if (loading !== null && loading !== undefined) {
+              const textVal = formatCanvasNumber(loading);
+              const pillW = Math.max(30, textVal.length * 6.5 + 8);
+              const pillH = 15;
+
               let indMidX = (x1 + x2) / 2;
               let indMidY = (y1 + y2) / 2;
               if (indEdgeObj.waypoints && indEdgeObj.waypoints.length > 0) {
@@ -5375,15 +6036,39 @@ export function initModelCanvas() {
                 }
               }
 
+              // Ensure badge never overlaps construct circle or indicator box
+              const pX = isFormative ? x2 : x1;
+              const pY = isFormative ? y2 : y1;
+              const iX = isFormative ? x1 : x2;
+              const iY = isFormative ? y1 : y2;
+
+              const toIndX = iX - pX;
+              const toIndY = iY - pY;
+              const toIndLen = Math.hypot(toIndX, toIndY) || 1;
+              const uX = toIndX / toIndLen;
+              const uY = toIndY / toIndLen;
+
+              const minSafeFromParent = pillW / 2 + 8;
+              const minSafeFromIndicator = pillW / 2 + 6;
+
+              const curDistFromParent = Math.hypot(indMidX - pX, indMidY - pY);
+              const curDistFromInd = Math.hypot(indMidX - iX, indMidY - iY);
+
+              if (toIndLen >= minSafeFromParent + minSafeFromIndicator) {
+                if (curDistFromParent < minSafeFromParent) {
+                  indMidX = pX + uX * minSafeFromParent;
+                  indMidY = pY + uY * minSafeFromParent;
+                } else if (curDistFromInd < minSafeFromIndicator) {
+                  indMidX = iX - uX * minSafeFromIndicator;
+                  indMidY = iY - uY * minSafeFromIndicator;
+                }
+              }
+
               const badgeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
               badgeG.setAttribute('data-export-indicator', 'true');
               badgeG.setAttribute('class', 'edge-result-badge indicator-badge');
               badgeG.setAttribute('transform', `translate(${indMidX}, ${indMidY})`);
               badgeG.setAttribute('pointer-events', 'none');
-
-              const textVal = formatCanvasNumber(loading);
-              const pillW = Math.max(30, textVal.length * 6.5 + 8);
-              const pillH = 15;
 
               const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
               bg.setAttribute('x', -pillW / 2);
@@ -5450,6 +6135,8 @@ export function initModelCanvas() {
       const selectedNode = nodes.find(n => n.id === selectedId);
       const selectedEdge = edges.find(e => e.id === selectedId) ||
                            moderatingEffects.find(m => m.id === selectedId) ||
+                           gaussianCopulas.find(g => g.id === selectedId) ||
+                           quadraticEffects.find(q => q.id === selectedId) ||
                            (selectedId.startsWith('edge_ind_') ? { id: selectedId } : null);
       
       if (selectedNode) {
@@ -5599,7 +6286,11 @@ export function initModelCanvas() {
         }
 
         document.querySelectorAll('.tb-font-size-label').forEach(el => {
-          el.textContent = (selectedNode.fontSize || 14) + (el.textContent.includes('px') ? 'px' : '');
+          if (el.tagName === 'INPUT') {
+            el.value = `${selectedNode.fontSize || 14}px`;
+          } else {
+            el.textContent = (selectedNode.fontSize || 14) + (el.textContent.includes('px') ? 'px' : '');
+          }
         });
         
         const inputFontFamily = document.getElementById('input-font-family');
@@ -5621,7 +6312,7 @@ export function initModelCanvas() {
       }
     } else if (selectedIds.size > 1) {
       const selectedNodes = nodes.filter(n => selectedIds.has(n.id));
-      const selectedEdgesList = [...edges, ...moderatingEffects].filter(e => selectedIds.has(e.id));
+      const selectedEdgesList = [...edges, ...moderatingEffects, ...gaussianCopulas, ...quadraticEffects].filter(e => selectedIds.has(e.id));
       const selectedIndicatorEdges = nodes.some(n => selectedIds.has(`edge_ind_${n.id}`));
       if (selectedNodes.length > 0 && selectedEdgesList.length === 0 && !selectedIndicatorEdges) {
         if (formattingDivider) formattingDivider.style.display = 'block';
@@ -5864,6 +6555,41 @@ export function initModelCanvas() {
       const pt = svg.createSVGPoint();
       pt.x = e.clientX; pt.y = e.clientY;
       const cursor = pt.matrixTransform(zoomLayer.getScreenCTM().inverse());
+
+      if (draggingCurve.predictor_construct || draggingCurve.predictor) {
+        const qeGeo = getQuadraticEffectGeometry(draggingCurve);
+        if (qeGeo) {
+          if (!activeResults) {
+            const { arcStartX, arcStartY, landX, landY } = qeGeo;
+            draggingCurve.curveOffsetX = 2 * (cursor.x - (arcStartX + landX) / 2);
+            draggingCurve.curveOffsetY = 2 * (cursor.y - (arcStartY + landY) / 2);
+            draggingCurve.curved = true;
+            render();
+          } else {
+            const { startX, startY, landX, landY } = qeGeo;
+            const dx = landX - startX, dy = landY - startY, len = Math.hypot(dx, dy) || 1;
+            const rnx = -dy / len, rny = dx / len;
+            const proj = (cursor.x - (startX + landX) / 2) * rnx + (cursor.y - (startY + landY) / 2) * rny;
+            draggingCurve.curvature = Math.max(-180, Math.min(180, Math.round(2 * proj)));
+            draggingCurve.curved = true;
+            render();
+          }
+        }
+        return;
+      }
+
+      if (draggingCurve.source_construct || (draggingCurve.id && gaussianCopulas.some(g => g.id === draggingCurve.id))) {
+        const gcGeo = getGaussianCopulaGeometry(draggingCurve);
+        if (gcGeo) {
+          const { startX, startY, landX, landY, gnx, gny } = gcGeo;
+          const proj = (cursor.x - (startX + landX) / 2) * gnx + (cursor.y - (startY + landY) / 2) * gny;
+          draggingCurve.curvature = Math.max(-180, Math.min(180, Math.round(2 * proj)));
+          draggingCurve.curved = true;
+          render();
+        }
+        return;
+      }
+
       const source = nodes.find(node => node.id === draggingCurve.sourceId);
       const target = nodes.find(node => node.id === draggingCurve.targetId);
       const modGeometry = draggingCurve.moderator ? getModerationLineGeometry(draggingCurve) : null;
@@ -5956,8 +6682,9 @@ export function initModelCanvas() {
       pt.x = e.clientX;
       pt.y = e.clientY;
       const svgPt = pt.matrixTransform(zoomLayer.getScreenCTM().inverse());
-      draggingGC.gc.node_x = svgPt.x - draggingGC.offsetX;
-      draggingGC.gc.node_y = svgPt.y - draggingGC.offsetY;
+      const position = snapEffectPosition(svgPt.x - draggingGC.offsetX, svgPt.y - draggingGC.offsetY, draggingGC.gc, NODE_R * 0.55);
+      draggingGC.gc.node_x = position.x;
+      draggingGC.gc.node_y = position.y;
       render();
       return;
     }
@@ -5967,8 +6694,9 @@ export function initModelCanvas() {
       pt.x = e.clientX;
       pt.y = e.clientY;
       const svgPt = pt.matrixTransform(zoomLayer.getScreenCTM().inverse());
-      draggingQE.qe.node_x = svgPt.x - draggingQE.offsetX;
-      draggingQE.qe.node_y = svgPt.y - draggingQE.offsetY;
+      const position = snapEffectPosition(svgPt.x - draggingQE.offsetX, svgPt.y - draggingQE.offsetY, draggingQE.qe, NODE_R * 0.7);
+      draggingQE.qe.node_x = position.x;
+      draggingQE.qe.node_y = position.y;
       render();
       return;
     }
@@ -6252,12 +6980,14 @@ export function initModelCanvas() {
     
     if (draggingGC) {
       draggingGC = null;
+      guidesLayer.innerHTML = '';
       pushHistory();
       window.dispatchEvent(new CustomEvent('canvas-changed'));
     }
 
     if (draggingQE) {
       draggingQE = null;
+      guidesLayer.innerHTML = '';
       pushHistory();
       window.dispatchEvent(new CustomEvent('canvas-changed'));
     }
@@ -6360,6 +7090,42 @@ export function initModelCanvas() {
     }
   });
 
+  function snapEffectPosition(x, y, current, radius) {
+    guidesLayer.innerHTML = '';
+    if (!isSnapping) return { x, y };
+    const targets = nodes.map(node => ({ x: node.x, y: node.y, width: node.width || 64, height: node.height || (node.isLatent !== false ? 64 : 24) }));
+    gaussianCopulas.forEach(gc => {
+      if (gc === current) return;
+      const geo = getGaussianCopulaGeometry(gc);
+      if (geo) targets.push({ x: geo.nodeX, y: geo.nodeY, width: geo.gcRadius * 2, height: geo.gcRadius * 2 });
+    });
+    if (activeResults) quadraticEffects.forEach(qe => {
+      if (qe === current) return;
+      const geo = getQuadraticEffectGeometry(qe);
+      if (geo) targets.push({ x: geo.nodeX, y: geo.nodeY, width: geo.qeRadius * 2, height: geo.qeRadius * 2 });
+    });
+    let bestX = null, bestY = null;
+    for (const target of targets) {
+      for (const targetX of [target.x, target.x - target.width / 2, target.x + target.width / 2]) {
+        for (const ownX of [x, x - radius, x + radius]) {
+          const delta = targetX - ownX;
+          if (Math.abs(delta) < SNAP_THRESHOLD && (!bestX || Math.abs(delta) < Math.abs(bestX.delta))) bestX = { delta, guide: targetX };
+        }
+      }
+      for (const targetY of [target.y, target.y - target.height / 2, target.y + target.height / 2]) {
+        for (const ownY of [y, y - radius, y + radius]) {
+          const delta = targetY - ownY;
+          if (Math.abs(delta) < SNAP_THRESHOLD && (!bestY || Math.abs(delta) < Math.abs(bestY.delta))) bestY = { delta, guide: targetY };
+        }
+      }
+    }
+    if (bestX) { x += bestX.delta; drawLineGuide(bestX.guide, -5000, bestX.guide, 5000); }
+    else { const grid = Math.round(x / 20) * 20; if (Math.abs(x - grid) < SNAP_THRESHOLD) x = grid; }
+    if (bestY) { y += bestY.delta; drawLineGuide(-5000, bestY.guide, 5000, bestY.guide); }
+    else { const grid = Math.round(y / 20) * 20; if (Math.abs(y - grid) < SNAP_THRESHOLD) y = grid; }
+    return { x, y };
+  }
+
   function drawLineGuide(x1, y1, x2, y2) {
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     line.setAttribute('x1', x1);
@@ -6393,77 +7159,34 @@ export function initModelCanvas() {
       sX = edge.waypoints[edge.waypoints.length - 1].x;
       sY = edge.waypoints[edge.waypoints.length - 1].y;
     }
-    
-    let srcPortAngle = 0;
-    let tgtPortAngle = 0;
-    if (edge && Array.isArray(edges) && !edge.waypoints?.length) {
-      if (source.shape !== 'rectangle' && source.isLatent !== false) {
-        const outgoing = edges.filter(e => e && e.sourceId === source.id && !e.targetEdgeId && !e.sourceEdgeId);
-        if (outgoing.length > 1) {
-          outgoing.sort((a, b) => {
-            const tA = nodes.find(n => n.id === a.targetId);
-            const tB = nodes.find(n => n.id === b.targetId);
-            return (tA ? tA.y : 0) - (tB ? tB.y : 0);
-          });
-          const idx = outgoing.findIndex(e => e.id === edge.id || (e.sourceId === edge.sourceId && e.targetId === edge.targetId));
-          if (idx !== -1) {
-            const maxSpread = 0.28;
-            srcPortAngle = -maxSpread / 2 + (idx / (outgoing.length - 1)) * maxSpread;
-          }
-        }
-      }
-      if (target.shape !== 'rectangle' && target.isLatent !== false) {
-        const incoming = edges.filter(e => e && e.targetId === target.id && !e.targetEdgeId && !e.sourceEdgeId);
-        if (incoming.length > 1) {
-          incoming.sort((a, b) => {
-            const sA = nodes.find(n => n.id === a.sourceId);
-            const sB = nodes.find(n => n.id === b.sourceId);
-            return (sA ? sA.y : 0) - (sB ? sB.y : 0);
-          });
-          const idx = incoming.findIndex(e => e.id === edge.id || (e.sourceId === edge.sourceId && e.targetId === edge.targetId));
-          if (idx !== -1) {
-            const maxSpread = 0.28;
-            tgtPortAngle = -maxSpread / 2 + (idx / (incoming.length - 1)) * maxSpread;
-          }
-        }
-      }
-    }
 
-    const getIntersectionOffset = (node, ptX, ptY, isTarget) => {
+    const getIntersectionOffset = (node, ptX, ptY) => {
       const dx = ptX - node.x;
       const dy = ptY - node.y;
-      const distance = Math.sqrt(dx*dx + dy*dy);
+      const distance = Math.hypot(dx, dy);
       if (distance === 0) return { x: 0, y: 0 };
       
       const w = node.width || (node.isLatent !== false ? 64 : 64);
       const h = node.height || (node.isLatent !== false ? 64 : 24);
       const shape = node.shape || 'circle';
-      const dirX = isTarget ? dx : dx;
-      const dirY = isTarget ? dy : dy;
       
       if (shape === 'circle') {
         const rx = w / 2;
         const ry = h / 2;
-        const portOffset = isTarget ? tgtPortAngle : srcPortAngle;
-        if (portOffset !== 0) {
-          const baseAngle = Math.atan2(dirY, dirX);
-          const angle = baseAngle + portOffset;
-          return { x: Math.cos(angle) * rx, y: Math.sin(angle) * ry };
-        }
-        return { x: (dirX / distance) * rx, y: (dirY / distance) * ry };
+        return { x: (dx / distance) * rx, y: (dy / distance) * ry };
       } else {
         const rx = w / 2;
         const ry = h / 2;
-        if (Math.abs(dirX) * ry > Math.abs(dirY) * rx) {
-          return { x: Math.sign(dirX) * rx, y: dirY * (rx / Math.abs(dirX)) };
+        if (Math.abs(dx) * ry > Math.abs(dy) * rx) {
+          return { x: Math.sign(dx) * rx, y: dy * (rx / Math.abs(dx)) };
         } else {
-          return { x: dirX * (ry / Math.abs(dirY)), y: Math.sign(dirY) * ry };
+          return { x: dx * (ry / Math.abs(dy)), y: Math.sign(dy) * ry };
         }
       }
     };
     
-    const srcOff = getIntersectionOffset(source, tX, tY, false);
-    const tgtOff = getIntersectionOffset(target, sX, sY, true);
+    const srcOff = getIntersectionOffset(source, tX, tY);
+    const tgtOff = getIntersectionOffset(target, sX, sY);
     
     let x1 = source.x + srcOff.x;
     let y1 = source.y + srcOff.y;
@@ -6482,8 +7205,8 @@ export function initModelCanvas() {
       const cy = my + (dx / len) * curveVal;
 
       // 2nd pass: intersect from control point
-      const newSrcOff = getIntersectionOffset(source, cx, cy, false);
-      const newTgtOff = getIntersectionOffset(target, cx, cy, true);
+      const newSrcOff = getIntersectionOffset(source, cx, cy);
+      const newTgtOff = getIntersectionOffset(target, cx, cy);
       x1 = source.x + newSrcOff.x;
       y1 = source.y + newSrcOff.y;
       x2 = target.x + newTgtOff.x;
@@ -7091,7 +7814,22 @@ export function initModelCanvas() {
       ];
     } else if (isCopula) {
       // ─── Gaussian Copula Menu ───
+      const gcObj = gaussianCopulas.find(c => c.id === id);
+      const hasWaypoints = !!(gcObj && gcObj.waypoints && gcObj.waypoints.length > 0);
       items = [
+        ...(hasWaypoints || gcObj?.curved ? [
+          { id: 'ctx-reset-bend', label: 'Reset Arrow Bend', icon: 'restart_alt', action: () => {
+              if (gcObj) {
+                gcObj.waypoints = [];
+                gcObj.curved = false;
+                render();
+                pushHistory();
+                window.dispatchEvent(new CustomEvent('canvas-changed'));
+              }
+            }
+          },
+          { divider: true }
+        ] : []),
         { id: 'ctx-delete-copula', label: 'Remove', icon: 'delete', danger: true, shortcut: 'Del', action: () => deleteSelected() },
         { id: 'ctx-select-all-outgoing', label: 'Select all outgoing paths of this source', icon: 'arrow_forward', action: () => {
             const gc = gaussianCopulas.find(c => c.id === id);
@@ -7105,7 +7843,24 @@ export function initModelCanvas() {
       ];
     } else if (isQuadratic) {
       // ─── Quadratic Effect Menu ───
+      const qeObj = quadraticEffects.find(q => q.id === id);
+      const hasWaypoints = !!(qeObj && qeObj.waypoints && qeObj.waypoints.length > 0);
       items = [
+        ...(hasWaypoints || qeObj?.curved ? [
+          { id: 'ctx-reset-bend', label: 'Reset Arrow Bend', icon: 'restart_alt', action: () => {
+              if (qeObj) {
+                qeObj.waypoints = [];
+                qeObj.curved = false;
+                delete qeObj.curveOffsetX;
+                delete qeObj.curveOffsetY;
+                render();
+                pushHistory();
+                window.dispatchEvent(new CustomEvent('canvas-changed'));
+              }
+            }
+          },
+          { divider: true }
+        ] : []),
         { id: 'ctx-delete-quadratic', label: 'Remove Quadratic Effect', icon: 'delete', danger: true, shortcut: 'Del', action: () => deleteSelected() }
       ];
     } else if (isEdge) {
@@ -7892,6 +8647,22 @@ export function initModelCanvas() {
       const arrowhead = mod.arrowhead || 'open';
       const color = mod.color || (isDark ? '#cbd5e1' : 'rgba(107, 78, 230, 0.75)');
       const strokeWidth = mod.strokeWidth !== undefined ? mod.strokeWidth : 1.5;
+      return { lineStyle, arrowhead, color, strokeWidth };
+    }
+    const gc = gaussianCopulas.find(g => g.id === selId);
+    if (gc) {
+      const lineStyle = gc.curved ? 'curved' : (gc.strokeDasharray === '' ? 'solid' : (gc.strokeDasharray === '2 4' ? 'dotted' : 'dashed'));
+      const arrowhead = gc.arrowhead ?? 'none';
+      const color = gc.color || 'var(--color-accent, #6B4EE6)';
+      const strokeWidth = gc.strokeWidth !== undefined ? gc.strokeWidth : 1.8;
+      return { lineStyle, arrowhead, color, strokeWidth };
+    }
+    const qe = quadraticEffects.find(q => q.id === selId);
+    if (qe) {
+      const lineStyle = qe.curved === true ? 'curved' : (qe.strokeDasharray === '' ? 'solid' : (qe.strokeDasharray === '2 4' ? 'dotted' : 'dashed'));
+      const arrowhead = qe.arrowhead || 'open';
+      const color = qe.color || 'var(--color-accent, #6B4EE6)';
+      const strokeWidth = qe.strokeWidth !== undefined ? qe.strokeWidth : 1.8;
       return { lineStyle, arrowhead, color, strokeWidth };
     }
     if (typeof selId === 'string' && selId.startsWith('edge_ind_')) {

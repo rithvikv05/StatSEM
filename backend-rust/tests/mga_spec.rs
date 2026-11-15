@@ -922,6 +922,7 @@ fn phase9_minimal_single_path_single_indicator_moderation_hcm_and_persistence_ca
     let ok_job_id = start_ok["jobId"].as_str().unwrap().to_string();
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut completed_report_id = String::new();
+    let mut completed_report = Value::Null;
     while Instant::now() < deadline {
         let st = routes::handle(
             "/mga/permutation/status",
@@ -930,6 +931,7 @@ fn phase9_minimal_single_path_single_indicator_moderation_hcm_and_persistence_ca
         )
         .unwrap();
         if st["status"] == "completed" {
+            completed_report = st["result"].clone();
             completed_report_id = st["result"]["id"].as_str().unwrap().to_string();
             break;
         }
@@ -937,6 +939,18 @@ fn phase9_minimal_single_path_single_indicator_moderation_hcm_and_persistence_ca
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(!completed_report_id.is_empty());
+    store
+        .save_mga_report(
+            &completed_report_id,
+            "permutation",
+            "Permutation Report",
+            Some("m_save"),
+            Some("ds1"),
+            &min_spec,
+            &completed_report,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .unwrap();
 
     let listed = routes::handle(
         "/mga/reports/list",

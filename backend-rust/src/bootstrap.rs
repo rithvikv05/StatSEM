@@ -344,7 +344,7 @@ pub fn run_with_control(
     if used.iter().enumerate().any(|(i, c)| used[..i].contains(c)) {
         return Err("Duplicate bootstrap dataset columns require compatibility handling".into());
     }
-    let _positions: Vec<_> = used
+    let positions: Vec<usize> = used
         .iter()
         .map(|c| {
             columns
@@ -353,10 +353,12 @@ pub fn run_with_control(
                 .ok_or_else(|| format!("Missing bootstrap column: {c}"))
         })
         .collect::<Result<_, _>>()?;
-    // Resample raw rows so missing values and observation weights are handled
-    // by each fitted model, using that resample rather than the full dataset.
-    let clean = rows;
-    let used = columns.clone();
+    // Resample projected rows containing only the required columns to avoid cloning unused data
+    let clean: Vec<Vec<Value>> = rows
+        .into_iter()
+        .map(|r| positions.iter().map(|&idx| r[idx].clone()).collect())
+        .collect();
+    let used_columns = used.clone();
     let n = clean.len();
     let entropy = rng::integer_entropy(options.seed.unwrap_or(42));
     let seeds = rng::seed_sequence(&entropy, options.n_boot);
@@ -366,59 +368,78 @@ pub fn run_with_control(
     let workers = options
         .n_workers
         .unwrap_or_else(|| {
-            std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1))
+            std::thread::available_parallelism().map_or(1, |n| n.get())
         })
         .max(1)
         .min(options.n_boot.max(1));
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                if i >= seeds.len() {
-                    break;
-                }
-                let mut random = rng::Pcg64::new(&[seeds[i]]);
-                let resampled: Vec<_> = (0..n)
-                    .map(|_| clean[random.bounded(n as u64).unwrap() as usize].clone())
-                    .collect();
-                let sample = pipeline::run_without_fit(
-                    used.clone(),
-                    resampled.clone(),
-                    spec.clone(),
-                    settings.clone(),
-                )
-                .and_then(|result| extract(&result, &spec, &options.mode))
-                .ok()
-                .map(|mut params| {
-                    align(&mut params, &original, &parsed, &options.sign_change);
-                    let standard_errors = if options.ci_method == "studentized" {
-                        let mut inner = Vec::new();
-                        for _ in 0..options.studentized_resamples {
-                            if cancel.load(Ordering::Relaxed) { break; }
-                            let nested: Vec<_> = (0..n).map(|_| resampled[random.bounded(n as u64).unwrap() as usize].clone()).collect();
-                            if let Ok(mut estimate) = pipeline::run_without_fit(used.clone(), nested, spec.clone(), settings.clone()).and_then(|r| extract(&r, &spec, &options.mode)) {
-                                align(&mut estimate, &params, &parsed, &options.sign_change);
-                                inner.push(estimate);
+            scope.spawn(|| {
+                let mut local_batch = Vec::with_capacity(32);
+                loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= seeds.len() {
+                        break;
+                    }
+                    let mut random = rng::Pcg64::new(&[seeds[i]]);
+                    let resampled: Vec<_> = (0..n)
+                        .map(|_| clean[random.bounded(n as u64).unwrap() as usize].clone())
+                        .collect();
+                    let sample = pipeline::run_without_fit(
+                        used_columns.clone(),
+                        resampled.clone(),
+                        spec.clone(),
+                        settings.clone(),
+                    )
+                    .and_then(|result| extract(&result, &spec, &options.mode))
+                    .ok()
+                    .map(|mut params| {
+                        align(&mut params, &original, &parsed, &options.sign_change);
+                        let standard_errors = if options.ci_method == "studentized" {
+                            let mut inner = Vec::new();
+                            for _ in 0..options.studentized_resamples {
+                                if cancel.load(Ordering::Relaxed) { break; }
+                                let nested: Vec<_> = (0..n).map(|_| resampled[random.bounded(n as u64).unwrap() as usize].clone()).collect();
+                                if let Ok(mut estimate) = pipeline::run_without_fit(used.clone(), nested, spec.clone(), settings.clone()).and_then(|r| extract(&r, &spec, &options.mode)) {
+                                    align(&mut estimate, &params, &parsed, &options.sign_change);
+                                    inner.push(estimate);
+                                }
                             }
-                        }
-                        let mut ses = Vec::new();
-                        for (key, _) in &params {
-                            let values: Vec<_> = inner.iter().filter_map(|p| p.iter().find(|(k, _)| k == key).map(|(_, v)| *v)).collect();
-                            if values.len() >= (options.studentized_resamples * 4).div_ceil(5) {
-                                put(&mut ses, key.clone(), stats::std(&values, None, 1));
+                            let mut ses = Vec::new();
+                            for (key, _) in &params {
+                                let values: Vec<_> = inner.iter().filter_map(|p| p.iter().find(|(k, _)| k == key).map(|(_, v)| *v)).collect();
+                                if values.len() >= (options.studentized_resamples * 4).div_ceil(5) {
+                                    put(&mut ses, key.clone(), stats::std(&values, None, 1));
+                                }
                             }
+                            Some(ses)
+                        } else { None };
+                        (params, standard_errors)
+                    });
+
+                    local_batch.push((i, sample));
+                    if local_batch.len() >= 32 {
+                        let mut results = samples.lock().unwrap();
+                        for (idx, s) in local_batch.drain(..) {
+                            results[idx] = s;
                         }
-                        Some(ses)
-                    } else { None };
-                    (params, standard_errors)
-                });
-                let mut results = samples.lock().unwrap();
-                results[i] = sample;
-                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                progress(done, options.n_boot);
+                    }
+
+                    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done % 50 == 0 || done == options.n_boot {
+                        progress(done, options.n_boot);
+                    }
+                }
+
+                if !local_batch.is_empty() {
+                    let mut results = samples.lock().unwrap();
+                    for (idx, s) in local_batch.drain(..) {
+                        results[idx] = s;
+                    }
+                }
             });
         }
     });

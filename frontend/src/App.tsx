@@ -9,7 +9,7 @@ import GetStarted from './pages/GetStarted';
 import Dashboard from './pages/Dashboard';
 import ArchiveView from './pages/ArchiveView';
 import DatasetView from './pages/DatasetView';
-import DocsView from './pages/DocsView';
+import DocsView from './pages/DocumentationView';
 import SamplesView from './pages/SamplesView';
 import FeedbackView from './pages/FeedbackView';
 import ChangelogView from './pages/ChangelogView';

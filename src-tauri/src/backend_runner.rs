@@ -22,8 +22,8 @@ pub fn start_backend(app: &AppHandle) -> Result<(), String> {
     #[cfg(debug_assertions)]
     {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-        candidate_paths.push(root.join("backend-rust/target/debug/statsem-engine"));
         candidate_paths.push(root.join("backend-rust/target/release/statsem-engine"));
+        candidate_paths.push(root.join("backend-rust/target/debug/statsem-engine"));
     }
 
     if let Ok(current_exe) = std::env::current_exe() {

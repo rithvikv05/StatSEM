@@ -416,8 +416,8 @@ export const MgaResultView: React.FC<MgaResultViewProps> = ({ report }) => {
                       disabled={!!term}
                       onClick={() => setFinalResultsOpen(prev => !prev)}
                     >
-                      <svg className={finalOpen ? 'open' : ''} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M8 5v14l11-7z" />
+                      <svg className={finalOpen ? 'open' : ''} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="9 18 15 12 9 6" />
                       </svg>
                       <span>Final results</span>
                     </button>
@@ -435,8 +435,8 @@ export const MgaResultView: React.FC<MgaResultViewProps> = ({ report }) => {
                                 disabled={!!term}
                                 onClick={() => toggleCategory(cat.key)}
                               >
-                                <svg className={isExpanded ? 'open' : ''} style={{ transform: isExpanded ? 'rotate(90deg)' : undefined, transition: 'transform var(--transition-fast)' }} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                                  <path d="M8 5v14l11-7z" />
+                                <svg className={isExpanded ? 'open' : ''} style={{ transform: isExpanded ? 'rotate(90deg)' : undefined, transition: 'transform var(--transition-fast)' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <polyline points="9 18 15 12 9 6" />
                                 </svg>
                                 <span>{cat.label}</span>
                               </button>
@@ -485,8 +485,8 @@ export const MgaResultView: React.FC<MgaResultViewProps> = ({ report }) => {
                       disabled={!!term}
                       onClick={() => setAlgorithmOpen(prev => !prev)}
                     >
-                      <svg className={algoOpen ? 'open' : ''} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M8 5v14l11-7z" />
+                      <svg className={algoOpen ? 'open' : ''} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="9 18 15 12 9 6" />
                       </svg>
                       <span>Calculation</span>
                     </button>

@@ -8,6 +8,11 @@ import './styles.css'
 import './model-canvas.css'
 import './results.css'
 
+// The desktop app supplies its own context menus. Suppress the webview's
+// browser menu without stopping propagation to the app's menu handlers.
+if ('__TAURI_INTERNALS__' in window) {
+  document.addEventListener('contextmenu', (event) => event.preventDefault())
+}
 
 const prepareDesktopPlatform = async () => {
   let platform = 'browser'

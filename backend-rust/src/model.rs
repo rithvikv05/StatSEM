@@ -6,7 +6,7 @@ pub fn default_settings() -> Value {
     json!({"inner_weighting":"path", "max_iter":3000, "tolerance":1e-7,
         "initial_weights":"equal", "individual_initial_weights":null,
         "missing_treatment":"mean", "missing_codes":[-99,"-99"], "weight_column":null,
-        "consistent":false, "sign_convention":"dominant", "moderation_method":"two_stage",
+        "consistent":false, "result_type":"standardized", "sign_convention":"dominant", "moderation_method":"two_stage",
         "hcm_method":"repeated_indicators", "significance_level":0.05, "tails":"two",
         "ci_method":"percentile", "sign_change":"none", "dataset_id":null,
         "gc":{"ecdf":"F4", "copula_transform":"raw", "stage2_method":"pls", "round_decimals":12, "scale_normalization":"unscaled"}})
@@ -31,6 +31,7 @@ pub fn settings(input: &Value) -> Result<Value, String> {
     }
     for (key, choices) in [
         ("inner_weighting", vec!["path", "factor", "centroid"]),
+        ("result_type", vec!["standardized", "unstandardized", "mean_centered"]),
         (
             "initial_weights",
             vec!["equal", "lohmoller", "individual", "sum_scores"],

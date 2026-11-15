@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import type { DataGroup, GroupTerm, GroupTermOperator } from './types';
 import { getEligibleGroupColumns, getGroupRows } from './groupUtils';
 
@@ -17,6 +18,7 @@ const OPERATORS: GroupTermOperator[] = [
   'is greater than',
   'is less than',
   'is between',
+  'is not between',
 ];
 
 export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> = ({
@@ -113,7 +115,7 @@ export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> =
       conditionLinkType: linkType,
       terms: terms.map(t => ({
         ...t,
-        value2: t.operator === 'is between' ? t.value2 ?? '' : undefined,
+        value2: (t.operator === 'is between' || t.operator === 'is not between') ? t.value2 ?? '' : undefined,
       })),
       recordCount: previewCount,
       rowIds: initialGroup?.rowIds,
@@ -153,29 +155,8 @@ export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> =
             </div>
 
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                 <span className="modal__label" style={{ margin: 0 }}>Group Terms</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12.5px', color: 'var(--color-text-secondary)' }}>
-                  <span>Link multiple terms:</span>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="linkType"
-                      checked={linkType === 'AND'}
-                      onChange={() => setLinkType('AND')}
-                    />
-                    AND
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="linkType"
-                      checked={linkType === 'OR'}
-                      onChange={() => setLinkType('OR')}
-                    />
-                    OR
-                  </label>
-                </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -184,6 +165,7 @@ export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> =
                   const useDropdown =
                     Boolean(colSuggestions && colSuggestions.length > 0) &&
                     (term.operator === 'is equal to' || term.operator === 'is not equal to');
+                  const isBetweenOp = term.operator === 'is between' || term.operator === 'is not between';
 
                   return (
                     <div
@@ -191,9 +173,13 @@ export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> =
                       style={{
                         display: 'grid',
                         gridTemplateColumns:
-                          term.operator === 'is between'
-                            ? 'minmax(120px, 1.2fr) minmax(130px, 1.1fr) 1fr 1fr 28px'
-                            : 'minmax(130px, 1.2fr) minmax(140px, 1.1fr) 1.4fr 28px',
+                          isBetweenOp
+                            ? (terms.length > 1
+                                ? 'minmax(120px, 1.2fr) minmax(140px, 1.1fr) 1fr 1fr 28px'
+                                : 'minmax(120px, 1.2fr) minmax(140px, 1.1fr) 1fr 1fr')
+                            : (terms.length > 1
+                                ? 'minmax(130px, 1.2fr) minmax(140px, 1.1fr) 1.4fr 28px'
+                                : 'minmax(130px, 1.2fr) minmax(140px, 1.1fr) 1.4fr'),
                         gap: '8px',
                         alignItems: 'center',
                       }}
@@ -249,11 +235,11 @@ export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> =
                           className="modal__input"
                           value={term.value1 ?? ''}
                           onChange={e => updateTerm(idx, { value1: e.target.value })}
-                          placeholder={term.operator === 'is between' ? 'Min' : 'Value'}
+                          placeholder={isBetweenOp ? 'Min' : 'Value'}
                         />
                       )}
 
-                      {term.operator === 'is between' && (
+                      {isBetweenOp && (
                         <input
                           type="text"
                           className="modal__input"
@@ -263,25 +249,27 @@ export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> =
                         />
                       )}
 
-                      <button
-                        type="button"
-                        onClick={() => removeTerm(idx)}
-                        title="Remove term"
-                        disabled={terms.length <= 1 && !initialGroup?.rowIds}
-                        style={{
-                          width: '28px',
-                          height: '28px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--color-border-subtle)',
-                          background: 'var(--color-bg-raised)',
-                          color: 'var(--color-text-secondary)',
-                          cursor: terms.length <= 1 && !initialGroup?.rowIds ? 'not-allowed' : 'pointer',
-                          fontSize: '15px',
-                          lineHeight: 1,
-                        }}
-                      >
-                        ×
-                      </button>
+                      {terms.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeTerm(idx)}
+                          title="Remove term"
+                          style={{
+                            width: '28px',
+                            height: '28px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            padding: 0,
+                          }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -311,13 +299,67 @@ export const ConfigureDataGroupDialog: React.FC<ConfigureDataGroupDialogProps> =
             </div>
           </div>
 
-          <div className="modal__footer">
-            <button className="modal__btn-cancel" type="button" onClick={onClose}>
-              Cancel
-            </button>
-            <button className="modal__btn-create" type="submit">
-              OK
-            </button>
+          <div className="modal__footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div>
+              {terms.length >= 2 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>Link terms:</span>
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      background: 'var(--color-bg-base)',
+                      padding: '2px',
+                      borderRadius: '20px',
+                      border: '1px solid var(--color-border-subtle)',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setLinkType('AND')}
+                      style={{
+                        padding: '3px 12px',
+                        borderRadius: '16px',
+                        border: 'none',
+                        fontSize: '11.5px',
+                        fontWeight: linkType === 'AND' ? 600 : 500,
+                        background: linkType === 'AND' ? 'var(--color-accent)' : 'transparent',
+                        color: linkType === 'AND' ? '#ffffff' : 'var(--color-text-muted)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      AND
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLinkType('OR')}
+                      style={{
+                        padding: '3px 12px',
+                        borderRadius: '16px',
+                        border: 'none',
+                        fontSize: '11.5px',
+                        fontWeight: linkType === 'OR' ? 600 : 500,
+                        background: linkType === 'OR' ? 'var(--color-accent)' : 'transparent',
+                        color: linkType === 'OR' ? '#ffffff' : 'var(--color-text-muted)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      OR
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button className="modal__btn-cancel" type="button" onClick={onClose}>
+                Cancel
+              </button>
+              <button className="modal__btn-create" type="submit">
+                Add
+              </button>
+            </div>
           </div>
         </form>
       </div>

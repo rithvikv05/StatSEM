@@ -11,7 +11,7 @@ use crate::mga::math::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -492,29 +492,75 @@ pub fn run_bootstrap_mga(
     let seed_used = settings.seed.unwrap_or_else(random_seed);
     let total_steps = settings.subsamples * 2;
 
-    let res_a = run_bootstrap_with_control(
-        columns,
-        &rows_a,
-        model_spec,
-        &settings.pls_settings,
-        settings.subsamples,
-        seed_used,
-        settings.parallel_processing,
-        cancel,
-        &|done, _| progress(done, total_steps, "Group A"),
-    )?;
-
-    let res_b = run_bootstrap_with_control(
-        columns,
-        &rows_b,
-        model_spec,
-        &settings.pls_settings,
-        settings.subsamples,
-        seed_used.wrapping_add(1),
-        settings.parallel_processing,
-        cancel,
-        &|done, _| progress(settings.subsamples + done, total_steps, "Group B"),
-    )?;
+    let (res_a, res_b) = if settings.parallel_processing {
+        let done_a = std::sync::atomic::AtomicUsize::new(0);
+        let done_b = std::sync::atomic::AtomicUsize::new(0);
+        let mut out_a = None;
+        let mut out_b = None;
+        std::thread::scope(|scope| {
+            let h_a = scope.spawn(|| {
+                run_bootstrap_with_control(
+                    columns,
+                    &rows_a,
+                    model_spec,
+                    &settings.pls_settings,
+                    settings.subsamples,
+                    seed_used,
+                    true,
+                    cancel,
+                    &|done, _| {
+                        done_a.store(done, Ordering::Relaxed);
+                        let tot = done + done_b.load(Ordering::Relaxed);
+                        progress(tot, total_steps, "Group A");
+                    },
+                )
+            });
+            let h_b = scope.spawn(|| {
+                run_bootstrap_with_control(
+                    columns,
+                    &rows_b,
+                    model_spec,
+                    &settings.pls_settings,
+                    settings.subsamples,
+                    seed_used.wrapping_add(1),
+                    true,
+                    cancel,
+                    &|done, _| {
+                        done_b.store(done, Ordering::Relaxed);
+                        let tot = done_a.load(Ordering::Relaxed) + done;
+                        progress(tot, total_steps, "Group B");
+                    },
+                )
+            });
+            out_a = Some(h_a.join().unwrap());
+            out_b = Some(h_b.join().unwrap());
+        });
+        (out_a.unwrap()?, out_b.unwrap()?)
+    } else {
+        let res_a = run_bootstrap_with_control(
+            columns,
+            &rows_a,
+            model_spec,
+            &settings.pls_settings,
+            settings.subsamples,
+            seed_used,
+            false,
+            cancel,
+            &|done, _| progress(done, total_steps, "Group A"),
+        )?;
+        let res_b = run_bootstrap_with_control(
+            columns,
+            &rows_b,
+            model_spec,
+            &settings.pls_settings,
+            settings.subsamples,
+            seed_used.wrapping_add(1),
+            false,
+            cancel,
+            &|done, _| progress(settings.subsamples + done, total_steps, "Group B"),
+        )?;
+        (res_a, res_b)
+    };
 
     let n_a = res_a.n_used;
     let n_b = res_b.n_used;

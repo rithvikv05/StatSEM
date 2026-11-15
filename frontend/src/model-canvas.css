@@ -293,18 +293,23 @@ summary.calculation-menu__heading { cursor: pointer; }
   gap: 4px;
   flex-shrink: 0;
 }
-.var-sidebar__header-actions .icon-btn {
+.var-sidebar__header-actions .icon-btn,
+.var-sidebar__dataset-switch {
   width: 22px;
   height: 22px;
   color: var(--color-text-muted);
+  flex-shrink: 0;
 }
-.var-sidebar__header-actions .icon-btn .material-symbols-outlined {
+.var-sidebar__header-actions .icon-btn .material-symbols-outlined,
+.var-sidebar__dataset-switch .material-symbols-outlined {
   font-size: 16px;
   color: var(--color-text-muted);
   transition: color var(--transition-fast);
 }
 .var-sidebar__header-actions .icon-btn:hover .material-symbols-outlined,
-.var-sidebar__header-actions .icon-btn.active .material-symbols-outlined {
+.var-sidebar__header-actions .icon-btn.active .material-symbols-outlined,
+.var-sidebar__dataset-switch:hover .material-symbols-outlined,
+.var-sidebar__dataset-switch.active .material-symbols-outlined {
   color: var(--color-text-primary);
 }
 
@@ -407,8 +412,23 @@ summary.calculation-menu__heading { cursor: pointer; }
 
 .canvas-area {
   flex: 1; position: relative; overflow: hidden;
+  min-width: 0; min-height: 0;
   background-color: var(--color-bg-base);
   display: flex; align-items: center; justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .var-sidebar { width: 200px; }
+  .subheader { gap: 8px; padding-inline: 10px; }
+  .subheader__breadcrumb { min-width: 0; overflow: hidden; white-space: nowrap; }
+  .subheader__breadcrumb-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .subheader__actions { flex-shrink: 0; gap: 4px; }
+}
+
+@media (max-width: 600px) {
+  .var-sidebar { width: 155px; }
+  .canvas-toolbar .tb-btn { width: 26px; height: 28px; flex-shrink: 0; }
+  .canvas-toolbar .tb-divider { margin-inline: 2px; }
 }
 
 #model-svg {
@@ -458,6 +478,13 @@ summary.calculation-menu__heading { cursor: pointer; }
   gap: 2px;
   z-index: 30;
   user-select: none;
+}
+
+@media (max-width: 900px) {
+  .canvas-toolbar { max-width: calc(100% - 16px); box-sizing: border-box; padding: 4px 6px; }
+}
+@media (max-width: 600px) {
+  .canvas-toolbar { gap: 0; }
 }
 
 .tb-btn {
@@ -1161,7 +1188,8 @@ summary.calculation-menu__heading { cursor: pointer; }
 /* Shared calculation dialog language */
 .calculation-overlay { z-index: 9999; }
 .calculation-dialog { max-height: 90vh; display: flex; flex-direction: column; }
-.calculation-dialog .modal__body { overflow-y: auto; }
+.calculation-dialog .modal__header { padding: 16px 24px 14px; margin: 0; border-bottom: 1px solid var(--color-border-subtle); }
+.calculation-dialog .modal__body { padding: 14px 24px 20px; overflow-y: auto; gap: 14px; }
 .calculation-close { background: none; border: 0; color: var(--color-text-muted); font-size: 22px; cursor: pointer; }
 .calculation-fields, .calculation-more__fields { display: flex; flex-direction: column; gap: 16px; }
 .calculation-more summary { cursor: pointer; color: var(--color-text-secondary); font-size: var(--text-sm); font-weight: 500; }
@@ -1172,7 +1200,7 @@ summary.calculation-menu__heading { cursor: pointer; }
 .calculation-existing > div > div:first-child, .calculation-existing > div > div:last-child { background: var(--color-bg-surface) !important; border-color: var(--color-border-subtle) !important; }
 .calculation-existing > div > div:nth-child(2) { overflow-y: auto; }
 .calculation-existing label { color: var(--color-text-secondary) !important; }
-.calculation-existing input:not([type=checkbox]), .calculation-existing select { color: var(--color-text-primary) !important; background: var(--color-bg-surface) !important; border-color: var(--color-border-strong) !important; font-family: var(--font-sans); }
+.calculation-existing input:not([type=checkbox]), .calculation-existing select { color: var(--color-text-primary) !important; background-color: var(--color-bg-surface) !important; border-color: var(--color-border-strong) !important; font-family: var(--font-sans); }
 
 /* Calculation forms follow the compact controls used in application settings. */
 .calculation-menu { width: 300px; padding: 6px; }

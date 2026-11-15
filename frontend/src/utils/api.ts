@@ -112,6 +112,28 @@ export interface LoadModelResponse {
 }
 
 export const api = {
+  async openExternalUrl(url: string): Promise<void> {
+    if ('__TAURI_INTERNALS__' in window) {
+      try {
+        await invoke('open_url', { url });
+        return;
+      } catch (err) {
+        console.warn('Tauri open_url command failed, falling back to HTTP:', err);
+      }
+    }
+    try {
+      const res = await fetch(`${API_BASE}/system/open-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      if (res.ok) return;
+    } catch (err) {
+      console.warn('Backend open-url failed, falling back to window location:', err);
+    }
+    window.location.href = url;
+  },
+
   async getHealth(): Promise<{ status?: string; backend?: string; home_dir?: string | null } | null> {
     try {
       const res = await fetch(`${API_BASE}/health`);
@@ -585,11 +607,11 @@ export const api = {
         body: JSON.stringify({
           project_path: projectPath,
           spec: spec || undefined,
-          scheme: options?.scheme || 'path',
+          scheme: options?.scheme || options?.settings?.inner_weighting || 'path',
           consistent: options?.consistent ?? false,
           settings: options?.settings,
-          max_iter: options?.max_iter || 300,
-          tol: options?.tol || 1e-7,
+          max_iter: options?.max_iter || options?.settings?.max_iter || 300,
+          tol: options?.tol || options?.settings?.tolerance || 1e-7,
           bootstrap: options?.bootstrap || false,
           n_boot: options?.n_boot || 500,
           columns: options?.columns || undefined,
@@ -621,6 +643,37 @@ export const api = {
       return await res.json();
     } catch (err: any) {
       return { error: err?.message || 'Failed to load calculation results' };
+    }
+  },
+
+  async saveProjectResults(data: {
+    projectPath: string;
+    modelId?: string;
+    datasetId?: string;
+    algorithm?: string;
+    analysisType?: string;
+    results: any;
+    spec?: any;
+    diagramLayout?: any;
+  }): Promise<{ status?: string; created_at?: string; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/project/save-results`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: data.projectPath,
+          model_id: data.modelId,
+          dataset_id: data.datasetId,
+          algorithm: data.algorithm || 'pls',
+          analysis_type: data.analysisType || 'pls',
+          results: data.results,
+          spec: data.spec,
+          diagram_layout: data.diagramLayout,
+        }),
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { error: err?.message || 'Failed to save calculation results' };
     }
   },
 

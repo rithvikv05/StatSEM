@@ -3,10 +3,9 @@ import type { ModelCalculationSettings } from '../components/ModelCalculationMod
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, getStudyDatasets } from '../store';
-import { initModelCanvas, exportModelSpec, getModelCanvasState, loadModelCanvasState, setCanvasResults, renderModelCanvas, clearModelCanvas, resetModelStyles, setCanvasDatasetColumns, updateModeratingEffect, deleteModeratingEffect, getSelectedModeratingEffect, hasInvalidLatentVariables, getCanvasGridColors } from '../utils/model-canvas';
+import { initModelCanvas, exportModelSpec, getModelCanvasState, loadModelCanvasState, setCanvasResults, renderModelCanvas, clearModelCanvas, resetModelStyles, setCanvasDatasetColumns, updateModeratingEffect, deleteModeratingEffect, getSelectedModeratingEffect, hasInvalidLatentVariables, getCanvasGridColors, fitToScreen } from '../utils/model-canvas';
 import { BootstrapModal } from '../components/BootstrapModal';
 import { AnalysisModal } from '../components/AnalysisModal';
-import { ModelComparisonModal } from '../components/ModelComparisonModal';
 import { CalculationMenu } from '../components/CalculationMenu';
 import { ModelFitResults } from '../components/ModelFitResults';
 import { ResultsNavigation } from '../components/ResultsNavigation';
@@ -15,17 +14,20 @@ import { RunDetails } from '../components/RunDetails';
 import { hasRunDetails } from '../utils/run-details';
 import { InlineAnalysisResults } from '../components/InlineAnalysisResults';
 import RedundancyWizardModal from '../components/RedundancyWizardModal';
-import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { DiagramExportModal } from '../components/DiagramExportModal';
 import { TableActionToolbar } from '../components/TableActionToolbar';
 import { ReportExportModal } from '../components/ReportExportModal';
 import { copyAllTablesFromContainer } from '../utils/tableExport';
 import { PermutationDialog } from '../mga/PermutationDialog';
 import { MgaDialog } from '../mga/MgaDialog';
+import { MgaActiveTableView } from '../mga/MgaActiveTableView';
+import { createMgaPlsResults, getMgaCanvasResultForMode } from '../mga/mgaToCanvas';
+import { getGroupRows } from '../mga/groupUtils';
 import type { ParsedDataset } from '../utils/dataset-parser';
 import { parseDatasetFile, processData } from '../utils/dataset-parser';
 import { api, type ValidationResponse } from '../utils/api';
 import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
+import { makeResultIndicatorNames } from '../utils/result-indicator-names';
 
 import {
   Upload, Trash2, RotateCcw, AlertTriangle, History, Check,
@@ -156,8 +158,9 @@ const ModelEditor = () => {
     touchStudy,
     openTab,
     addStudySnapshot,
-    addStudyMgaReport,
-    cacheMgaReport,
+    setStudySnapshots,
+    modelResultsCache,
+    setModelResultCache,
     addModel,
     setActiveModel,
     theme,
@@ -220,9 +223,11 @@ const ModelEditor = () => {
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [modelSettingsConsistent, setModelSettingsConsistent] = useState(false);
   const [isPermutationModalOpen, setIsPermutationModalOpen] = useState(false);
+  const [permutationConsistent, setPermutationConsistent] = useState(false);
   const [isMgaModalOpen, setIsMgaModalOpen] = useState(false);
+  const [mgaConsistent, setMgaConsistent] = useState(false);
+  const [mgaCanvasMode, setMgaCanvasMode] = useState<'group_a' | 'group_b' | 'difference'>('group_a');
   const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
-  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [analysisModalType, setAnalysisModalType] = useState<string>('predict');
   const [analysisResultsMap, setAnalysisResultsMap] = useState<Record<string, any>>({});
   const [availableAnalyses, setAvailableAnalyses] = useState<string[]>([]);
@@ -269,6 +274,8 @@ const ModelEditor = () => {
   const [isCalcMenuOpen, setIsCalcMenuOpen] = useState(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
+  const [isExportAllMenuOpen, setIsExportAllMenuOpen] = useState(false);
+  const exportAllRef = useRef<HTMLDivElement>(null);
   const [areCategoriesCollapsed, setAreCategoriesCollapsed] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [selectedVarNames, setSelectedVarNames] = useState<Set<string>>(new Set());
@@ -326,14 +333,20 @@ const ModelEditor = () => {
       ) {
         setIsDatasetMenuOpen(false);
       }
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target as Node)) {
+        setIsExportMenuOpen(false);
+      }
+      if (exportAllRef.current && !exportAllRef.current.contains(e.target as Node)) {
+        setIsExportAllMenuOpen(false);
+      }
     };
-    if (isCalcMenuOpen || isDatasetMenuOpen || isExportMenuOpen) {
+    if (isCalcMenuOpen || isDatasetMenuOpen || isExportMenuOpen || isExportAllMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isCalcMenuOpen, isDatasetMenuOpen, isExportMenuOpen]);
+  }, [isCalcMenuOpen, isDatasetMenuOpen, isExportMenuOpen, isExportAllMenuOpen]);
 
   useEffect(() => {
     // Default to collapsed sidebar in canvas/results page to maximize space if not locked
@@ -368,12 +381,12 @@ const ModelEditor = () => {
   const [textboxAlign, setTextboxAlign] = useState<'left' | 'center' | 'right' | 'justify'>('center');
   const [textboxValign, setTextboxValign] = useState<'top' | 'middle' | 'bottom'>('middle');
   const [edgeLineStyle, setEdgeLineStyle] = useState<'solid' | 'dashed' | 'dotted' | 'curved'>('solid');
-  const [edgeArrowhead, setEdgeArrowhead] = useState<'solid' | 'open' | 'diamond' | 'circle'>('solid');
+  const [edgeArrowhead, setEdgeArrowhead] = useState<'solid' | 'open' | 'diamond' | 'circle' | 'none'>('solid');
   const [activeNodeShape, setActiveNodeShape] = useState<string>('circle');
   const [edgeStrokeWidth, setEdgeStrokeWidth] = useState<number>(1.5);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
-  const fixedArrowColors = ['#0f172a', '#334155', '#ffffff'];
+  const fixedArrowColors = ['#0f172a', '#334155', '#ffffff', 'var(--color-accent, #6B4EE6)'];
   const [recentArrowColors, setRecentArrowColors] = useState<string[]>([]);
   const [activeArrowColor, setActiveArrowColor] = useState<string>('#0f172a');
 
@@ -382,7 +395,8 @@ const ModelEditor = () => {
     const defaults = [
       'transparent',
       '#334155', '#1e293b', '#ffffff', '#0f172a', '#64748b',
-      '#fef08a', '#ca8a04', '#422006', '#451a03', '#b45309'
+      '#fef08a', '#ca8a04', '#422006', '#451a03', '#b45309',
+      'var(--color-accent, #6b4ee6)', 'var(--color-accent, #6B4EE6)', '#6b4ee6', '#6B4EE6'
     ];
     return defaults.some(d => d.toLowerCase() === color.toLowerCase());
   };
@@ -882,7 +896,7 @@ const ModelEditor = () => {
       } else {
         setAutoSaveError(null);
         setAutoSaveStatus('saved');
-        if (hasCalculatedOnceRef.current) {
+        if (hasCalculatedOnceRef.current && !plsResultsRef.current?.is_mga && !plsResultsRef.current?.is_bootstrap) {
           performSilentRecalculate();
         }
       }
@@ -895,6 +909,7 @@ const ModelEditor = () => {
 
   const performSilentRecalculate = async () => {
     if (!hasCalculatedOnceRef.current || isAutoCalculatingRef.current || !activeStudy?.path) return;
+    if (plsResultsRef.current?.is_mga || plsResultsRef.current?.is_bootstrap) return;
     if (hasInvalidLatentVariables()) {
       setIsModelOutdated(true);
       return;
@@ -963,8 +978,13 @@ const ModelEditor = () => {
       if (view === 'model') {
         (viewModel as HTMLElement).style.display = 'flex';
         (viewResults as HTMLElement).style.display = 'none';
-        if (plsResults) {
-          setCanvasResults(plsResults);
+        const res = plsResultsRef.current || plsResults;
+        if (res) {
+          if (res.is_mga) {
+            setCanvasResults(getMgaCanvasResultForMode(res, mgaCanvasMode));
+          } else {
+            setCanvasResults(res);
+          }
         }
         if (sliderBg && sliderBtns && sliderBtns.length >= 2) {
           (sliderBg as HTMLElement).style.transform = 'translateX(0)';
@@ -1047,9 +1067,23 @@ const ModelEditor = () => {
       await api.saveProjectModel(activeStudy.path, spec, layout, effectiveModelId || undefined);
 
       // 3. Execute PLS-SEM algorithm
+      let calculateRows = activeDataset?.rows;
+      if (settings?.selected_data_group_id && datasetHeaders && calculateRows) {
+        const group = activeDataset?.dataGroups?.find(g => g.id === settings.selected_data_group_id);
+        if (group) {
+          const { rows: filtered } = getGroupRows(datasetHeaders, calculateRows, group);
+          if (filtered.length === 0) {
+            alert('The selected data group has no observations.');
+            setIsCalculating(false);
+            return;
+          }
+          calculateRows = filtered;
+        }
+      }
+
       const runRes = await api.runPlsModel(activeStudy.path, spec, {
         columns: datasetHeaders,
-        rows: activeDataset?.rows,
+        rows: calculateRows,
         dataset_name: activeDataset?.filename,
         model_id: effectiveModelId || undefined,
         diagram_layout: layout,
@@ -1071,6 +1105,20 @@ const ModelEditor = () => {
         setIsModelOutdated(false);
         setHasCalculatedOnce(true);
         hasCalculatedOnceRef.current = true;
+        if (effectiveModelId) {
+          setModelResultCache(effectiveModelId, runRes.results);
+          if (activeStudy?.path) {
+            void api.saveProjectResults({
+              projectPath: activeStudy.path,
+              modelId: effectiveModelId || undefined,
+              datasetId: activeDataset?.id,
+              algorithm: 'pls',
+              analysisType: 'pls',
+              results: runRes.results,
+            });
+          }
+        }
+        setActiveResultTab('path_coefficients');
       }
 
       setValidationSuccessToast(`PLS-SEM Calculation Complete! Converged in ${runRes.results?.iterations || 0} iterations`);
@@ -1085,11 +1133,35 @@ const ModelEditor = () => {
   };
 
   useEffect(() => {
+    if (!effectiveModelId) return;
+    const cached = modelResultsCache[effectiveModelId];
+    if (cached) {
+      setPlsResults(cached);
+      plsResultsRef.current = cached;
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      const toApply = cached.is_mga
+        ? getMgaCanvasResultForMode(cached, mgaCanvasMode)
+        : cached;
+      setCanvasResults(toApply);
+      setIsModelOutdated(false);
+      const viewSlider = document.getElementById('main-view-slider');
+      if (viewSlider) {
+        (viewSlider as HTMLElement).style.display = 'flex';
+      }
+    }
+  }, [effectiveModelId]);
+
+  useEffect(() => {
     if (activeStudy?.path) {
       api.loadProjectResults(activeStudy.path, 'pls', effectiveModelId || undefined).then((res) => {
         if (res && res.results) {
-          setPlsResults(res.results);
-          plsResultsRef.current = res.results;
+          const finalResults = res.results;
+          setPlsResults(finalResults);
+          plsResultsRef.current = finalResults;
+          if (effectiveModelId) {
+            setModelResultCache(effectiveModelId, finalResults);
+          }
           setHasCalculatedOnce(true);
           hasCalculatedOnceRef.current = true;
           const calculatedSpec = res.spec || exportModelSpec();
@@ -1098,23 +1170,27 @@ const ModelEditor = () => {
           setLastCalculatedModel(calculatedSnapshot);
           lastCalculatedModelRef.current = calculatedSnapshot;
 
+          const toApply = finalResults.is_mga
+            ? getMgaCanvasResultForMode(finalResults, mgaCanvasMode)
+            : finalResults;
+
           // Only compare if canvas is fully loaded; otherwise wait for canvas loader to complete
           if (!isCanvasLoadingRef.current && res.spec) {
             try {
               const currentSpec = exportModelSpec();
               if (!isModelTopologyEqual(currentSpec, calculatedSpec)) {
                 setIsModelOutdated(true);
-                setCanvasResults(res.results);
+                setCanvasResults(toApply);
               } else {
-                setCanvasResults(res.results);
+                setCanvasResults(toApply);
                 setIsModelOutdated(false);
               }
             } catch (e) {
-              setCanvasResults(res.results);
+              setCanvasResults(toApply);
               setIsModelOutdated(false);
             }
           } else {
-            setCanvasResults(res.results);
+            setCanvasResults(toApply);
             setIsModelOutdated(false);
           }
 
@@ -1123,6 +1199,8 @@ const ModelEditor = () => {
             (viewSlider as HTMLElement).style.display = 'flex';
           }
         } else {
+          // If in-memory cache has results for this model, don't wipe them
+          if (effectiveModelId && modelResultsCache[effectiveModelId]) return;
           setHasCalculatedOnce(false);
           hasCalculatedOnceRef.current = false;
           setPlsResults(null);
@@ -1205,9 +1283,20 @@ const ModelEditor = () => {
         alert('Failed to save snapshot: ' + res.error);
         return;
       }
-      if (res.snapshot) {
-        addStudySnapshot(targetStudy.path, res.snapshot);
+      const snapshotObj = res.snapshot || (res.id ? res : null);
+      if (snapshotObj) {
+        addStudySnapshot(targetStudy.path, snapshotObj);
+        if (targetStudy.id) {
+          addStudySnapshot(targetStudy.id, snapshotObj);
+        }
       }
+      // Re-fetch snapshots from SQLite to ensure store is completely authoritative
+      api.listSnapshots(targetStudy.path).then(snaps => {
+        if (Array.isArray(snaps)) {
+          setStudySnapshots(targetStudy.path, snaps);
+          if (targetStudy.id) setStudySnapshots(targetStudy.id, snaps);
+        }
+      }).catch(() => {});
       setIsSnapshotModalOpen(false);
       setSaveToast('Snapshot saved successfully');
       setTimeout(() => setSaveToast(null), 3000);
@@ -1353,17 +1442,21 @@ const ModelEditor = () => {
 
   const handleExportExcel = async () => {
     if (!plsResults) return;
-    const table = document.querySelector('.scientific-table');
-    if (!table) {
+    const tables = Array.from(document.querySelectorAll('.results-main .scientific-table, .results-main table'));
+    if (!tables.length) {
       alert('No active table to export.');
       return;
     }
     try {
       const { default: ExcelJS } = await import('exceljs');
       const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet('Results');
-      table.querySelectorAll('tr').forEach(row => {
-        sheet.addRow(Array.from(row.querySelectorAll('th, td'), cell => cell.textContent?.trim() || ''));
+      tables.forEach((table, tIdx) => {
+        const prevHeader = table.previousElementSibling?.matches('h1, h2, h3, h4') ? table.previousElementSibling.textContent?.trim() : '';
+        const sheetTitle = (prevHeader || `${reportTabDetails.title} ${tIdx + 1}`).replace(/[\/\\?*:[\]]/g, '').substring(0, 31);
+        const sheet = workbook.addWorksheet(sheetTitle);
+        table.querySelectorAll('tr').forEach(row => {
+          sheet.addRow(Array.from(row.querySelectorAll('th, td'), cell => cell.textContent?.trim() || ''));
+        });
       });
       const bytes = await workbook.xlsx.writeBuffer();
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -1382,8 +1475,12 @@ const ModelEditor = () => {
 
   const handleExportHtml = () => {
     if (!plsResults) return;
-    const table = document.querySelector('.scientific-table');
-    if (!table) return;
+    const tables = Array.from(document.querySelectorAll('.results-main .scientific-table, .results-main table'));
+    if (!tables.length) return;
+    const tablesHtml = tables.map(t => {
+      const prevHeader = t.previousElementSibling?.matches('h1, h2, h3, h4') ? `<h3 style="font-size: 14px; margin-top: 24px; margin-bottom: 8px;">${t.previousElementSibling.textContent?.trim()}</h3>` : '';
+      return `${prevHeader}<div style="margin-bottom: 24px;">${t.outerHTML}</div>`;
+    }).join('');
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -1393,7 +1490,7 @@ const ModelEditor = () => {
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 32px; color: #1e293b; }
     h1 { margin-bottom: 4px; font-size: 20px; font-weight: 600; }
     p { margin-top: 0; color: #64748b; font-size: 14px; margin-bottom: 24px; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
     th, td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }
     td:not(:first-child) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
     th { background: #f8fafc; font-weight: 600; }
@@ -1403,7 +1500,7 @@ const ModelEditor = () => {
 <body>
   <h1>${reportTabDetails.title}</h1>
   <p>Model: ${activeModel?.name || 'Model'} | Study: ${activeStudy?.name || 'Study'} | Generated: ${new Date().toLocaleString()}</p>
-  ${table.outerHTML}
+  ${tablesHtml}
 </body>
 </html>`;
     const blob = new Blob([html], { type: 'text/html' });
@@ -1418,11 +1515,54 @@ const ModelEditor = () => {
   };
 
   const handleCreateReport = () => {
-    window.print();
-  };
+    if (!plsResults) {
+      window.print();
+      return;
+    }
+    const tables = Array.from(document.querySelectorAll('.results-main .scientific-table, .results-main table'));
+    let tablesHtml = '';
+    if (tables.length > 0) {
+      tables.forEach((t) => {
+        tablesHtml += `<div style="margin-bottom: 28px;">${t.outerHTML}</div>`;
+      });
+    } else {
+      tablesHtml = '<p>No active results table found.</p>';
+    }
 
-  const handleCompare = () => {
-    alert('Model comparison: Snapshots and current runs can be viewed side-by-side by opening snapshots from the study workspace.');
+    const printWin = window.open('', '_blank');
+    if (printWin) {
+      printWin.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${activeModel?.name || 'Model'} - ${reportTabDetails.title}</title>
+  <style>
+    @page { size: auto; margin: 15mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0f172a; padding: 20px; line-height: 1.5; }
+    h1 { font-size: 20px; margin-bottom: 4px; font-weight: 700; color: #0f172a; }
+    .meta { font-size: 12px; color: #64748b; margin-bottom: 24px; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px; page-break-inside: auto; }
+    tr { page-break-inside: avoid; page-break-after: auto; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; color: #334155; }
+    td { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <h1>${reportTabDetails.title}</h1>
+  <div class="meta">Model: <strong>${activeModel?.name || 'Model'}</strong> &nbsp;|&nbsp; Study: <strong>${activeStudy?.name || 'Study'}</strong> &nbsp;|&nbsp; Generated: ${new Date().toLocaleString()}</div>
+  ${tablesHtml}
+  <script>
+    window.onload = function() {
+      setTimeout(function() { window.print(); }, 200);
+    };
+  </script>
+</body>
+</html>`);
+      printWin.document.close();
+    } else {
+      window.print();
+    }
   };
 
   const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
@@ -1518,7 +1658,8 @@ const ModelEditor = () => {
     }
     return legacyConstructNames[cid] || cid;
   };
-  const getIndicatorName = (iid: string): string => indicatorNameMap[iid] || iid;
+  const generatedIndicatorNames = useMemo(() => makeResultIndicatorNames(plsResults, getConstructName), [plsResults, constructNameMap, legacyConstructNames]);
+  const getIndicatorName = (iid: string): string => generatedIndicatorNames[iid] || indicatorNameMap[iid] || iid;
 
   const isInteractionConstruct = (cid: string): boolean => {
     if (!cid) return false;
@@ -1689,97 +1830,153 @@ const ModelEditor = () => {
   }, [plsResults]);
 
   const reportTabDetails = useMemo(() => {
-    switch (activeResultTab) {
+    if (plsResults?.is_mga) {
+      const rep = plsResults.mga_report;
+      const gA = rep?.groupAName || 'Group A';
+      const gB = rep?.groupBName || 'Group B';
+      const sub = `${gA} (n=${rep?.nA ?? '?'}) vs ${gB} (n=${rep?.nB ?? '?'})`;
+      const [baseTab, subKey] = activeResultTab.includes('__')
+        ? activeResultTab.split('__')
+        : [activeResultTab, plsResults.mga_type === 'permutation' ? 'permutation_test' : 'bootstrap_mga'];
+      const subLabel =
+        subKey === 'parametric' ? 'Parametric test'
+        : subKey === 'welch' ? 'Welch-Satterthwaite test'
+        : subKey === 'confidence_intervals' ? 'Confidence intervals'
+        : subKey === 'bootstrapping_results' ? 'Bootstrapping results'
+        : subKey === 'permutation_test' ? 'Permutation test'
+        : 'Bootstrap MGA';
+      const badge = subLabel;
+      switch (baseTab) {
+        case 'path_coefficients':
+          return { title: 'Path coefficients', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'total_effects':
+          return { title: 'Total effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'total_indirect_effects':
+          return { title: 'Total indirect effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'specific_indirect_effects':
+          return { title: 'Specific indirect effects', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'outer_loadings':
+          return { title: 'Outer loadings', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'outer_weights':
+          return { title: 'Outer weights', badge, subtitle: `Multigroup comparison: ${sub}` };
+        case 'micom':
+          return { title: 'MICOM (Invariance)', badge: 'Permutation', subtitle: 'Step 1: Configural, Step 2: Compositional, Step 3: Mean & Variance Invariance' };
+        case 'run_details':
+          return { title: 'Run details', badge: 'MGA', subtitle: 'Algorithm configuration, data group specifications, and sample counts.' };
+      }
+    }
+    const tab = activeResultTab.split('__')[0];
+    switch (tab) {
       case 'path_coefficients':
         return {
-          title: 'Path Coefficients',
+          title: 'Path coefficients',
           badge: 'β (beta)',
           subtitle: 'Standardized beta coefficients between endogenous and exogenous latent constructs.',
         };
       case 'specific_indirect_effects':
-        return { title: 'Individual Indirect Paths', badge: 'Indirect effects', subtitle: 'Estimates for each distinct mediation path.' };
+        return { title: 'Specific indirect effects', badge: 'Indirect', subtitle: 'Estimates for each distinct mediation path.' };
       case 'run_details':
-        return { title: 'Calculation Details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
+        return { title: 'Run details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
       case 'total_indirect_effects':
         return {
-          title: 'Total Indirect Effects',
+          title: 'Total indirect effects',
           badge: 'Indirect',
           subtitle: 'Specific and cumulative indirect mediation pathways across constructs.',
         };
       case 'total_effects':
         return {
-          title: 'Total Effects',
+          title: 'Total effects',
           badge: 'Direct + Indirect',
           subtitle: 'Cumulative relationships and mediation decomposition across the structural model.',
         };
       case 'outer_loadings':
         return {
-          title: 'Outer Loadings',
+          title: 'Outer loadings',
           badge: 'λ (lambda)',
           subtitle: 'Bivariate correlations between each indicator and its associated latent construct score.',
         };
       case 'outer_weights':
         return {
-          title: 'Outer Weights',
+          title: 'Outer weights',
           badge: 'w',
           subtitle: 'Relative contribution weights of indicators to their latent construct scores.',
         };
       case 'r_squared':
         return {
-          title: 'R-Square (R²)',
+          title: 'R-square (R²)',
           badge: 'R² & Adj R²',
           subtitle: 'Coefficient of determination measuring variance explained for endogenous constructs.',
         };
       case 'f_squared':
         return {
-          title: 'f-Square Effect Sizes',
+          title: 'f-square (f²)',
           badge: 'f²',
           subtitle: 'Cohen\'s f² effect size of omitted predictor on endogenous construct R².',
         };
       case 'reliability':
+      case 'construct_reliability':
         return {
-          title: 'Construct Reliability & Validity',
+          title: 'Construct reliability & validity',
           badge: 'α, CR, ρA, AVE',
           subtitle: 'Internal consistency reliability (Cronbach\'s α, CR, rho_A) and convergent validity (AVE).',
         };
       case 'discriminant':
         return {
-          title: 'Discriminant Validity',
+          title: 'Discriminant validity',
           badge: 'HTMT & Fornell-Larcker',
           subtitle: 'Assessment of construct distinction via Heterotrait-Monotrait ratio and Fornell-Larcker criterion.',
         };
       case 'collinearity':
         return {
-          title: 'Collinearity Statistics (VIF)',
+          title: 'Collinearity (VIF)',
           badge: 'VIF',
           subtitle: 'Variance Inflation Factors evaluating multicollinearity among predictors and indicators.',
         };
       case 'construct_scores':
         return {
-          title: 'Latent Variable Scores',
+          title: 'Construct scores',
           badge: 'Y (standardized)',
           subtitle: 'Estimated case-level construct scores standardized to zero mean and unit variance.',
         };
       case 'model_fit':
         return {
-          title: 'Model Fit',
-          badge: 'SRMR & discrepancy',
+          title: 'Model fit (SRMR)',
+          badge: 'SRMR',
           subtitle: 'Model fit statistics and reference values.',
         };
       case 'bootstrap_significance':
         return {
-          title: 'Bootstrap Significance Testing',
+          title: 'Bootstrap inference',
           badge: 'p-values, t-stats, 95% CI',
           subtitle: 'Non-parametric bootstrap distributions, standard errors, t-statistics, p-values, and 95% confidence intervals.',
+        };
+      case 'convergent_validity_redundancy':
+        return {
+          title: 'Convergent validity (redundancy)',
+          badge: 'Redundancy',
+          subtitle: 'Formative construct convergent validity assessment against global single-item measures.',
         };
       default:
         return {
           title: 'PLS-SEM Results',
           badge: 'PLS',
-          subtitle: 'Estimation results from the PLS-SEM engine.',
+          subtitle: 'Algorithm output, criteria checks, and parameters.',
         };
     }
-  }, [activeResultTab]);
+  }, [activeResultTab, plsResults]);
+
+  const currentTabId = !plsResults?.is_mga && activeResultTab.includes('__') ? activeResultTab.split('__')[0] : activeResultTab;
+
+  useEffect(() => {
+    if (plsResults) {
+      if (!plsResults.is_mga && activeResultTab.includes('__')) {
+        setActiveResultTab(activeResultTab.split('__')[0]);
+      } else if (plsResults.is_mga && !activeResultTab.includes('__') && activeResultTab !== 'run_details' && activeResultTab !== 'micom') {
+        const sub = plsResults.mga_type === 'permutation' ? 'permutation_test' : 'bootstrap_mga';
+        setActiveResultTab(`${activeResultTab}__${sub}`);
+      }
+    }
+  }, [plsResults]);
 
   const handleCopyCurrentTable = async () => {
     const tableContainer = document.querySelector('.table-container') as HTMLElement | null;
@@ -1800,20 +1997,29 @@ const ModelEditor = () => {
   };
 
   const handleExportCurrentTable = () => {
-    const tableEl = document.querySelector('.scientific-table');
-    if (!tableEl) return;
+    const tables = Array.from(document.querySelectorAll('.results-main .scientific-table, .results-main table'));
+    if (!tables.length) return;
     let csv = '';
-    const rows = tableEl.querySelectorAll('tr');
-    rows.forEach(r => {
-      const cells = r.querySelectorAll('th, td');
-      const line = Array.from(cells).map(c => {
-        let txt = c.textContent?.trim().replace(/\s+/g, ' ') || '';
-        if (txt.includes(',') || txt.includes('"')) {
-          txt = `"${txt.replace(/"/g, '""')}"`;
-        }
-        return txt;
-      }).join(',');
-      csv += line + '\n';
+    tables.forEach((tableEl, idx) => {
+      const prevHeader = tableEl.previousElementSibling?.matches('h1, h2, h3, h4') ? tableEl.previousElementSibling.textContent?.trim() : '';
+      if (prevHeader) {
+        if (csv) csv += '\n\n';
+        csv += `=== ${prevHeader.toUpperCase()} ===\n`;
+      } else if (idx > 0) {
+        csv += '\n\n';
+      }
+      const rows = tableEl.querySelectorAll('tr');
+      rows.forEach(r => {
+        const cells = r.querySelectorAll('th, td');
+        const line = Array.from(cells).map(c => {
+          let txt = c.textContent?.trim().replace(/\s+/g, ' ') || '';
+          if (txt.includes(',') || txt.includes('"')) {
+            txt = `"${txt.replace(/"/g, '""')}"`;
+          }
+          return txt;
+        }).join(',');
+        csv += line + '\n';
+      });
     });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -1822,6 +2028,261 @@ const ModelEditor = () => {
     a.download = `${activeResultTab}_results.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportAllTables = async (format: 'csv' | 'excel' | 'html' | 'pdf') => {
+    if (!plsResults) {
+      alert('Please calculate the model first.');
+      return;
+    }
+
+    const sections: Array<{ title: string; headers: string[]; rows: (string | number)[][] }> = [];
+
+    // 1. Path Coefficients
+    if (plsResults.structural?.coefficients) {
+      const paths = Object.entries(plsResults.structural.coefficients);
+      const rows: (string | number)[][] = [];
+      paths.forEach(([from, targets]: [string, any]) => {
+        Object.entries(targets).forEach(([to, coef]: [string, any]) => {
+          rows.push([from, to, formatNumber(coef, decimalDigits, decimalSystem)]);
+        });
+      });
+      if (rows.length > 0) sections.push({ title: 'Path Coefficients', headers: ['Predictor', 'Target', 'Coefficient (β)'], rows });
+    }
+
+    // 2. Total Effects
+    if (plsResults.total_effects) {
+      const rows: (string | number)[][] = [];
+      Object.entries(plsResults.total_effects).forEach(([from, targets]: [string, any]) => {
+        Object.entries(targets).forEach(([to, coef]: [string, any]) => {
+          rows.push([from, to, formatNumber(coef, decimalDigits, decimalSystem)]);
+        });
+      });
+      if (rows.length > 0) sections.push({ title: 'Total Effects', headers: ['Predictor', 'Target', 'Total Effect'], rows });
+    }
+
+    // 3. Total Indirect Effects
+    if (plsResults.indirect_effects) {
+      const rows: (string | number)[][] = [];
+      Object.entries(plsResults.indirect_effects).forEach(([from, targets]: [string, any]) => {
+        Object.entries(targets).forEach(([to, coef]: [string, any]) => {
+          rows.push([from, to, formatNumber(coef, decimalDigits, decimalSystem)]);
+        });
+      });
+      if (rows.length > 0) sections.push({ title: 'Total Indirect Effects', headers: ['Predictor', 'Target', 'Indirect Effect'], rows });
+    }
+
+    // 4. Specific Indirect Effects
+    const specificIndirects = plsResults.effects_decomposition?.specific_indirect || plsResults.structural?.specific_indirect || [];
+    if (specificIndirects.length > 0) {
+      const rows = specificIndirects.map((si: any) => [
+        si.path || `${si.from} → ${si.to}`,
+        formatNumber(si.estimate || si.coefficient, decimalDigits, decimalSystem)
+      ]);
+      sections.push({ title: 'Specific Indirect Effects', headers: ['Path', 'Estimate'], rows });
+    }
+
+    // 5. Outer Loadings
+    if (plsResults.outer_loadings || plsResults.loadings) {
+      const loadings = plsResults.outer_loadings || plsResults.loadings;
+      const rows: (string | number)[][] = [];
+      Object.entries(loadings).forEach(([construct, indicators]: [string, any]) => {
+        Object.entries(indicators).forEach(([ind, val]: [string, any]) => {
+          rows.push([getConstructName(construct), getIndicatorName(ind), formatNumber(val, decimalDigits, decimalSystem)]);
+        });
+      });
+      if (rows.length > 0) sections.push({ title: 'Outer Loadings', headers: ['Construct', 'Indicator', 'Loading (λ)'], rows });
+    }
+
+    // 6. Outer Weights
+    if (plsResults.outer_weights || plsResults.weights) {
+      const weights = plsResults.outer_weights || plsResults.weights;
+      const rows: (string | number)[][] = [];
+      Object.entries(weights).forEach(([construct, indicators]: [string, any]) => {
+        Object.entries(indicators).forEach(([ind, val]: [string, any]) => {
+          rows.push([getConstructName(construct), getIndicatorName(ind), formatNumber(val, decimalDigits, decimalSystem)]);
+        });
+      });
+      if (rows.length > 0) sections.push({ title: 'Outer Weights', headers: ['Construct', 'Indicator', 'Weight (w)'], rows });
+    }
+
+    // 7. R-Squared & f-Squared
+    if (plsResults.structural?.r_squared || plsResults.r_squared) {
+      const r2s = plsResults.structural?.r_squared || plsResults.r_squared;
+      const r2adj = plsResults.structural?.r_squared_adj || plsResults.r_squared_adj || {};
+      const rows = Object.entries(r2s).map(([c, val]: [string, any]) => [
+        c,
+        formatNumber(val, decimalDigits, decimalSystem),
+        r2adj[c] !== undefined ? formatNumber(r2adj[c], decimalDigits, decimalSystem) : '—'
+      ]);
+      sections.push({ title: 'R-Square (R²)', headers: ['Construct', 'R²', 'R² Adjusted'], rows });
+    }
+
+    // 8. Model Fit (SRMR)
+    if (plsResults.model_fit || plsResults.fit) {
+      const fit = plsResults.model_fit || plsResults.fit;
+      const rows = [
+        ['SRMR', formatNumber(fit.srmr, decimalDigits, decimalSystem), fit.srmr < 0.08 ? 'Good (< 0.08)' : 'Acceptable'],
+        ['d_ULS', fit.d_uls !== undefined ? formatNumber(fit.d_uls, decimalDigits, decimalSystem) : '—', '—'],
+        ['d_G', fit.d_g !== undefined ? formatNumber(fit.d_g, decimalDigits, decimalSystem) : '—', '—'],
+      ];
+      sections.push({ title: 'Model Fit', headers: ['Criterion', 'Value', 'Assessment'], rows });
+    }
+
+    // 9. Construct Reliability and Validity
+    if (plsResults.construct_reliability || plsResults.quality_criteria) {
+      const qual = plsResults.construct_reliability || plsResults.quality_criteria;
+      const rows: (string | number)[][] = [];
+      const constructs = Object.keys(qual.cronbach_alpha || qual.composite_reliability || {});
+      constructs.forEach(c => {
+        rows.push([
+          c,
+          qual.cronbach_alpha?.[c] !== undefined ? formatNumber(qual.cronbach_alpha[c], decimalDigits, decimalSystem) : '—',
+          qual.composite_reliability?.[c] !== undefined ? formatNumber(qual.composite_reliability[c], decimalDigits, decimalSystem) : '—',
+          qual.ave?.[c] !== undefined ? formatNumber(qual.ave[c], decimalDigits, decimalSystem) : '—'
+        ]);
+      });
+      if (rows.length > 0) sections.push({ title: 'Construct Reliability & Validity', headers: ['Construct', "Cronbach's Alpha", 'Composite Reliability (rho_c)', 'AVE'], rows });
+    }
+
+    // 10. Bootstrap Significance (if available)
+    if (plsResults.significance?.paths) {
+      const rows = plsResults.significance.paths.map((p: any) => [
+        `${p.from} → ${p.to}`,
+        formatNumber(p.original, decimalDigits, decimalSystem),
+        formatNumber(p.mean, decimalDigits, decimalSystem),
+        formatNumber(p.se, decimalDigits, decimalSystem),
+        formatNumber(p.t_stat, decimalDigits, decimalSystem),
+        formatPValue(p.p_value, decimalDigits, decimalSystem),
+        `[${formatNumber(p.ci_low, decimalDigits, decimalSystem)}, ${formatNumber(p.ci_high, decimalDigits, decimalSystem)}]`
+      ]);
+      sections.push({ title: 'Bootstrap Path Significance', headers: ['Path', 'Original (β)', 'Sample Mean', 'Std Error', 't-Statistic', 'p-Value', '95% CI'], rows });
+    }
+    if (plsResults.significance?.outer_loadings) {
+      const rows = plsResults.significance.outer_loadings.map((l: any) => [
+        `${getConstructName(l.construct)} → ${getIndicatorName(l.indicator)}`,
+        formatNumber(l.original, decimalDigits, decimalSystem),
+        formatNumber(l.mean, decimalDigits, decimalSystem),
+        formatNumber(l.se, decimalDigits, decimalSystem),
+        formatNumber(l.t_stat, decimalDigits, decimalSystem),
+        formatPValue(l.p_value, decimalDigits, decimalSystem),
+        `[${formatNumber(l.ci_low, decimalDigits, decimalSystem)}, ${formatNumber(l.ci_high, decimalDigits, decimalSystem)}]`
+      ]);
+      sections.push({ title: 'Bootstrap Outer Loadings Significance', headers: ['Relationship', 'Original (λ)', 'Sample Mean', 'Std Error', 't-Statistic', 'p-Value', '95% CI'], rows });
+    }
+
+    if (format === 'csv') {
+      let csv = '';
+      sections.forEach(s => {
+        csv += `=== ${s.title.toUpperCase()} ===\n`;
+        csv += s.headers.join(',') + '\n';
+        s.rows.forEach(r => {
+          const line = r.map(cell => {
+            let txt = String(cell ?? '').trim();
+            if (txt.includes(',') || txt.includes('"')) txt = `"${txt.replace(/"/g, '""')}"`;
+            return txt;
+          }).join(',');
+          csv += line + '\n';
+        });
+        csv += '\n\n';
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${activeModel?.name || 'Model'}_All_Tables.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSaveToast('All tables exported as CSV');
+      setTimeout(() => setSaveToast(null), 2500);
+    } else if (format === 'excel') {
+      try {
+        const { default: ExcelJS } = await import('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        sections.forEach(s => {
+          const sheetName = s.title.replace(/[\/\\?*:[\]]/g, '').substring(0, 31);
+          const sheet = workbook.addWorksheet(sheetName);
+          sheet.addRow(s.headers);
+          s.rows.forEach(r => sheet.addRow(r));
+        });
+        const bytes = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${activeModel?.name || 'Model'}_All_Tables.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setSaveToast('All tables exported as Excel');
+        setTimeout(() => setSaveToast(null), 2500);
+      } catch (err) {
+        console.error(err);
+        alert('Could not export all tables to Excel.');
+      }
+    } else if (format === 'html' || format === 'pdf') {
+      let tablesHtml = '';
+      sections.forEach(s => {
+        let rowsHtml = '';
+        s.rows.forEach(r => {
+          rowsHtml += `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+        });
+        tablesHtml += `
+          <h2 style="font-size: 15px; margin-top: 28px; margin-bottom: 8px; color: #1e293b; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">${s.title}</h2>
+          <table>
+            <thead><tr>${s.headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        `;
+      });
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${activeModel?.name || 'Model'} - Complete Results Report</title>
+  <style>
+    @page { size: auto; margin: 15mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0f172a; padding: 28px; line-height: 1.5; }
+    h1 { font-size: 22px; margin-bottom: 4px; font-weight: 700; color: #0f172a; }
+    .meta { font-size: 12px; color: #64748b; margin-bottom: 24px; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px; page-break-inside: auto; }
+    tr { page-break-inside: avoid; page-break-after: auto; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; color: #334155; }
+    td { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <h1>${activeModel?.name || 'Model'} — Complete PLS-SEM Results</h1>
+  <div class="meta">Study: <strong>${activeStudy?.name || 'Study'}</strong> &nbsp;|&nbsp; Generated: ${new Date().toLocaleString()}</div>
+  ${tablesHtml}
+  ${format === 'pdf' ? `
+  <script>
+    window.onload = function() {
+      setTimeout(function() { window.print(); }, 200);
+    };
+  </script>` : ''}
+</body>
+</html>`;
+      if (format === 'html') {
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${activeModel?.name || 'Model'}_All_Tables.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setSaveToast('All tables exported as HTML');
+        setTimeout(() => setSaveToast(null), 2500);
+      } else {
+        const printWin = window.open('', '_blank');
+        if (printWin) {
+          printWin.document.write(html);
+          printWin.document.close();
+        } else {
+          window.print();
+        }
+      }
+    }
   };
 
   const handleExportModel = () => {
@@ -1849,28 +2310,7 @@ const ModelEditor = () => {
         (e.target as any).dataset?.editable
       );
 
-      if ((e.key === 'Backspace' || e.key === 'Delete') && !isInput) {
-        e.preventDefault();
-        if ((window as any).deleteSelectedModelPart) {
-          (window as any).deleteSelectedModelPart();
-        }
-      }
-
-      if ((e.metaKey || e.ctrlKey) && !isInput) {
-        if (e.key.toLowerCase() === 'z') {
-          e.preventDefault();
-          if (e.shiftKey) {
-            (window as any).canvasRedo?.();
-          } else {
-            (window as any).canvasUndo?.();
-          }
-        } else if (e.key.toLowerCase() === 'y') {
-          e.preventDefault();
-          (window as any).canvasRedo?.();
-        }
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !isInput) {
         e.preventDefault();
         handleSaveModel();
       }
@@ -1899,6 +2339,7 @@ const ModelEditor = () => {
           const modelRes = await api.loadProjectModel(activeStudy.path, effectiveModelId || undefined);
           if (modelRes && modelRes.diagram_layout && modelRes.diagram_layout.nodes) {
             loadModelCanvasState(modelRes.diagram_layout);
+            fitToScreen();
           } else {
             loadModelCanvasState({ nodes: [], edges: [] });
           }
@@ -1999,8 +2440,13 @@ const ModelEditor = () => {
             }
           } else {
             setIsModelOutdated(false);
-            if (plsResultsRef.current || plsResults) {
-              setCanvasResults(plsResultsRef.current || plsResults);
+            const res = plsResultsRef.current || plsResults;
+            if (res) {
+              if (res.is_mga) {
+                setCanvasResults(getMgaCanvasResultForMode(res, mgaCanvasMode));
+              } else {
+                setCanvasResults(res);
+              }
             }
           }
         } catch (e) {}
@@ -2050,6 +2496,7 @@ const ModelEditor = () => {
       window.removeEventListener('model-styles-reset', handleModelStylesReset);
       setCanvasResults(null);
       loadModelCanvasState({ nodes: [], edges: [] });
+      (window as any).__canvasCleanup?.();
     };
   }, [activeStudy?.path, effectiveModelId]);
 
@@ -2124,6 +2571,42 @@ const ModelEditor = () => {
       </div>
     </div>
     <div className="subheader__actions">
+      {/* MGA Canvas Group Selector (SmartPLS parity, docked in subheader) */}
+      {plsResults?.is_mga && currentView === 'model' && (
+        <div className="subheader__switcher" style={{ marginRight: '4px' }}>
+          <button
+            type="button"
+            className={`subheader__switcher-btn ${mgaCanvasMode === 'group_a' ? 'active' : ''}`}
+            onClick={() => {
+              setMgaCanvasMode('group_a');
+              setCanvasResults(getMgaCanvasResultForMode(plsResults, 'group_a'));
+            }}
+          >
+            {plsResults.groupAName || 'Group A'}
+          </button>
+          <button
+            type="button"
+            className={`subheader__switcher-btn ${mgaCanvasMode === 'group_b' ? 'active' : ''}`}
+            onClick={() => {
+              setMgaCanvasMode('group_b');
+              setCanvasResults(getMgaCanvasResultForMode(plsResults, 'group_b'));
+            }}
+          >
+            {plsResults.groupBName || 'Group B'}
+          </button>
+          <button
+            type="button"
+            className={`subheader__switcher-btn ${mgaCanvasMode === 'difference' ? 'active' : ''}`}
+            onClick={() => {
+              setMgaCanvasMode('difference');
+              setCanvasResults(getMgaCanvasResultForMode(plsResults, 'difference'));
+            }}
+          >
+            Difference
+          </button>
+        </div>
+      )}
+
       {/* Inline Model | Results Switcher */}
       <div className="subheader__switcher">
         <button
@@ -2163,7 +2646,7 @@ const ModelEditor = () => {
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: 13, height: 13 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
           <span>{isCalculating ? 'Calculating...' : (isValidating ? 'Validating...' : 'Calculate')}</span>
-          <span className="material-symbols-outlined" style={{ fontSize: 16, marginLeft: -1 }}>expand_more</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14, marginLeft: -1, transform: isCalcMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
         </button>
         {isCalcMenuOpen && (
           <CalculationMenu
@@ -2176,11 +2659,11 @@ const ModelEditor = () => {
               } else if (id === 'bootstrap' || id === 'consistent_bootstrap') {
                 setBootstrapConsistent(id === 'consistent_bootstrap');
                 setIsBootstrapModalOpen(true);
-              } else if (id === 'compare') {
-                setIsCompareModalOpen(true);
-              } else if (id === 'permutation') {
+              } else if (id === 'permutation' || id === 'permutation_consistent') {
+                setPermutationConsistent(id === 'permutation_consistent');
                 setIsPermutationModalOpen(true);
-              } else if (id === 'mga_groups') {
+              } else if (id === 'mga_bootstrap' || id === 'mga_bootstrap_consistent') {
+                setMgaConsistent(id === 'mga_bootstrap_consistent');
                 setIsMgaModalOpen(true);
               } else {
                 setAnalysisModalType(id);
@@ -2237,28 +2720,15 @@ const ModelEditor = () => {
                 </span>
                 <button
                   ref={datasetButtonRef}
-                  className="icon-btn icon-btn--sm"
+                  className={`icon-btn icon-btn--sm var-sidebar__dataset-switch ${isDatasetMenuOpen ? 'active' : ''}`}
                   title="Change Dataset"
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     setIsDatasetMenuOpen((prev) => !prev);
                   }}
-                  style={{
-                    flexShrink: 0,
-                    padding: '2px',
-                    width: '24px',
-                    height: '24px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: '4px',
-                    color: isDatasetMenuOpen ? 'var(--color-primary)' : 'inherit',
-                    background: isDatasetMenuOpen ? 'var(--color-bg-hover, rgba(0,0,0,0.06))' : 'transparent',
-                    cursor: 'pointer'
-                  }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>swap_horiz</span>
+                  <span className="material-symbols-outlined">swap_horiz</span>
                 </button>
               </div>
             )}
@@ -2502,11 +2972,18 @@ const ModelEditor = () => {
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <circle cx={12} cy={12} r={8} />
+              <line x1={12} y1={8} x2={12} y2={16} strokeLinecap="round" />
+              <line x1={8} y1={12} x2={16} y2={12} strokeLinecap="round" />
             </svg>
           </div>
           <div className="tb-btn" title="Moderation Effect (M)" style={{ display: 'none' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx={12} cy={12} r={10} /><line x1={12} y1={8} x2={12} y2={16} /><line x1={8} y1={12} x2={16} y2={12} /></svg></div>
           <div className="tb-btn" title="Quadratic Effect (Q)"><span className="tb-btn--text">x²</span></div>
-          <div className="tb-btn" title="Gaussian Copula"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4" /><polyline points="14 2 14 8 20 8" /><path d="M2 15h10" /><path d="M6 11l-4 4 4 4" /></svg></div>
+          <div className="tb-btn" title="Gaussian Copula">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <circle cx={12} cy={12} r={8} />
+              <text x={12} y={15} textAnchor="middle" fill="currentColor" stroke="none" fontSize="8" fontWeight="bold" fontFamily="system-ui, -apple-system, sans-serif">GC</text>
+            </svg>
+          </div>
           <div className="tb-btn" id="btn-add-text-note" title="Text Note (T)" data-action="add-text-note"><span className="tb-btn--text">T</span></div>
           
           <div className="tb-divider" />
@@ -2787,16 +3264,56 @@ const ModelEditor = () => {
 
               <div className="tb-divider" style={{width: '100%', height: '1px', margin: '4px 0 8px', opacity: 0.2}}></div>
 
-              <label className="modal__field">
-                <span className="modal__label">Border weight</span>
-                <input key={activeBorderWeight} type="number" className="modal__input" min="0" max="20" step="0.25" defaultValue={activeBorderWeight} aria-label="Border weight in pixels" onBlur={(event) => {
-                  const raw = event.currentTarget.value.trim();
-                  const value = Number(raw);
-                  if (!raw || !Number.isFinite(value) || value < 0 || value > 20) { event.currentTarget.value = String(activeBorderWeight); return; }
-                  setActiveBorderWeight(value);
-                  document.dispatchEvent(new CustomEvent('border-weight-change', { detail: { weight: value } }));
-                }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.currentTarget.value = String(activeBorderWeight); event.currentTarget.blur(); } }} />
-              </label>
+              <div style={{marginBottom: '4px'}}>
+                <div style={{fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-hint)', marginBottom: '5px'}}>Border Weight</div>
+                <div style={{display: 'inline-flex', alignItems: 'center', background: 'var(--color-bg-base)', borderRadius: '6px', border: '1px solid var(--color-border-subtle, #e2e8f0)', padding: '2px', height: '24px', boxSizing: 'border-box'}}>
+                  <button
+                    type="button"
+                    style={{width: '20px', height: '20px', minWidth: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', fontSize: '13px', padding: 0}}
+                    onClick={() => {
+                      const newW = Math.max(0, Number((activeBorderWeight - 0.5).toFixed(1)));
+                      setActiveBorderWeight(newW);
+                      document.dispatchEvent(new CustomEvent('border-weight-change', { detail: { weight: newW } }));
+                    }}
+                    title="Decrease border weight"
+                  >−</button>
+                  <input
+                    key={activeBorderWeight}
+                    type="text"
+                    defaultValue={`${activeBorderWeight}px`}
+                    style={{width: '38px', minWidth: '38px', maxWidth: '38px', height: '20px', padding: 0, margin: '0 2px', textAlign: 'center', border: 'none', background: 'transparent', outline: 'none', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: 'var(--color-text-primary)', boxSizing: 'border-box'}}
+                    onBlur={(event) => {
+                      const raw = event.currentTarget.value.replace(/px/g, '').trim();
+                      const val = Number(raw);
+                      if (!raw || !Number.isFinite(val) || val < 0 || val > 20) {
+                        event.currentTarget.value = `${activeBorderWeight}px`;
+                        return;
+                      }
+                      const finalVal = Number(val.toFixed(1));
+                      setActiveBorderWeight(finalVal);
+                      document.dispatchEvent(new CustomEvent('border-weight-change', { detail: { weight: finalVal } }));
+                      event.currentTarget.value = `${finalVal}px`;
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.currentTarget.blur();
+                      if (event.key === 'Escape') {
+                        event.currentTarget.value = `${activeBorderWeight}px`;
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    style={{width: '20px', height: '20px', minWidth: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', fontSize: '13px', padding: 0}}
+                    onClick={() => {
+                      const newW = Math.min(20, Number((activeBorderWeight + 0.5).toFixed(1)));
+                      setActiveBorderWeight(newW);
+                      document.dispatchEvent(new CustomEvent('border-weight-change', { detail: { weight: newW } }));
+                    }}
+                    title="Increase border weight"
+                  >+</button>
+                </div>
+              </div>
             </div>
           </div>
           
@@ -2845,11 +3362,30 @@ const ModelEditor = () => {
               <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '10px'}}>
                 <div>
                   <div style={{fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-hint)', marginBottom: '5px'}}>Size</div>
-                  <div className="tb-font-size" style={{background: 'var(--color-bg-base)', borderRadius: '6px', border: '1px solid var(--color-border-subtle, #e2e8f0)', padding: '2px', display: 'flex', alignItems: 'center'}}>
-                    <button className="tb-font-btn" data-action="font-dec" style={{width: '20px', height: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)'}}>−</button>
-                    <input type="number" className="tb-font-input" id="input-font-size" defaultValue={14} style={{display: 'none'}} />
-                    <span className="tb-font-size-label" style={{fontFamily: 'var(--font-mono)', fontSize: '11px', width: '28px', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-primary)'}}>14px</span>
-                    <button className="tb-font-btn" data-action="font-inc" style={{width: '20px', height: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)'}}>+</button>
+                  <div className="tb-font-size" style={{background: 'var(--color-bg-base)', borderRadius: '6px', border: '1px solid var(--color-border-subtle, #e2e8f0)', padding: '2px', display: 'flex', alignItems: 'center', height: '24px', boxSizing: 'border-box'}}>
+                    <button className="tb-font-btn" data-action="font-dec" style={{width: '20px', height: '20px', minWidth: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', fontSize: '13px', padding: 0}}>−</button>
+                    <input
+                      type="text"
+                      className="tb-font-input tb-font-size-label"
+                      id="input-font-size"
+                      defaultValue="14px"
+                      style={{width: '38px', minWidth: '38px', maxWidth: '38px', height: '20px', padding: 0, margin: '0 2px', textAlign: 'center', border: 'none', background: 'transparent', outline: 'none', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: 'var(--color-text-primary)', boxSizing: 'border-box'}}
+                      onBlur={(e) => {
+                        const raw = e.currentTarget.value.replace(/px/g, '').trim();
+                        const val = parseInt(raw);
+                        if (!isNaN(val) && val >= 6 && val <= 72) {
+                          e.currentTarget.value = `${val}px`;
+                          const evt = new CustomEvent('change');
+                          e.currentTarget.dispatchEvent(evt);
+                        } else {
+                          e.currentTarget.value = '14px';
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                    <button className="tb-font-btn" data-action="font-inc" style={{width: '20px', height: '20px', minWidth: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', fontSize: '13px', padding: 0}}>+</button>
                   </div>
                 </div>
                 <div>
@@ -3061,6 +3597,15 @@ const ModelEditor = () => {
               >
                 {[
                   {
+                    id: 'none',
+                    label: 'None',
+                    svg: (
+                      <svg width="60" height="20" style={{flexShrink: 0}}>
+                        <line x1="0" y1="10" x2="56" y2="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="edge-stroke-preview" />
+                      </svg>
+                    )
+                  },
+                  {
                     id: 'solid',
                     label: 'Solid',
                     svg: (
@@ -3167,31 +3712,52 @@ const ModelEditor = () => {
                   <div style={{fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-hint)', marginBottom: '6px'}}>
                     Line Weight
                   </div>
-                  <div style={{display: 'flex', gap: '4px', alignItems: 'center'}}>
-                    {[1, 1.5, 2, 3, 4].map((w) => (
-                      <button
-                        key={w}
-                        type="button"
-                        style={{
-                          flex: 1,
-                          height: '24px',
-                          border: edgeStrokeWidth === w ? '1px solid var(--color-accent)' : '1px solid var(--color-border-subtle, #cbd5e1)',
-                          background: edgeStrokeWidth === w ? 'var(--color-accent-subtle)' : 'var(--color-bg-base)',
-                          color: edgeStrokeWidth === w ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: edgeStrokeWidth === w ? 600 : 400,
-                          cursor: 'pointer',
-                          padding: 0
-                        }}
-                        onClick={() => {
-                          setEdgeStrokeWidth(w);
-                          document.dispatchEvent(new CustomEvent('edge-stroke-width-change', { detail: { width: w } }));
-                        }}
-                      >
-                        {w}px
-                      </button>
-                    ))}
+                  <div style={{display: 'inline-flex', alignItems: 'center', background: 'var(--color-bg-base)', borderRadius: '6px', border: '1px solid var(--color-border-subtle, #e2e8f0)', padding: '2px', height: '24px', boxSizing: 'border-box'}}>
+                    <button
+                      type="button"
+                      style={{width: '20px', height: '20px', minWidth: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', fontSize: '13px', padding: 0}}
+                      onClick={() => {
+                        const newW = Math.max(0.5, Number((edgeStrokeWidth - 0.5).toFixed(1)));
+                        setEdgeStrokeWidth(newW);
+                        document.dispatchEvent(new CustomEvent('edge-stroke-width-change', { detail: { width: newW } }));
+                      }}
+                      title="Decrease line weight"
+                    >−</button>
+                    <input
+                      key={edgeStrokeWidth}
+                      type="text"
+                      defaultValue={`${edgeStrokeWidth}px`}
+                      style={{width: '38px', minWidth: '38px', maxWidth: '38px', height: '20px', padding: 0, margin: '0 2px', textAlign: 'center', border: 'none', background: 'transparent', outline: 'none', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: 'var(--color-text-primary)', boxSizing: 'border-box'}}
+                      onBlur={(event) => {
+                        const raw = event.currentTarget.value.replace(/px/g, '').trim();
+                        const val = Number(raw);
+                        if (!raw || !Number.isFinite(val) || val <= 0 || val > 20) {
+                          event.currentTarget.value = `${edgeStrokeWidth}px`;
+                          return;
+                        }
+                        const finalVal = Number(val.toFixed(1));
+                        setEdgeStrokeWidth(finalVal);
+                        document.dispatchEvent(new CustomEvent('edge-stroke-width-change', { detail: { width: finalVal } }));
+                        event.currentTarget.value = `${finalVal}px`;
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur();
+                        if (event.key === 'Escape') {
+                          event.currentTarget.value = `${edgeStrokeWidth}px`;
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      style={{width: '20px', height: '20px', minWidth: '20px', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', fontSize: '13px', padding: 0}}
+                      onClick={() => {
+                        const newW = Math.min(20, Number((edgeStrokeWidth + 0.5).toFixed(1)));
+                        setEdgeStrokeWidth(newW);
+                        document.dispatchEvent(new CustomEvent('edge-stroke-width-change', { detail: { width: newW } }));
+                      }}
+                      title="Increase line weight"
+                    >+</button>
                   </div>
                 </div>
 
@@ -3199,24 +3765,28 @@ const ModelEditor = () => {
                   Arrow Color
                 </div>
                 <div style={{display: 'flex', gap: '6px', flexWrap: 'nowrap', alignItems: 'center'}}>
-                  {[...fixedArrowColors, ...recentArrowColors.filter(c => !isDefaultColor(c))].map((color, i) => (
-                    <button
-                      key={'arrow-color-'+i}
-                      type="button"
-                      style={{
-                        width: '20px',
-                        height: '20px',
-                        flexShrink: 0,
-                        borderRadius: '50%',
-                        background: color,
-                        border: activeArrowColor?.toLowerCase() === color.toLowerCase() ? '2px solid var(--color-accent)' : '1px solid rgba(0,0,0,0.12)',
-                        boxShadow: activeArrowColor?.toLowerCase() === color.toLowerCase() ? '0 0 0 2px var(--color-accent-subtle)' : 'none',
-                        cursor: 'pointer'
-                      }}
-                      onClick={() => handleArrowColorSelect(color)}
-                      title={color}
-                    />
-                  ))}
+                  {[...fixedArrowColors, ...recentArrowColors.filter(c => !isDefaultColor(c))].map((color, i) => {
+                    const isSelected = activeArrowColor?.toLowerCase() === color.toLowerCase() ||
+                      (color.includes('color-accent') && (activeArrowColor?.toLowerCase() === '#6b4ee6' || activeArrowColor?.includes('color-accent')));
+                    return (
+                      <button
+                        key={'arrow-color-'+i}
+                        type="button"
+                        style={{
+                          width: '20px',
+                          height: '20px',
+                          flexShrink: 0,
+                          borderRadius: '50%',
+                          background: color,
+                          border: isSelected ? '2px solid var(--color-accent)' : '1px solid rgba(0,0,0,0.12)',
+                          boxShadow: isSelected ? '0 0 0 2px var(--color-accent-subtle)' : 'none',
+                          cursor: 'pointer'
+                        }}
+                        onClick={() => handleArrowColorSelect(color)}
+                        title={color}
+                      />
+                    );
+                  })}
                   <button type="button" style={{width: '20px', height: '20px', flexShrink: 0, borderRadius: '50%', background: 'transparent', border: '1px dashed var(--color-border-subtle, #cbd5e1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', position: 'relative', cursor: 'pointer'}} title="Custom Color">
                     <span style={{fontSize: '12px', lineHeight: 1}}>+</span>
                     <input
@@ -3496,7 +4066,9 @@ const ModelEditor = () => {
         }}
         hasRedundancy={!!plsResults?.convergent_validity_redundancy}
         hasRunDetails={hasRunDetails(plsResults)}
-        hasSpecificIndirect={!!(plsResults?.effects_decomposition?.specific_indirect?.length || plsResults?.structural?.specific_indirect?.length || availableAnalyses.includes('mediation') || analysisResultsMap.mediation)}
+        hasSpecificIndirect={plsResults?.is_mga ? !!(plsResults?.mga_report?.specificIndirectEffects?.length) : !!(plsResults?.effects_decomposition?.specific_indirect?.length || plsResults?.structural?.specific_indirect?.length || availableAnalyses.includes('mediation') || analysisResultsMap.mediation)}
+        isMga={!!plsResults?.is_mga}
+        hasMicom={plsResults?.is_mga && plsResults?.mga_type === 'permutation'}
       />
       {/* ─── Center Results Area ─── */}
       <main className="results-main">
@@ -3520,15 +4092,6 @@ const ModelEditor = () => {
             <History size={13} />
             <span>Save Snapshot</span>
           </button>
-          <button
-            className="results-tool-btn"
-            type="button"
-            onClick={handleCompare}
-            title="Compare models and snapshots"
-          >
-            <GitCompare size={13} />
-            <span>Compare</span>
-          </button>
           <div className="subheader__dropdown-container" ref={exportDropdownRef}>
             <button
               className="results-tool-btn"
@@ -3539,7 +4102,7 @@ const ModelEditor = () => {
             >
               <Download size={13} />
               <span>Export</span>
-              <span className="material-symbols-outlined" style={{ fontSize: 14, marginLeft: -2 }}>expand_more</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: isExportMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
             </button>
             {isExportMenuOpen && (
               <div className="subheader__dropdown-menu" role="menu" style={{ left: 0, right: 'auto', minWidth: 220 }}>
@@ -3563,6 +4126,30 @@ const ModelEditor = () => {
                 <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleCreateDataFile(); }}>Construct scores as CSV</button>
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); setIsReportExportModalOpen(true); }}>Print / save as PDF</button>
+              </div>
+            )}
+          </div>
+
+          {/* Export All dropdown on right end (below Calculate) */}
+          <div className="subheader__dropdown-container" ref={exportAllRef} style={{ marginLeft: 'auto' }}>
+            <button
+              className="results-tool-btn results-tool-btn--accent"
+              type="button"
+              aria-expanded={isExportAllMenuOpen}
+              aria-haspopup="menu"
+              onClick={() => setIsExportAllMenuOpen(prev => !prev)}
+              title="Export all tables from this calculation"
+            >
+              <Download size={13} />
+              <span>Export All</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: isExportAllMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
+            </button>
+            {isExportAllMenuOpen && (
+              <div className="subheader__dropdown-menu" role="menu" style={{ right: 0, left: 'auto', minWidth: 210 }}>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('csv'); }}>Export all tables as CSV</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('excel'); }}>Export all tables as Excel</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('html'); }}>Export all tables as HTML</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('pdf'); }}>Export all tables as PDF</button>
               </div>
             )}
           </div>
@@ -3682,14 +4269,19 @@ const ModelEditor = () => {
         {/* Dynamic Table Area */}
         <div className="table-container">
           <div className="scientific-table-wrap">
-            {plsResults && !['discriminant', 'collinearity', 'hypotheses'].includes(activeResultTab) && (
+            {plsResults && !plsResults?.is_mga && !['discriminant', 'collinearity', 'hypotheses'].includes(currentTabId) && (
               <TableActionToolbar
                 title={reportTabDetails.title}
                 subtitle={reportTabDetails.badge}
-                filename={`${activeModel?.name || 'Model'}_${activeResultTab}`}
+                filename={`${activeModel?.name || 'Model'}_${currentTabId}`}
               />
             )}
-            {activeResultTab === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
+            {plsResults?.is_mga && plsResults?.mga_report ? (
+              <MgaActiveTableView
+                report={plsResults.mga_report}
+                activeTab={activeResultTab}
+              />
+            ) : currentTabId === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
               <>
                 {analysisLoading.mediation && <p className="results-empty-note">Loading mediation results...</p>}
                 {analysisErrors.mediation && <p className="results-empty-note">{analysisErrors.mediation} <button type="button" onClick={() => void loadAnalysis('mediation')}>Retry</button></p>}
@@ -3703,11 +4295,7 @@ const ModelEditor = () => {
                 <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 600, color: '#334155' }}>Model estimates unavailable</h3>
                 <p style={{ margin: 0, fontSize: '13px' }}>Run the PLS-SEM algorithm to display the core model estimates. Any completed analysis output is shown below.</p>
               </div>
-            ) : activeResultTab === 'hypotheses' ? (
-              <HypothesisTestingPanel
-                results={plsResults}
-              />
-            ) : activeResultTab === 'path_coefficients' ? (
+            ) : currentTabId === 'path_coefficients' ? (
               getTableMode('path_coefficients') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -3787,7 +4375,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'total_indirect_effects' ? (
+            ) : currentTabId === 'total_indirect_effects' ? (
               getTableMode('total_indirect_effects') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -3858,7 +4446,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'total_effects' ? (
+            ) : currentTabId === 'total_effects' ? (
               getTableMode('total_effects') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -3933,7 +4521,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'outer_loadings' ? (
+            ) : currentTabId === 'outer_loadings' ? (
               getTableMode('outer_loadings') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -4026,7 +4614,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'outer_weights' ? (
+            ) : currentTabId === 'outer_weights' ? (
               getTableMode('outer_weights') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -4102,7 +4690,7 @@ const ModelEditor = () => {
                   </tbody>
                 </table>
               )
-            ) : activeResultTab === 'r_squared' ? (
+            ) : currentTabId === 'r_squared' ? (
               <table className="scientific-table">
                 <thead>
                   <tr>
@@ -4148,7 +4736,7 @@ const ModelEditor = () => {
                   })}
                 </tbody>
               </table>
-            ) : activeResultTab === 'f_squared' ? (
+            ) : currentTabId === 'f_squared' ? (
               getTableMode('f_squared') === 'matrix' ? (
                 <table className="scientific-table">
                   <thead>
@@ -4238,7 +4826,7 @@ const ModelEditor = () => {
                     )}
                   </tbody>
                 </table>
-              )) : activeResultTab === 'reliability' ? (
+              )) : currentTabId === 'reliability' ? (
               <table className="scientific-table">
                 <thead>
                   <tr>
@@ -4289,7 +4877,7 @@ const ModelEditor = () => {
                   })}
                 </tbody>
               </table>
-            ) : activeResultTab === 'discriminant' ? (
+            ) : currentTabId === 'discriminant' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                 <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
                   <TableActionToolbar
@@ -4441,7 +5029,7 @@ const ModelEditor = () => {
                   </table>
                 </div>
               </div>
-            ) : activeResultTab === 'collinearity' ? (
+            ) : currentTabId === 'collinearity' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                 <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
                   <TableActionToolbar
@@ -4516,7 +5104,7 @@ const ModelEditor = () => {
                   </table>
                 </div>
               </div>
-            ) : activeResultTab === 'convergent_validity_redundancy' ? (
+            ) : currentTabId === 'convergent_validity_redundancy' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>
@@ -4608,7 +5196,7 @@ const ModelEditor = () => {
                   </div>
                 </div>
               </div>
-            ) : activeResultTab === 'construct_scores' ? (
+            ) : currentTabId === 'construct_scores' ? (
               <table className="scientific-table">
                 <thead>
                   <tr>
@@ -4650,7 +5238,7 @@ const ModelEditor = () => {
                   ))}
                 </tbody>
               </table>
-            ) : activeResultTab === 'bootstrap_significance' ? (
+            ) : currentTabId === 'bootstrap_significance' ? (
               !plsResults.significance ? (
                 <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
                   <svg style={{ width: 48, height: 48, margin: '0 auto 16px', color: '#94a3b8' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -4759,7 +5347,7 @@ const ModelEditor = () => {
                         return (
                           <tr key={idx}>
                             <td>{l.construct_name || getConstructName(l.construct)}</td>
-                            <td><strong>{l.indicator_name || getIndicatorName(l.indicator)}</strong></td>
+                            <td><strong>{generatedIndicatorNames[l.indicator] || l.indicator_name || getIndicatorName(l.indicator)}</strong></td>
                             <td className={cellSigClass}>
                               <div className="cell-value">{fmt(l.original)}</div>
                             </td>
@@ -4796,13 +5384,13 @@ const ModelEditor = () => {
                   </div>
                 </div>
               )
-            ) : activeResultTab === 'run_details' ? (
+            ) : currentTabId === 'run_details' ? (
               <RunDetails results={plsResults} />
-            ) : activeResultTab === 'model_fit' ? (
+            ) : currentTabId === 'model_fit' ? (
               <ModelFitResults results={plsResults} />
             ) : null}
           </div>
-          {activeResultTab === 'path_coefficients' && (
+          {currentTabId === 'path_coefficients' && !plsResults?.is_mga && (
             <InlineAnalysisResults results={plsResults} analyses={analysisResultsMap} available={availableAnalyses} latest={latestAnalysis}
               loading={analysisLoading} errors={analysisErrors} stale={analysisStale} onLoad={id => void loadAnalysis(id)} />
           )}
@@ -4816,6 +5404,7 @@ const ModelEditor = () => {
     consistent={modelSettingsConsistent}
     initialSettings={plsResults?.settings}
     spec={exportModelSpec()}
+    dataGroups={activeDataset?.dataGroups || []}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
     onClose={() => setModelSettingsOpen(false)}
@@ -4830,10 +5419,12 @@ const ModelEditor = () => {
     modelId={effectiveModelId || undefined}
     diagramLayout={getModelCanvasState()}
     initialSettings={plsResults?.settings}
+    dataGroups={activeDataset?.dataGroups || []}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
     datasetName={activeDataset?.filename}
     onComplete={(results) => {
+      setIsBootstrapModalOpen(false);
       setPlsResults(results);
       plsResultsRef.current = results;
       setCanvasResults(results);
@@ -4841,6 +5432,21 @@ const ModelEditor = () => {
       setLastCalculatedModel(calculatedSnapshot);
       lastCalculatedModelRef.current = calculatedSnapshot;
       setIsModelOutdated(false);
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      if (effectiveModelId) {
+        setModelResultCache(effectiveModelId, results);
+        if (activeStudy?.path) {
+          void api.saveProjectResults({
+            projectPath: activeStudy.path,
+            modelId: effectiveModelId || undefined,
+            datasetId: activeDataset?.id,
+            algorithm: 'pls',
+            analysisType: 'pls',
+            results,
+          });
+        }
+      }
       setActiveResultTab('bootstrap_significance');
       const viewSlider = document.getElementById('main-view-slider');
       if (viewSlider) {
@@ -4853,17 +5459,16 @@ const ModelEditor = () => {
     onClose={() => setIsBootstrapModalOpen(false)}
   />
 
-  {isCompareModalOpen && <ModelComparisonModal isOpen onClose={() => setIsCompareModalOpen(false)} projectPath={activeStudy?.path || ''} studyName={activeStudy?.name} />}
-
   {isAnalysisModalOpen && <AnalysisModal
     isOpen={isAnalysisModalOpen}
-    analysisType={analysisModalType === 'mga_consistent' ? 'mga' : analysisModalType}
+    analysisType={analysisModalType}
     initialSettings={plsResults?.settings}
-    consistent={analysisModalType === 'mga_consistent'}
+    consistent={false}
     projectPath={activeStudy?.path || ''}
     modelId={effectiveModelId || undefined}
     datasetId={activeDataset?.id || undefined}
     spec={exportModelSpec()}
+    dataGroups={activeDataset?.dataGroups || []}
     datasetHeaders={activeDataset?.variables?.map(v => v.name)}
     datasetRows={activeDataset?.rows}
     onComplete={(type, results) => {
@@ -4882,6 +5487,7 @@ const ModelEditor = () => {
 
   <PermutationDialog
     isOpen={isPermutationModalOpen}
+    consistent={permutationConsistent}
     onClose={() => setIsPermutationModalOpen(false)}
     projectPath={activeStudy?.path || undefined}
     modelId={effectiveModelId || undefined}
@@ -4893,32 +5499,43 @@ const ModelEditor = () => {
     initialSettings={plsResults?.settings}
     onComplete={(report) => {
       setIsPermutationModalOpen(false);
-      cacheMgaReport(report);
-      const studyKey = activeStudy?.path || effectiveStudyId || '';
-      if (studyKey) {
-        addStudyMgaReport(studyKey, {
-          id: report.id,
-          reportType: report.reportType,
-          title: report.title,
-          modelKey: report.modelId,
-          datasetId: report.datasetId,
-          createdAt: report.createdAt,
+      const mgaResults = createMgaPlsResults(report);
+      setPlsResults(mgaResults);
+      plsResultsRef.current = mgaResults;
+      if (effectiveModelId) {
+        setModelResultCache(effectiveModelId, mgaResults);
+      }
+      setCanvasResults(getMgaCanvasResultForMode(mgaResults, mgaCanvasMode));
+      if (activeStudy?.path) {
+        void api.saveProjectResults({
+          projectPath: activeStudy.path,
+          modelId: effectiveModelId || undefined,
+          datasetId: activeDataset?.id,
+          algorithm: 'pls',
+          analysisType: 'pls',
+          results: mgaResults,
+          spec: exportModelSpec(),
+          diagramLayout: getModelCanvasState(),
         });
       }
-      openTab({
-        type: 'mga-report',
-        title: report.title,
-        reportId: report.id,
-        reportType: report.reportType,
-        modelId: effectiveModelId,
-        studyId: effectiveStudyId,
-        workspaceId: currentTab?.workspaceId || activeWorkspaceId,
-      });
+      const calculatedSnapshot = { spec: exportModelSpec(), layout: getModelCanvasState() };
+      setLastCalculatedModel(calculatedSnapshot);
+      lastCalculatedModelRef.current = calculatedSnapshot;
+      setIsModelOutdated(false);
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      setActiveResultTab('path_coefficients__permutation_test');
+      const viewSlider = document.getElementById('main-view-slider');
+      if (viewSlider) {
+        (viewSlider as HTMLElement).style.display = 'flex';
+      }
+      switchView('results');
     }}
   />
 
   <MgaDialog
     isOpen={isMgaModalOpen}
+    consistent={mgaConsistent}
     onClose={() => setIsMgaModalOpen(false)}
     projectPath={activeStudy?.path || undefined}
     modelId={effectiveModelId || undefined}
@@ -4930,27 +5547,37 @@ const ModelEditor = () => {
     initialSettings={plsResults?.settings}
     onComplete={(report) => {
       setIsMgaModalOpen(false);
-      cacheMgaReport(report);
-      const studyKey = activeStudy?.path || effectiveStudyId || '';
-      if (studyKey) {
-        addStudyMgaReport(studyKey, {
-          id: report.id,
-          reportType: report.reportType,
-          title: report.title,
-          modelKey: report.modelId,
-          datasetId: report.datasetId,
-          createdAt: report.createdAt,
+      const mgaResults = createMgaPlsResults(report);
+      setPlsResults(mgaResults);
+      plsResultsRef.current = mgaResults;
+      if (effectiveModelId) {
+        setModelResultCache(effectiveModelId, mgaResults);
+      }
+      setCanvasResults(getMgaCanvasResultForMode(mgaResults, mgaCanvasMode));
+      if (activeStudy?.path) {
+        void api.saveProjectResults({
+          projectPath: activeStudy.path,
+          modelId: effectiveModelId || undefined,
+          datasetId: activeDataset?.id,
+          algorithm: 'pls',
+          analysisType: 'pls',
+          results: mgaResults,
+          spec: exportModelSpec(),
+          diagramLayout: getModelCanvasState(),
         });
       }
-      openTab({
-        type: 'mga-report',
-        title: report.title,
-        reportId: report.id,
-        reportType: report.reportType,
-        modelId: effectiveModelId,
-        studyId: effectiveStudyId,
-        workspaceId: currentTab?.workspaceId || activeWorkspaceId,
-      });
+      const calculatedSnapshot = { spec: exportModelSpec(), layout: getModelCanvasState() };
+      setLastCalculatedModel(calculatedSnapshot);
+      lastCalculatedModelRef.current = calculatedSnapshot;
+      setIsModelOutdated(false);
+      setHasCalculatedOnce(true);
+      hasCalculatedOnceRef.current = true;
+      setActiveResultTab('path_coefficients__bootstrap_mga');
+      const viewSlider = document.getElementById('main-view-slider');
+      if (viewSlider) {
+        (viewSlider as HTMLElement).style.display = 'flex';
+      }
+      switchView('results');
     }}
   />
 

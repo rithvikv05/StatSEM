@@ -99,6 +99,15 @@ function evalTerm(row: any[], columns: string[], term: GroupTerm): boolean {
       const hi = Math.max(b1, b2);
       return a >= lo && a <= hi;
     }
+    case 'is not between': {
+      const a = tryNumeric(cell);
+      const b1 = tryNumeric(term.value1);
+      const b2 = tryNumeric(term.value2);
+      if (a === null || b1 === null || b2 === null) return false;
+      const lo = Math.min(b1, b2);
+      const hi = Math.max(b1, b2);
+      return a < lo || a > hi;
+    }
     default:
       return false;
   }

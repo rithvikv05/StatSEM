@@ -3,7 +3,8 @@ export type GroupTermOperator =
   | 'is not equal to'
   | 'is greater than'
   | 'is less than'
-  | 'is between';
+  | 'is between'
+  | 'is not between';
 
 export interface GroupTerm {
   column: string;

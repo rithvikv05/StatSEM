@@ -213,6 +213,19 @@ fn eval_term(row: &[Value], columns: &[String], term: &GroupTerm) -> bool {
                 _ => false,
             }
         }
+        "is not between" | "not between" => {
+            let Some(v2) = term.value2.as_ref() else {
+                return false;
+            };
+            match (try_numeric(cell), try_numeric(&term.value1), try_numeric(v2)) {
+                (Some(a), Some(b1), Some(b2)) => {
+                    let lo = b1.min(b2);
+                    let hi = b1.max(b2);
+                    a < lo || a > hi
+                }
+                _ => false,
+            }
+        }
         _ => false,
     }
 }

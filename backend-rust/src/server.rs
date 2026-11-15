@@ -393,11 +393,33 @@ fn route(
             query.get("model_id").map(String::as_str),
             Some(query.get("analysis_type").map(String::as_str).unwrap_or("pls")),
         )?),
+        ("POST", "/project/save-results") => {
+            let store = project(&body, query)?;
+            let item: Results = serde_json::from_value(body.clone()).map_err(|e| e.to_string())?;
+            store.save_results(item)
+        }
         ("GET", "/project/analysis-list") => Ok(json!({"analyses":project(&body,query)?.list_analysis_types(query.get("model_id").map(String::as_str))?})),
         ("POST", "/project/save-snapshot") => {
             let store = project(&body, query)?;
-            let item:Snapshot=serde_json::from_value(json!({"name":body["name"],"description":body["description"],"algorithm":body["algorithm"],"results":body["results"],"spec":body["spec"],"diagram_layout":body["diagram_layout"],"source_model_id":body["source_model_id"]})).map_err(|e|e.to_string())?;
-            store.save_snapshot(item)
+            let item: Snapshot = serde_json::from_value(json!({
+                "name": body["name"],
+                "description": body["description"],
+                "algorithm": body["algorithm"],
+                "results": body["results"],
+                "spec": body["spec"],
+                "diagram_layout": body["diagram_layout"],
+                "source_model_id": body["source_model_id"]
+            })).map_err(|e| e.to_string())?;
+            let snap = store.save_snapshot(item)?;
+            Ok(json!({
+                "id": snap["id"],
+                "name": snap["name"],
+                "description": snap["description"],
+                "algorithm": snap["algorithm"],
+                "created_at": snap["created_at"],
+                "source_model_id": snap["source_model_id"],
+                "snapshot": snap
+            }))
         }
         ("GET", "/project/list-snapshots") => project(&body, query)?.list_snapshots(),
         ("GET", "/project/get-snapshot") => project(&body, query)?.snapshot(
@@ -450,6 +472,22 @@ fn route(
             )
         }
         ("POST", "/power/calculate") => power_route(&body),
+        ("POST", "/system/open-url") => {
+            let url = text(&body, query, "url").ok_or("url parameter required")?;
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
+            Ok(json!({"status": "success"}))
+        }
         ("GET", "/power/table") => Ok(
             json!({"status":"success","results":power::table(query.get("alpha").and_then(|v|v.parse().ok()).unwrap_or(0.05),query.get("target_power").and_then(|v|v.parse().ok()).unwrap_or(0.8))?}),
         ),
@@ -738,7 +776,7 @@ fn run_pls(body: &Value, query: &HashMap<String, String>) -> Result<Value, Strin
     };
     let mut settings = json!({"inner_weighting":body["scheme"].as_str().unwrap_or("path"),"max_iter":number(body,"max_iter",300),"tolerance":body["tol"].as_f64().unwrap_or(1e-7),"consistent":body["consistent"].as_bool().unwrap_or(false)});
     if let Some(input) = body.get("settings").and_then(Value::as_object) {
-        for key in ["inner_weighting", "missing_treatment", "max_iter", "tolerance", "initial_weights", "individual_initial_weights", "weight_column"] {
+        for key in ["inner_weighting", "missing_treatment", "max_iter", "tolerance", "initial_weights", "individual_initial_weights", "weight_column", "result_type"] {
             if let Some(value) = input.get(key) { settings[key] = value.clone(); }
         }
     }
@@ -839,10 +877,10 @@ fn bootstrap_start(body: &Value, query: &HashMap<String, String>) -> Result<Valu
     let options = bootstrap::Options {
         n_boot: total,
         seed: body["seed"].as_u64().or(Some(42)),
-        scheme: body["scheme"].as_str().unwrap_or("path").into(),
+        scheme: model_settings["inner_weighting"].as_str().unwrap_or(body["scheme"].as_str().unwrap_or("path")).into(),
         consistent: body["consistent"].as_bool().unwrap_or(false),
-        max_iter: number(body, "max_iter", 300),
-        tol: body["tol"].as_f64().unwrap_or(1e-7),
+        max_iter: model_settings["max_iter"].as_u64().map(|v| v as usize).unwrap_or_else(|| number(body, "max_iter", 300)),
+        tol: model_settings["tolerance"].as_f64().unwrap_or_else(|| body["tol"].as_f64().unwrap_or(1e-7)),
         mode: mode.into(),
         ci_method: ci.into(),
         studentized_resamples: number(body, "studentized_resamples", 50),

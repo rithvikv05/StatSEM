@@ -7,7 +7,6 @@ import { Checkbox } from '../components/Checkbox';
 import { api } from '../utils/api';
 import AppSidebar from '../components/AppSidebar';
 import './dataset-view.css';
-import { DataScreeningPanel } from '../components/DataScreeningPanel';
 import { DataGroupsTab } from '../mga/DataGroupsTab';
 import type { DataGroup } from '../mga/types';
 import { getGroupRows } from '../mga/groupUtils';
@@ -48,7 +47,7 @@ export const DatasetView: React.FC = () => {
   }, [studyDatasets, activeTab?.datasetId]);
 
   const [dataset, setDataset] = useState<ParsedDataset | null>(activeDataset);
-  const [currentView, setCurrentView] = useState<'variables' | 'data' | 'screening' | 'groups'>('variables');
+  const [currentView, setCurrentView] = useState<'variables' | 'data' | 'groups'>('variables');
   const [searchFilter, setSearchFilter] = useState('');
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -284,9 +283,6 @@ export const DatasetView: React.FC = () => {
               <button type="button" className={`subheader__switcher-btn ${currentView === 'data' ? 'active' : ''}`} aria-pressed={currentView === 'data'} onClick={() => setCurrentView('data')}>
                 Data <span style={{ opacity: 0.55, fontWeight: 400 }}>({dataset.rows.length})</span>
               </button>
-              <button type="button" className={`subheader__switcher-btn ${currentView === 'screening' ? 'active' : ''}`} aria-pressed={currentView === 'screening'} onClick={() => setCurrentView('screening')}>
-                Data Screening
-              </button>
               <button type="button" className={`subheader__switcher-btn ${currentView === 'groups' ? 'active' : ''}`} aria-pressed={currentView === 'groups'} onClick={() => setCurrentView('groups')}>
                 Data Groups <span style={{ opacity: 0.55, fontWeight: 400 }}>({dataset.dataGroups?.length ?? 0})</span>
               </button>
@@ -409,29 +405,6 @@ export const DatasetView: React.FC = () => {
                 </tbody>
               </table>
             </div>
-          ) : currentView === 'screening' ? (
-            <DataScreeningPanel
-              projectPath={activeStudy?.path || ''}
-              datasetId={dataset.id || dataset.filename}
-              modelId={studyModels[0]?.id || undefined}
-              availableModels={studyModels}
-              datasetName={dataset.filename}
-              totalRows={dataset.rows.length}
-              variables={dataset.variables}
-              onDatasetUpdated={() => {
-                if (activeStudy?.path) {
-                  api.loadProjectData(activeStudy.path, dataset.id)
-                    .then(res => {
-                      if (res && res.columns && res.rows) {
-                        const reprocessed = processData(res.dataset_name || dataset.filename, res.columns, res.rows);
-                        reprocessed.id = res.id || dataset.id;
-                        reprocessed.dataGroups = res.dataGroups || res.data_groups || dataset.dataGroups;
-                        persistChanges(reprocessed);
-                      }
-                    });
-                }
-              }}
-            />
           ) : (
             <DataGroupsTab
               dataset={dataset}

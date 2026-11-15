@@ -16,5 +16,5 @@ export const RunDetails: React.FC<{ results: ResultsData | null | undefined }> =
     ['Final change', lastChange == null ? null : Math.abs(Number(lastChange)) < 1e-4 && Number(lastChange) !== 0
       ? Number(lastChange).toExponential(3) : formatNumber(lastChange, normalizeDecimalDigits(settings.decimalDigits), settings.decimalSystem)],
   ].filter(([, value]) => value != null);
-  return <table className="scientific-table"><thead><tr><th>Run detail</th><th>Value</th></tr></thead><tbody>{rows.map(([label, value]) => <tr key={String(label)}><td>{label}</td><td>{String(value)}</td></tr>)}</tbody></table>;
+  return <table className="scientific-table"><thead><tr><th>Run detail</th><th>Value</th></tr></thead><tbody>{rows.map(([label, value]) => <tr key={String(label)}><td style={{ fontWeight: 600 }}>{label}</td><td>{String(value)}</td></tr>)}</tbody></table>;
 };

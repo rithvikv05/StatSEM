@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5185",
-    "beforeDevCommand": "cd frontend && npm run dev",
+    "beforeDevCommand": "node tools/prepare-sidecar.mjs && cd frontend && npm run dev",
     "beforeBuildCommand": "node tools/prepare-sidecar.mjs && cd frontend && npm run build"
   },
   "app": {

@@ -9,7 +9,7 @@
   box-sizing: border-box;
   background-color: var(--color-bg-base);
   border-bottom: 1px solid var(--color-border-subtle);
-  padding: 0 14px;
+  padding: 0 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -229,6 +229,14 @@ summary.calculation-menu__heading { cursor: pointer; }
   box-shadow: none;
 }
 .subheader__btn--primary:hover { background: var(--color-accent-hover); }
+
+/* The calculation and report-export actions share one visual column. */
+.results-aligned-action {
+  width: 120px;
+  min-width: 120px;
+  height: 28px;
+  justify-content: center;
+}
 
 .subheader__btn--bootstrap {
   color: var(--color-accent) !important;

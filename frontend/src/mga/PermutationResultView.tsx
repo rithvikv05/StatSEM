@@ -19,8 +19,11 @@ export const PermutationResultView: React.FC<PermutationResultViewProps> = ({ re
 
   const [activeTab, setActiveTab] = useState<PermTreeTab>('paths');
   const [query, setQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const term = query.trim().toLowerCase();
+  const allCollapsed = collapsed.length === 3;
+  const toggleAllSections = () => setCollapsed(allCollapsed ? [] : ['Group comparison', 'Measurement invariance', 'Calculation']);
 
   const alpha = report.significanceLevel || 0.05;
   const loPct = `${((alpha / 2) * 100).toFixed(1)}%`;
@@ -212,21 +215,17 @@ export const PermutationResultView: React.FC<PermutationResultViewProps> = ({ re
 
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <aside className="results-sidebar" aria-label="Permutation report">
-        <div className="results-sidebar__search">
-          <div className="results-sidebar__search-wrap">
-            <svg className="results-sidebar__search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-              <circle cx={11} cy={11} r={8} />
-              <line x1={21} y1={21} x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="search"
-              className="results-sidebar__search-input"
-              placeholder="Filter results..."
-              aria-label="Filter results"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-            />
+      <aside className="results-sidebar mga-results-sidebar" aria-label="Permutation report">
+        <div className="var-sidebar__header">
+          {isSearchOpen ? (
+            <div className="inline-search-wrap">
+              <input autoFocus type="search" className="sidebar-inline-search" placeholder="Filter results…" aria-label="Filter results" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') { setIsSearchOpen(false); setQuery(''); } }} onBlur={() => { if (!query) setIsSearchOpen(false); }} />
+              {query && <button className="inline-search-clear" type="button" aria-label="Clear filter" onMouseDown={e => e.preventDefault()} onClick={() => setQuery('')}>×</button>}
+            </div>
+          ) : <span className="var-sidebar__header-label">Results</span>}
+          <div className="var-sidebar__header-actions">
+            <button className={`icon-btn icon-btn--sm ${isSearchOpen ? 'active' : ''}`} title="Filter results" type="button" onClick={() => { setIsSearchOpen(open => !open); if (isSearchOpen) setQuery(''); }}><span className="material-symbols-outlined">search</span></button>
+            <button className="icon-btn icon-btn--sm" title={allCollapsed ? 'Expand all' : 'Collapse all'} type="button" onClick={toggleAllSections}><span className="material-symbols-outlined">{allCollapsed ? 'unfold_more' : 'unfold_less'}</span></button>
           </div>
         </div>
         <div className="results-sidebar__tree">

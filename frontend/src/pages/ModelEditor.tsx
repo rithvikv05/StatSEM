@@ -15,8 +15,8 @@ import { hasRunDetails } from '../utils/run-details';
 import { InlineAnalysisResults } from '../components/InlineAnalysisResults';
 import RedundancyWizardModal from '../components/RedundancyWizardModal';
 import { DiagramExportModal } from '../components/DiagramExportModal';
-import { TableActionToolbar } from '../components/TableActionToolbar';
 import { ReportExportModal } from '../components/ReportExportModal';
+import { compileReportData } from '../utils/reportGenerator';
 import { copyAllTablesFromContainer } from '../utils/tableExport';
 import { PermutationDialog } from '../mga/PermutationDialog';
 import { MgaDialog } from '../mga/MgaDialog';
@@ -31,7 +31,7 @@ import { makeResultIndicatorNames } from '../utils/result-indicator-names';
 
 import {
   Upload, Trash2, RotateCcw, AlertTriangle, History, Check,
-  GitCompare, Copy, Download, FileDown
+  GitCompare, Copy, Download
 } from 'lucide-react';
 import AppSidebar from '../components/AppSidebar';
 import '../model-canvas.css';
@@ -167,6 +167,7 @@ const ModelEditor = () => {
     settings,
     tabs,
     activeTabId,
+    setModelTabLocation,
   } = useStore();
   
   const currentTab = tabs.find(t => t.id === activeTabId);
@@ -176,6 +177,7 @@ const ModelEditor = () => {
   const activeStudy = studies.find(s => s.id === effectiveStudyId);
   const activeModel = models.find(model => model.id === effectiveModelId);
   const isCanvasLoadingRef = useRef(true);
+  const suppressStaleCheckRef = useRef(true);
 
   const studyDatasets = useMemo(
     () => getStudyDatasets(datasetsByStudy, effectiveStudyId || ''),
@@ -190,7 +192,7 @@ const ModelEditor = () => {
     renderModelCanvas();
   }, [theme, settings?.theme, settings?.darkVariant]);
 
-  const [currentView, setCurrentView] = useState<'model' | 'results'>('model');
+  const [currentView, setCurrentView] = useState<'model' | 'results'>(() => currentTab?.modelView || 'model');
   const [activeDataset, setActiveDataset] = useState<ParsedDataset | null>(() => {
     if (!effectiveStudyId) return null;
     const list = getStudyDatasets(datasetsByStudy, effectiveStudyId || '');
@@ -490,7 +492,7 @@ const ModelEditor = () => {
   const [validationSuccessToast, setValidationSuccessToast] = useState<string | null>(null);
   const [plsResults, setPlsResults] = useState<any>(null);
   const plsResultsRef = useRef<any>(null);
-  const [activeResultTab, setActiveResultTab] = useState<string>('path_coefficients');
+  const [activeResultTab, setActiveResultTab] = useState<string>(() => currentTab?.resultSection || 'path_coefficients');
   const [tableModes, setTableModes] = useState<Record<string, 'matrix' | 'list'>>({
     path_coefficients: 'matrix',
     total_indirect_effects: 'matrix',
@@ -499,12 +501,21 @@ const ModelEditor = () => {
     outer_weights: 'matrix',
     f_squared: 'matrix',
     htmt: 'matrix',
+    fornell_larcker: 'matrix',
   });
 
   const getTableMode = (key: string): 'matrix' | 'list' => tableModes[key] || 'matrix';
   const setTableMode = (key: string, mode: 'matrix' | 'list') => {
     setTableModes(prev => ({ ...prev, [key]: mode }));
   };
+
+  // Model tabs behave like browser tabs: preserve the exact view and result section
+  // while another workspace or document is active.
+  useEffect(() => {
+    if (currentTab?.type === 'model') {
+      setModelTabLocation(currentTab.id, currentView, activeResultTab);
+    }
+  }, [currentTab?.id, currentTab?.type, currentView, activeResultTab, setModelTabLocation]);
 
   // Canvas HUD confirmation popovers ('reset' | 'clear' | null)
   const [hudConfirm, setHudConfirm] = useState<'reset' | 'clear' | null>(null);
@@ -540,6 +551,7 @@ const ModelEditor = () => {
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isReportExportModalOpen, setIsReportExportModalOpen] = useState(false);
+  const [reportCurrentTableOnly, setReportCurrentTableOnly] = useState(false);
   const [copiedPageTable, setCopiedPageTable] = useState(false);
 
   useEffect(() => {
@@ -1174,25 +1186,10 @@ const ModelEditor = () => {
             ? getMgaCanvasResultForMode(finalResults, mgaCanvasMode)
             : finalResults;
 
-          // Only compare if canvas is fully loaded; otherwise wait for canvas loader to complete
-          if (!isCanvasLoadingRef.current && res.spec) {
-            try {
-              const currentSpec = exportModelSpec();
-              if (!isModelTopologyEqual(currentSpec, calculatedSpec)) {
-                setIsModelOutdated(true);
-                setCanvasResults(toApply);
-              } else {
-                setCanvasResults(toApply);
-                setIsModelOutdated(false);
-              }
-            } catch (e) {
-              setCanvasResults(toApply);
-              setIsModelOutdated(false);
-            }
-          } else {
-            setCanvasResults(toApply);
-            setIsModelOutdated(false);
-          }
+          // Loading stored results must not mark the model stale. Actual edits are
+          // evaluated by the canvas-change listener after restoration completes.
+          setCanvasResults(toApply);
+          setIsModelOutdated(false);
 
           const viewSlider = document.getElementById('main-view-slider');
           if (viewSlider) {
@@ -1229,18 +1226,6 @@ const ModelEditor = () => {
       setIsModelOutdated(false);
     }
   }, [activeStudy?.path, effectiveModelId]);
-
-  const handleRevertToCalculatedModel = () => {
-    if (!lastCalculatedModel?.layout) return;
-    loadModelCanvasState(lastCalculatedModel.layout);
-    if (plsResults) {
-      setCanvasResults(plsResults);
-    }
-    setIsModelOutdated(false);
-    setSaveToast('Canvas reverted to calculated model state');
-    setTimeout(() => setSaveToast(null), 2500);
-    switchView('model');
-  };
 
   const handleConfirmClearCanvas = () => {
     setHudConfirm(null);
@@ -2036,6 +2021,81 @@ const ModelEditor = () => {
       return;
     }
 
+    // Use the report compiler as the single source of truth. It understands
+    // every result family, not merely the tables mounted in the active view.
+    const canonicalSections = compileReportData({
+      modelName: activeModel?.name || 'Model',
+      studyName: activeStudy?.name || 'Study',
+      datasetName: activeDataset?.filename || 'Dataset',
+      plsResults,
+      modelSpec: exportModelSpec(),
+      analysisResultsMap,
+      getConstructName,
+      getIndicatorName,
+      formatNumber: fmt,
+    }).sections;
+
+    if ((format === 'csv' || format === 'excel') && canonicalSections.length === 0) {
+      alert('No result tables are available to export.');
+      return;
+    }
+
+    // CSV and Excel use the canonical report compiler rather than active-page DOM tables.
+    if (format === 'csv') {
+      const csv = canonicalSections.map(section => {
+        const escape = (value: unknown) => {
+          const text = String(value ?? '');
+          return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+        };
+        return [`=== ${section.title.toUpperCase()} ===`, section.headers.map(escape).join(','), ...section.rows.map(row => row.map(escape).join(','))].join('\n');
+      }).join('\n\n');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${activeModel?.name || 'Model'}_All_Results.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setSaveToast('All result tables exported as CSV');
+      setTimeout(() => setSaveToast(null), 2500);
+      return;
+    }
+
+    if (format === 'excel') {
+      try {
+        const { default: ExcelJS } = await import('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        const usedSheetNames = new Set<string>();
+        canonicalSections.forEach((section, index) => {
+          const base = section.title.replace(/[\\/?*:[\]]/g, '').trim().slice(0, 31) || `Results ${index + 1}`;
+          let sheetName = base;
+          let suffix = 2;
+          while (usedSheetNames.has(sheetName)) {
+            sheetName = `${base.slice(0, Math.max(1, 31 - String(suffix).length - 1))} ${suffix++}`;
+          }
+          usedSheetNames.add(sheetName);
+          const sheet = workbook.addWorksheet(sheetName);
+          const header = sheet.addRow(section.headers);
+          header.font = { bold: true };
+          section.rows.forEach(row => sheet.addRow(row));
+          sheet.views = [{ state: 'frozen', ySplit: 1 }];
+          sheet.columns.forEach(column => { column.width = 18; });
+        });
+        const bytes = await workbook.xlsx.writeBuffer();
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${activeModel?.name || 'Model'}_All_Results.xlsx`;
+        link.click();
+        URL.revokeObjectURL(url);
+        setSaveToast(`${canonicalSections.length} result sections exported as Excel worksheets`);
+        setTimeout(() => setSaveToast(null), 3000);
+      } catch (error) {
+        console.error('All-results Excel export failed:', error);
+        alert('Could not export all result tables to Excel.');
+      }
+      return;
+    }
+
     const sections: Array<{ title: string; headers: string[]; rows: (string | number)[][] }> = [];
 
     // 1. Path Coefficients
@@ -2171,7 +2231,7 @@ const ModelEditor = () => {
       sections.push({ title: 'Bootstrap Outer Loadings Significance', headers: ['Relationship', 'Original (λ)', 'Sample Mean', 'Std Error', 't-Statistic', 'p-Value', '95% CI'], rows });
     }
 
-    if (format === 'csv') {
+    if (false) {
       let csv = '';
       sections.forEach(s => {
         csv += `=== ${s.title.toUpperCase()} ===\n`;
@@ -2195,7 +2255,7 @@ const ModelEditor = () => {
       URL.revokeObjectURL(url);
       setSaveToast('All tables exported as CSV');
       setTimeout(() => setSaveToast(null), 2500);
-    } else if (format === 'excel') {
+    } else if (false) {
       try {
         const { default: ExcelJS } = await import('exceljs');
         const workbook = new ExcelJS.Workbook();
@@ -2328,6 +2388,7 @@ const ModelEditor = () => {
     };
 
     isCanvasLoadingRef.current = true;
+    suppressStaleCheckRef.current = true;
     loadModelCanvasState({ nodes: [], edges: [] });
 
     // Add a tiny delay to ensure DOM is ready
@@ -2374,23 +2435,19 @@ const ModelEditor = () => {
           console.warn('Could not load saved model layout:', err);
         } finally {
           isCanvasLoadingRef.current = false;
-          if (lastCalculatedModelRef.current?.spec) {
-            try {
-              const currentSpec = exportModelSpec();
-              if (!isModelTopologyEqual(currentSpec, lastCalculatedModelRef.current.spec)) {
-                setCanvasResults(null);
-                setIsModelOutdated(true);
-              } else {
-                setIsModelOutdated(false);
-                if (plsResultsRef.current || plsResults) {
-                  setCanvasResults(plsResultsRef.current || plsResults);
-                }
-              }
-            } catch (e) {}
+          // Restoring a tab is never itself a model edit. Calculation specs may
+          // be internally expanded, so comparing them here gives false stale warnings.
+          setIsModelOutdated(false);
+          if (plsResultsRef.current || plsResults) {
+            setCanvasResults(plsResultsRef.current || plsResults);
           }
+          // Canvas setup itself emits change events. Let those settle before
+          // treating later user-originated edits as stale-result changes.
+          requestAnimationFrame(() => { suppressStaleCheckRef.current = false; });
         }
       } else {
         isCanvasLoadingRef.current = false;
+        requestAnimationFrame(() => { suppressStaleCheckRef.current = false; });
       }
 
       const viewSlider = document.getElementById('main-view-slider');
@@ -2428,7 +2485,7 @@ const ModelEditor = () => {
     };
     
     const handleCanvasChanged = () => {
-      if (isCanvasLoadingRef.current) return;
+      if (isCanvasLoadingRef.current || suppressStaleCheckRef.current) return;
       triggerDebouncedAutoSave();
       if (lastCalculatedModelRef.current?.spec) {
         try {
@@ -2634,7 +2691,7 @@ const ModelEditor = () => {
       {/* Inline Calculate Dropdown */}
       <div className="subheader__dropdown-container" ref={calcDropdownRef}>
         <button
-          className="subheader__btn subheader__btn--primary"
+          className="subheader__btn subheader__btn--primary results-aligned-action"
           id="calculate-btn"
           type="button"
           onClick={() => setIsCalcMenuOpen(prev => !prev)}
@@ -4075,15 +4132,6 @@ const ModelEditor = () => {
         {/* Secondary Header inline with filter search */}
         <div className="results-secondary-header">
           <button
-            className="results-tool-btn results-tool-btn--accent"
-            type="button"
-            onClick={() => setIsReportExportModalOpen(true)}
-            title="Export full comprehensive report (PDF / Word) with all tables and model diagram"
-          >
-            <FileDown size={13} />
-            <span>Export Report</span>
-          </button>
-          <button
             className="results-tool-btn"
             type="button"
             onClick={handleOpenSnapshotModal}
@@ -4092,53 +4140,16 @@ const ModelEditor = () => {
             <History size={13} />
             <span>Save Snapshot</span>
           </button>
-          <div className="subheader__dropdown-container" ref={exportDropdownRef}>
-            <button
-              className="results-tool-btn"
-              type="button"
-              aria-expanded={isExportMenuOpen}
-              aria-haspopup="menu"
-              onClick={() => setIsExportMenuOpen(prev => !prev)}
-            >
-              <Download size={13} />
-              <span>Export</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: isExportMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
-            </button>
-            {isExportMenuOpen && (
-              <div className="subheader__dropdown-menu" role="menu" style={{ left: 0, right: 'auto', minWidth: 220 }}>
-                <button
-                  type="button"
-                  className="subheader__dropdown-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setIsExportMenuOpen(false);
-                    setIsReportExportModalOpen(true);
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <FileDown size={14} color="var(--color-accent, #2563eb)" />
-                  <strong>Comprehensive Report (PDF / DOCX)</strong>
-                </button>
-                <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '4px 0' }} />
-                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportCurrentTable(); }}>Current table as CSV</button>
-                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); void handleExportExcel(); }}>Current table as Excel</button>
-                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportHtml(); }}>Current table as HTML</button>
-                <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
-                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleCreateDataFile(); }}>Construct scores as CSV</button>
-                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); setIsReportExportModalOpen(true); }}>Print / save as PDF</button>
-              </div>
-            )}
-          </div>
 
           {/* Export All dropdown on right end (below Calculate) */}
           <div className="subheader__dropdown-container" ref={exportAllRef} style={{ marginLeft: 'auto' }}>
             <button
-              className="results-tool-btn results-tool-btn--accent"
               type="button"
               aria-expanded={isExportAllMenuOpen}
               aria-haspopup="menu"
               onClick={() => setIsExportAllMenuOpen(prev => !prev)}
               title="Export all tables from this calculation"
+              className="results-tool-btn results-tool-btn--accent results-aligned-action"
             >
               <Download size={13} />
               <span>Export All</span>
@@ -4149,7 +4160,7 @@ const ModelEditor = () => {
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('csv'); }}>Export all tables as CSV</button>
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('excel'); }}>Export all tables as Excel</button>
                 <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('html'); }}>Export all tables as HTML</button>
-                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); void handleExportAllTables('pdf'); }}>Export all tables as PDF</button>
+                <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportAllMenuOpen(false); setReportCurrentTableOnly(false); setIsReportExportModalOpen(true); }}>Export report (PDF / DOCX)</button>
               </div>
             )}
           </div>
@@ -4183,29 +4194,6 @@ const ModelEditor = () => {
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-              {lastCalculatedModel && (
-                <button
-                  type="button"
-                  onClick={handleRevertToCalculatedModel}
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    borderRadius: '6px',
-                    border: '1px solid var(--color-border-default)',
-                    background: 'var(--color-bg-base)',
-                    color: 'var(--color-text-primary)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '5px'
-                  }}
-                  title="Revert model canvas to the state used for these results"
-                >
-                  <RotateCcw size={13} />
-                  <span>Revert Canvas to This Model</span>
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => void handleCalculate(!!plsResults?.is_consistent)}
@@ -4245,6 +4233,8 @@ const ModelEditor = () => {
                 onClick={handleCopyCurrentTable}
                 title="Copy all tables on this page to clipboard"
                 style={{
+                  minWidth: 112,
+                  justifyContent: 'center',
                   backgroundColor: copiedPageTable ? 'rgba(34, 197, 94, 0.12)' : undefined,
                   color: copiedPageTable ? '#16a34a' : undefined,
                   borderColor: copiedPageTable ? '#16a34a' : undefined,
@@ -4253,15 +4243,29 @@ const ModelEditor = () => {
                 {copiedPageTable ? <Check size={13} strokeWidth={2.5} /> : <Copy size={13} />}
                 <span>{copiedPageTable ? 'Copied!' : 'Copy Table'}</span>
               </button>
-              <button
-                className="results-tool-btn results-tool-btn--accent"
-                type="button"
-                onClick={() => setIsReportExportModalOpen(true)}
-                title="Export comprehensive report (PDF / Word) with all tables and model diagram"
-              >
-                <FileDown size={13} />
-                <span>Export Report</span>
-              </button>
+              <div className="subheader__dropdown-container" ref={exportDropdownRef}>
+                <button
+                  type="button"
+                  aria-expanded={isExportMenuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setIsExportMenuOpen(prev => !prev)}
+                  title="Export the current results table"
+                  className="results-tool-btn results-aligned-action"
+                >
+                  <Download size={13} />
+                  <span>Export</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: isExportMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
+                </button>
+                {isExportMenuOpen && (
+                  <div className="subheader__dropdown-menu" role="menu" style={{ right: 0, left: 'auto', minWidth: 220 }}>
+                    <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportCurrentTable(); }}>Current table as CSV</button>
+                    <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); void handleExportExcel(); }}>Current table as Excel</button>
+                    <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); handleExportHtml(); }}>Current table as HTML</button>
+                    <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
+                    <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportMenuOpen(false); setReportCurrentTableOnly(true); setIsReportExportModalOpen(true); }}>Export report (PDF / DOCX)</button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -4269,13 +4273,6 @@ const ModelEditor = () => {
         {/* Dynamic Table Area */}
         <div className="table-container">
           <div className="scientific-table-wrap">
-            {plsResults && !plsResults?.is_mga && !['discriminant', 'collinearity', 'hypotheses'].includes(currentTabId) && (
-              <TableActionToolbar
-                title={reportTabDetails.title}
-                subtitle={reportTabDetails.badge}
-                filename={`${activeModel?.name || 'Model'}_${currentTabId}`}
-              />
-            )}
             {plsResults?.is_mga && plsResults?.mga_report ? (
               <MgaActiveTableView
                 report={plsResults.mga_report}
@@ -4880,11 +4877,7 @@ const ModelEditor = () => {
             ) : currentTabId === 'discriminant' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                 <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
-                  <TableActionToolbar
-                    title="Heterotrait-Monotrait Ratio (HTMT)"
-                    subtitle="(Threshold < 0.85 / 0.90)"
-                    filename={`${activeModel?.name || 'Model'}_htmt`}
-                  />
+                  <div className="results-table-section-title">Heterotrait--Monotrait Ratio (HTMT)</div>
                   {getTableMode('htmt') === 'matrix' ? (
                     <table className="scientific-table">
                       <thead>
@@ -4990,15 +4983,11 @@ const ModelEditor = () => {
                 </div>
 
                 <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
-                  <TableActionToolbar
-                    title="Fornell-Larcker Criterion"
-                    subtitle="(Diagonal: √AVE, Off-diagonal: construct correlations)"
-                    filename={`${activeModel?.name || 'Model'}_fornell_larcker`}
-                  />
-                  <table className="scientific-table">
+                  <div className="results-table-section-title">Fornell--Larcker Criterion</div>
+                  {getTableMode('fornell_larcker') === 'matrix' ? <table className="scientific-table">
                     <thead>
                       <tr>
-                        <th>Construct</th>
+                        <th><TableHeaderToggle label="Construct" mode={getTableMode('fornell_larcker')} onToggle={(m) => setTableMode('fornell_larcker', m)} /></th>
                         {measurementConstructs.map(c => <th key={c}>{getConstructName(c)}</th>)}
                       </tr>
                     </thead>
@@ -5026,17 +5015,18 @@ const ModelEditor = () => {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table> : <table className="scientific-table">
+                    <thead><tr><th><TableHeaderToggle label="Construct 1" mode={getTableMode('fornell_larcker')} onToggle={(m) => setTableMode('fornell_larcker', m)} /></th><th>Construct 2</th><th>Correlation</th></tr></thead>
+                    <tbody>{measurementConstructs.flatMap((c1, index) => measurementConstructs.slice(index + 1).map(c2 => {
+                      const value = plsResults.reliability_and_validity?.fornell_larcker?.[c1]?.[c2] ?? plsResults.reliability_and_validity?.fornell_larcker?.[c2]?.[c1];
+                      return <tr key={`${c1}-${c2}`}><td>{getConstructName(c1)}</td><td>{getConstructName(c2)}</td><td>{fmt(value)}</td></tr>;
+                    }))}</tbody>
+                  </table>}
                 </div>
               </div>
             ) : currentTabId === 'collinearity' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                 <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
-                  <TableActionToolbar
-                    title="Inner Model VIF (Predictors of Endogenous Constructs)"
-                    subtitle="Threshold < 3.3 / 5.0"
-                    filename={`${activeModel?.name || 'Model'}_inner_vif`}
-                  />
                   <table className="scientific-table">
                     <thead>
                       <tr>
@@ -5077,11 +5067,6 @@ const ModelEditor = () => {
                 </div>
 
                 <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
-                  <TableActionToolbar
-                    title="Outer Model VIF (Indicators)"
-                    subtitle="Threshold < 3.3 / 5.0"
-                    filename={`${activeModel?.name || 'Model'}_outer_vif`}
-                  />
                   <table className="scientific-table">
                     <thead>
                       <tr>
@@ -5600,7 +5585,9 @@ const ModelEditor = () => {
 
   <ReportExportModal
     isOpen={isReportExportModalOpen}
-    onClose={() => setIsReportExportModalOpen(false)}
+    onClose={() => { setIsReportExportModalOpen(false); setReportCurrentTableOnly(false); }}
+    currentResultTab={activeResultTab}
+    currentTableOnly={reportCurrentTableOnly}
     config={{
       modelName: activeModel?.name || 'Model',
       studyName: activeStudy?.name || 'Study',

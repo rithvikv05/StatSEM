@@ -192,7 +192,7 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
       <div className="results-sidebar__tree">
         {isMga ? (
           /* MGA: Starts directly from path coefficients, no outer 'MGA Estimates' or 'Final results' header */
-          <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div className="mga-results-navigation">
             {mgaDirectItems
               .filter(([id, label]) => {
                 if (!term) return true;
@@ -211,22 +211,7 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                   // Non-parameter item (e.g. MICOM, Run details)
                   const isActive = activeTab === id;
                   return (
-                    <button
-                      type="button"
-                      key={id}
-                      className={`tree-item ${isActive ? 'active' : ''}`}
-                      aria-current={isActive ? 'page' : undefined}
-                      style={{
-                        fontWeight: 600,
-                        color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        marginBottom: '2px',
-                        padding: '5px 8px',
-                      }}
-                      onClick={() => onSelect(id)}
-                    >
+                    <button type="button" key={id} className={`tree-item ${isActive ? 'active' : ''}`} aria-current={isActive ? 'page' : undefined} onClick={() => onSelect(id)}>
                       {label}
                     </button>
                   );
@@ -238,21 +223,12 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                 );
 
                 return (
-                  <div key={id} style={{ display: 'flex', flexDirection: 'column', marginBottom: '2px' }}>
-                    {/* Category Header: Not highlighted as active, toggles collapse/expand */}
+                  <div key={id} className="tree-section">
                     <button
                       type="button"
-                      className="tree-item"
-                      style={{
-                        fontWeight: 600,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        paddingRight: '8px',
-                        cursor: 'pointer',
-                        background: 'transparent',
-                        color: 'var(--color-text-primary)',
-                      }}
+                      className="tree-section__header tree-section__toggle"
+                      aria-expanded={isCatOpen}
+                      disabled={!!term}
                       onClick={() => {
                         if (!isCatOpen) {
                           toggleCategoryCollapse(id);
@@ -262,19 +238,8 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                         }
                       }}
                     >
-                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {label}
-                      </span>
                       <svg
-                        style={{
-                          width: '12px',
-                          height: '12px',
-                          transform: isCatOpen ? 'rotate(90deg)' : 'none',
-                          transition: 'transform 0.15s ease',
-                          opacity: 0.6,
-                          flexShrink: 0,
-                          marginLeft: '6px',
-                        }}
+                        className={isCatOpen ? 'open' : ''}
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
@@ -284,22 +249,11 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                       >
                         <polyline points="9 18 15 12 9 6" />
                       </svg>
+                      <span>{label}</span>
                     </button>
 
-                    {/* Sub-items: Only the selected sub-item is highlighted */}
                     {isCatOpen && (
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          marginLeft: '10px',
-                          paddingLeft: '8px',
-                          borderLeft: '1px solid var(--color-border-subtle)',
-                          gap: '1px',
-                          marginTop: '1px',
-                          marginBottom: '3px',
-                        }}
-                      >
+                      <div className="tree-section__items">
                         {matchingSubViews.map(([subKey, subLabel]) => {
                           const isSubActive =
                             activeCat === id &&
@@ -309,15 +263,6 @@ export const ResultsNavigation: React.FC<ResultsNavigationProps> = ({
                               type="button"
                               key={subKey}
                               className={`tree-item ${isSubActive ? 'active' : ''}`}
-                              style={{
-                                fontSize: '11.5px',
-                                padding: '4px 6px',
-                                fontWeight: isSubActive ? 600 : 400,
-                                borderRadius: '4px',
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
                               aria-current={isSubActive ? 'page' : undefined}
                               onClick={() => onSelect(`${id}__${subKey}`)}
                             >

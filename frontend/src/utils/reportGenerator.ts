@@ -33,6 +33,8 @@ export interface ReportConfig {
   includeFit?: boolean;
   includeAdvanced?: boolean;
   includeSettings?: boolean;
+  /** Optional report-table title prefixes. When supplied, only matching result sections are exported. */
+  sectionFilter?: string[];
   formatNumber?: (val: any, decimals?: number) => string;
 }
 
@@ -576,7 +578,61 @@ export function compileReportData(config: ReportConfig): {
     });
   }
 
-  return { metadata, sections };
+  // Bootstrap output is only a selectable report section after a bootstrap run.
+  const bootstrapPaths = plsResults?.significance?.paths || config.analysisResultsMap?.bootstrap?.paths;
+  if (Array.isArray(bootstrapPaths) && bootstrapPaths.length) {
+    sections.push({
+      title: 'Bootstrapping: Path Coefficients',
+      headers: ['Path', 'Original', 'Sample Mean', 'Std. Error', 't-Statistic', 'p-Value', 'Confidence Interval'],
+      rows: bootstrapPaths.map((path: any) => [
+        `${getCName(path.from)} -> ${getCName(path.to)}`,
+        fmt(path.original), fmt(path.mean), fmt(path.se ?? path.std_error), fmt(path.t_stat ?? path.t_statistic), fmt(path.p_value),
+        path.ci_low != null || path.ci_high != null ? `[${fmt(path.ci_low)}, ${fmt(path.ci_high)}]` : '-',
+      ]),
+    });
+  }
+  const bootstrapOuterLoadings = plsResults?.significance?.outer_loadings
+    || config.analysisResultsMap?.bootstrap?.outer_loadings;
+  if (Array.isArray(bootstrapOuterLoadings) && bootstrapOuterLoadings.length) {
+    sections.push({
+      title: 'Bootstrapping: Outer Loadings',
+      headers: ['Construct', 'Indicator', 'Original', 'Sample Mean', 'Std. Error', 't-Statistic', 'p-Value', 'Confidence Interval'],
+      rows: bootstrapOuterLoadings.map((loading: any) => [
+        getCName(loading.construct ?? loading.latent_variable ?? loading.block),
+        getIName(loading.indicator ?? loading.item ?? loading.manifest_variable),
+        fmt(loading.original ?? loading.estimate ?? loading.loading),
+        fmt(loading.mean ?? loading.sample_mean),
+        fmt(loading.se ?? loading.std_error),
+        fmt(loading.t_stat ?? loading.t_statistic),
+        fmt(loading.p_value),
+        loading.ci_low != null || loading.ci_high != null ? `[${fmt(loading.ci_low)}, ${fmt(loading.ci_high)}]` : '-',
+      ]),
+    });
+  }
+
+  // MGA sections are present only for an MGA result and retain the report's group-specific rows.
+  const mga = plsResults?.mga_report;
+  if (plsResults?.is_mga && mga) {
+    const addMgaSection = (title: string, rows: any[] | undefined) => {
+      if (!Array.isArray(rows) || !rows.length) return;
+      sections.push({
+        title: `MGA: ${title}`,
+        headers: ['Parameter', mga.groupAName || 'Group A', mga.groupBName || 'Group B', 'Difference', 'p-Value'],
+        rows: rows.map(row => [row.parameter || row.key || '-', fmt(row.originalA), fmt(row.originalB), fmt(row.difference ?? row.originalDifference), fmt(row.parametricP ?? row.pValue)]),
+      });
+    };
+    addMgaSection('Path coefficients', mga.pathCoefficients);
+    addMgaSection('Total indirect effects', mga.totalIndirectEffects);
+    addMgaSection('Specific indirect effects', mga.specificIndirectEffects);
+    addMgaSection('Total effects', mga.totalEffects);
+    addMgaSection('Outer loadings', mga.outerLoadings);
+    addMgaSection('Outer weights', mga.outerWeights);
+  }
+
+  const filteredSections = config.sectionFilter?.length
+    ? sections.filter(section => config.sectionFilter!.includes(section.title))
+    : sections;
+  return { metadata, sections: filteredSections };
 }
 
 /**

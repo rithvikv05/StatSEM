@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { formatNumber, normalizeDecimalDigits } from '../utils/number-format';
 import type { MgaParamRow, MgaReport, PermutationParamRow, PermutationReport } from './types';
@@ -37,6 +37,12 @@ function getBootT(orig: number, se: number, stored?: number): number {
   return Number.isFinite(se) && se > 1e-12 ? Math.abs(orig / se) : 0;
 }
 
+function splitRelation(parameter: string): { source: string; target: string } | null {
+  const parts = parameter.split(/\s*(?:→|->|⇒)\s*/);
+  if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) return null;
+  return { source: parts[0].trim(), target: parts[1].trim() };
+}
+
 export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, activeTab }) => {
   const { settings } = useStore();
   const decimalSystem = settings.decimalSystem;
@@ -54,6 +60,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
   const groupB = report.groupBName;
   const alpha = report.significanceLevel || 0.05;
   const oneTailed = report.testType === 'one-tailed';
+  const [viewMode, setViewMode] = useState<'matrix' | 'list'>('list');
 
   // Extract relevant rows based on category
   const rows = useMemo(() => {
@@ -89,6 +96,46 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
       }
     }
   }, [report, category, isPermutation]);
+
+  const relationRows = useMemo(() => rows.flatMap((row: MgaParamRow | PermutationParamRow) => {
+    const relation = splitRelation(row.parameter);
+    if (!relation) return [];
+    return [{
+      ...relation,
+      value: isPermutation ? (row as PermutationParamRow).originalDifference : (row as MgaParamRow).difference,
+    }];
+  }), [rows, isPermutation]);
+
+  const viewToggle = (label: string) => (
+    <div style={{ display: 'flex', minWidth: 170, alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <span>{label}</span>
+      {relationRows.length > 0 && (
+        <div className="mga-table-view-toggle" aria-label="Table view">
+          <button type="button" className={viewMode === 'matrix' ? 'active' : ''} title="Matrix view" onClick={() => setViewMode('matrix')}>
+            <span className="material-symbols-outlined">grid_view</span>
+          </button>
+          <button type="button" className={viewMode === 'list' ? 'active' : ''} title="List view" onClick={() => setViewMode('list')}>
+            <span className="material-symbols-outlined">format_list_bulleted</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  if (viewMode === 'matrix' && relationRows.length > 0) {
+    const sources = [...new Set(relationRows.map(row => row.source))];
+    const targets = [...new Set(relationRows.map(row => row.target))];
+    const values = new Map(relationRows.map(row => [`${row.source}\u0000${row.target}`, row.value]));
+    return (
+      <table className="scientific-table">
+        <thead><tr><th>{viewToggle('Source \\ Target')}</th>{targets.map(target => <th key={target}>{target}</th>)}</tr></thead>
+        <tbody>{sources.map(source => <tr key={source}><td>{source}</td>{targets.map(target => {
+          const value = values.get(`${source}\u0000${target}`);
+          return <td key={target} className={value === undefined ? 'cell-empty' : undefined}>{value === undefined ? '—' : fmt(value)}</td>;
+        })}</tr>)}</tbody>
+      </table>
+    );
+  }
 
   // MICOM view for permutation report
   if (category === 'micom' && isPermutation) {
@@ -158,7 +205,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
         <table className="scientific-table">
           <thead>
             <tr>
-              <th>Parameter</th>
+              <th>{viewToggle('Parameter')}</th>
               <th>Original ({groupA})</th>
               <th>Original ({groupB})</th>
               <th>Difference (A - B)</th>
@@ -360,7 +407,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
         <thead>
           <tr>
             {headers.map((h, i) => (
-              <th key={i}>{h}</th>
+              <th key={i}>{i === 0 ? viewToggle(h) : h}</th>
             ))}
           </tr>
         </thead>

@@ -18,9 +18,7 @@ import {
   LayoutGrid,
   RotateCcw,
   GitCompare,
-  FileDown,
 } from 'lucide-react';
-import { TableActionToolbar } from '../components/TableActionToolbar';
 import { ReportExportModal } from '../components/ReportExportModal';
 import { copyAllTablesFromContainer } from '../utils/tableExport';
 import { getCanvasGridColors } from '../utils/model-canvas';
@@ -124,6 +122,7 @@ export const SnapshotView: React.FC = () => {
     outer_weights: 'matrix',
     f_squared: 'matrix',
     htmt: 'matrix',
+    fornell_larcker: 'matrix',
   });
 
   const getTableMode = (key: string): 'matrix' | 'list' => tableModes[key] || 'matrix';
@@ -184,6 +183,7 @@ export const SnapshotView: React.FC = () => {
   const [isCreatingModel, setIsCreatingModel] = useState(false);
   const [copyToast, setCopyToast] = useState<string | null>(null);
   const [isReportExportModalOpen, setIsReportExportModalOpen] = useState(false);
+  const [reportCurrentTableOnly, setReportCurrentTableOnly] = useState(false);
   const [copiedPageTable, setCopiedPageTable] = useState(false);
 
   useEffect(() => {
@@ -1101,10 +1101,6 @@ export const SnapshotView: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   if (loading) {
     return (
       <div className="app-body" style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -1265,50 +1261,6 @@ export const SnapshotView: React.FC = () => {
                     <Edit3 size={13} />
                     <span>Edit Model</span>
                   </button>
-                  <button
-                    className="results-tool-btn"
-                    type="button"
-                    onClick={() => setIsReportExportModalOpen(true)}
-                    title="Export comprehensive report (PDF / DOCX)"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      backgroundColor: 'var(--color-accent-subtle, #eef2ff)',
-                      color: 'var(--color-accent, #6366f1)',
-                      fontWeight: 600,
-                      border: '1px solid var(--color-accent, #6366f1)',
-                    }}
-                  >
-                    <FileDown size={13} />
-                    <span>Export Report</span>
-                  </button>
-                  <div className="subheader__dropdown-container" ref={exportDropdownRef}>
-                    <button
-                      className="results-tool-btn"
-                      type="button"
-                      aria-expanded={isExportDropdownOpen}
-                      aria-haspopup="menu"
-                      onClick={() => setIsExportDropdownOpen(prev => !prev)}
-                      title="Export snapshot results"
-                    >
-                      <Download size={13} />
-                      <span>Export</span>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: isExportDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
-                    </button>
-                    {isExportDropdownOpen && (
-                      <div className="subheader__dropdown-menu" role="menu" style={{ left: 0, right: 'auto', minWidth: 220 }}>
-                        <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); setIsReportExportModalOpen(true); }}>Comprehensive Report (PDF / DOCX)</button>
-                        <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
-                        <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); handleExportCSV(); }}>Current table as CSV</button>
-                        <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); void handleExportExcel(); }}>Current table as Excel</button>
-                        <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); handleExportHtml(); }}>Current table as HTML</button>
-                        <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
-                        <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); handleExportJSON(); }}>Snapshot as JSON</button>
-                        <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); handlePrint(); }}>Print / save as PDF</button>
-                      </div>
-                    )}
-                  </div>
                 </div>
 
                 {/* Header Area with Inline Title and Table Actions */}
@@ -1330,28 +1282,40 @@ export const SnapshotView: React.FC = () => {
                         type="button"
                         onClick={handleCopyTable}
                         title="Copy table to clipboard"
-                        style={copiedPageTable ? { color: 'var(--color-success, #10b981)', borderColor: 'var(--color-success, #10b981)' } : undefined}
+                        style={{
+                          minWidth: 112,
+                          justifyContent: 'center',
+                          ...(copiedPageTable ? { color: 'var(--color-success, #10b981)', borderColor: 'var(--color-success, #10b981)' } : {}),
+                        }}
                       >
                         <Copy size={13} />
                         <span>{copiedPageTable ? 'Copied!' : 'Copy Table'}</span>
                       </button>
-                      <button
-                        className="results-tool-btn"
-                        type="button"
-                        onClick={() => setIsReportExportModalOpen(true)}
-                        title="Export comprehensive report (PDF / DOCX)"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          backgroundColor: 'var(--color-accent-subtle, #eef2ff)',
-                          color: 'var(--color-accent, #6366f1)',
-                          fontWeight: 600,
-                        }}
-                      >
-                        <FileDown size={13} />
-                        <span>Export Report</span>
-                      </button>
+                      <div className="subheader__dropdown-container" ref={exportDropdownRef}>
+                        <button
+                          className="results-tool-btn"
+                          type="button"
+                          aria-expanded={isExportDropdownOpen}
+                          aria-haspopup="menu"
+                          onClick={() => setIsExportDropdownOpen(prev => !prev)}
+                          title="Export the current snapshot table"
+                          style={{ minWidth: 112, justifyContent: 'center' }}
+                        >
+                          <Download size={13} />
+                          <span>Export</span>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13, marginLeft: -2, transform: isExportDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}><polyline points="6 9 12 15 18 9" /></svg>
+                        </button>
+                        {isExportDropdownOpen && (
+                          <div className="subheader__dropdown-menu" role="menu" style={{ right: 0, left: 'auto', minWidth: 220 }}>
+                            <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); handleExportCSV(); }}>Current table as CSV</button>
+                            <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); void handleExportExcel(); }}>Current table as Excel</button>
+                            <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); handleExportHtml(); }}>Current table as HTML</button>
+                            <div style={{ height: 1, background: 'var(--color-border-subtle)', margin: '2px 0' }} />
+                            <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); handleExportJSON(); }}>Snapshot as JSON</button>
+                            <button type="button" className="subheader__dropdown-item" role="menuitem" onClick={() => { setIsExportDropdownOpen(false); setReportCurrentTableOnly(true); setIsReportExportModalOpen(true); }}>Export report (PDF / DOCX)</button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1359,13 +1323,6 @@ export const SnapshotView: React.FC = () => {
                 {/* Table Container */}
                 <div className="table-container">
                   <div className="scientific-table-wrap">
-                    {results && !results?.is_mga && activeResultTab !== 'hypotheses' && (
-                      <TableActionToolbar
-                        title={reportTabDetails.title}
-                        subtitle={reportTabDetails.badge}
-                        filename={`${snapshot?.name || 'Snapshot'}_${activeResultTab}`}
-                      />
-                    )}
                     {results?.is_mga && results?.mga_report ? (
                       <MgaActiveTableView
                         report={results.mga_report}
@@ -1948,10 +1905,10 @@ export const SnapshotView: React.FC = () => {
                         </table>
                       )
                     ) : currentTabId === 'fornell_larcker' ? (
-                      <table className="scientific-table">
+                      getTableMode('fornell_larcker') === 'matrix' ? <table className="scientific-table">
                         <thead>
                           <tr>
-                            <th>Construct</th>
+                            <th><TableHeaderToggle label="Construct" mode={getTableMode('fornell_larcker')} onToggle={(m) => setTableMode('fornell_larcker', m)} /></th>
                             {resultConstructs.map(c => (
                               <th key={c}>{getConstructName(c)}</th>
                             ))}
@@ -1968,6 +1925,12 @@ export const SnapshotView: React.FC = () => {
                             </tr>
                           ))}
                         </tbody>
+                      </table> : <table className="scientific-table">
+                        <thead><tr><th><TableHeaderToggle label="Construct 1" mode={getTableMode('fornell_larcker')} onToggle={(m) => setTableMode('fornell_larcker', m)} /></th><th>Construct 2</th><th>Correlation</th></tr></thead>
+                        <tbody>{resultConstructs.flatMap((c1, index) => resultConstructs.slice(index + 1).map(c2 => {
+                          const value = results?.reliability_and_validity?.fornell_larcker?.[c1]?.[c2] ?? results?.reliability_and_validity?.fornell_larcker?.[c2]?.[c1];
+                          return <tr key={`${c1}-${c2}`}><td>{getConstructName(c1)}</td><td>{getConstructName(c2)}</td><td>{fmt(value)}</td></tr>;
+                        }))}</tbody>
                       </table>
                     ) : currentTabId === 'f_squared' ? (
                       getTableMode('f_squared') === 'matrix' ? (
@@ -3760,7 +3723,9 @@ export const SnapshotView: React.FC = () => {
         {/* ═══ Comprehensive Report Export Modal ═══ */}
         <ReportExportModal
           isOpen={isReportExportModalOpen}
-          onClose={() => setIsReportExportModalOpen(false)}
+          onClose={() => { setIsReportExportModalOpen(false); setReportCurrentTableOnly(false); }}
+          currentResultTab={activeResultTab}
+          currentTableOnly={reportCurrentTableOnly}
           config={{
             modelName: snapshot?.name || activeTab?.title || 'Model Snapshot',
             studyName: activeStudy?.name,

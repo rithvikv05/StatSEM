@@ -84,13 +84,13 @@ test('window dragging is limited to explicitly marked background elements', () =
 
 test('results navigation keeps core output and leaves advanced analyses out of the sidebar', () => {
   const html = render(components.ResultsNavigation, { activeTab: 'path_coefficients', onSelect() {}, hasRunDetails: true, hasSpecificIndirect: true });
-  assert.match(html, /Direct paths/);
-  assert.match(html, /Individual indirect paths/);
+  assert.match(html, /Path coefficients/);
+  assert.match(html, /Specific indirect effects/);
   assert.match(html, /Run details/);
   assert.doesNotMatch(html, /Advanced Analyses|FIMIX|Gaussian Copula/);
   assert.match(html, /aria-current="page"/);
   const simple = render(components.ResultsNavigation, { activeTab: 'path_coefficients', onSelect() {} });
-  assert.doesNotMatch(simple, /Individual indirect paths|Run details/);
+  assert.doesNotMatch(simple, /Specific indirect effects|Run details/);
 });
 
 test('result and calculation search matches labels and identifiers without case sensitivity', () => {
@@ -102,7 +102,7 @@ test('result and calculation search matches labels and identifiers without case 
 test('calculation menu contains only the requested supported analyses', () => {
   const html = render(components.CalculationMenu, { onSelect() {} });
   assert.doesNotMatch(html, /<details|Search calculations|disabled/);
-  for (const label of ['PLS-SEM', 'Bootstrap inference', 'Consistent PLS-SEM', 'Prediction and CVPAT', 'IPMA', 'tetrad', 'Multigroup']) assert.ok(html.includes(label), label);
+  for (const label of ['PLS-SEM', 'Bootstrapping', 'Consistent PLS-SEM', 'PLSpredict', 'IPMA', 'Tetrad', 'Bootstrap MGA']) assert.ok(html.includes(label), label);
   assert.doesNotMatch(html, /FIMIX|POS|segmentation|Blindfolding|Mediation|Measurement invariance|Omnibus|endogeneity|Sample size|redundancy|Model fit/i);
 });
 

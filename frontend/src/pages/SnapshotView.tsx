@@ -1268,15 +1268,6 @@ export const SnapshotView: React.FC = () => {
                   <button
                     className="results-tool-btn"
                     type="button"
-                    onClick={() => setIsCompareModalOpen(true)}
-                    title="Compare models side-by-side"
-                  >
-                    <GitCompare size={13} />
-                    <span>Compare</span>
-                  </button>
-                  <button
-                    className="results-tool-btn"
-                    type="button"
                     onClick={() => setIsReportExportModalOpen(true)}
                     title="Export comprehensive report (PDF / DOCX)"
                     style={{
@@ -1380,15 +1371,10 @@ export const SnapshotView: React.FC = () => {
                         report={results.mga_report}
                         activeTab={activeResultTab}
                       />
-                    ) : currentTabId === 'specific_indirect_effects' ? (
-                      <SpecificIndirectResults results={results} />
-                    ) : currentTabId === 'run_details' ? (
-                      <RunDetails results={results} />
                     ) : currentTabId === 'hypotheses' ? (
                       <HypothesisTestingPanel
                         results={results}
                         model={snapshot?.model_state || snapshot?.model}
-                      />
                       />
                     ) : currentTabId === 'specific_indirect_effects' ? (
                       <SpecificIndirectResults results={results} />
@@ -3769,15 +3755,6 @@ export const SnapshotView: React.FC = () => {
           onClose={() => setIsExportModalOpen(false)}
           svgElement={svgRef.current}
           modelName={snapshot?.name || 'snapshot_model'}
-        />
-
-        {/* ═══ Multi-Model Comparison Modal ═══ */}
-        <ModelComparisonModal
-          isOpen={isCompareModalOpen}
-          onClose={() => setIsCompareModalOpen(false)}
-          projectPath={activeStudy?.path || ''}
-          initialSnapshotId={activeTab?.snapshotId || snapshot?.id}
-          studyName={activeStudy?.name}
         />
 
         {/* ═══ Comprehensive Report Export Modal ═══ */}

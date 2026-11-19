@@ -10,6 +10,17 @@ pub fn normal_cdf(x: f64) -> f64 {
     // SAFETY: libm functions accept every f64 value and retain no pointers.
     unsafe { 0.5 * erfc(-x / std::f64::consts::SQRT_2) }
 }
+
+#[cfg(test)]
+mod tail_precision_tests {
+    #[test]
+    fn normal_and_student_t_tails_retain_small_probabilities() {
+        let normal = 2.0 * super::normal_cdf(-10.0);
+        assert!((normal - 1.5239706048321e-23).abs() < 1e-35);
+        let student = 2.0 * super::student_t_cdf(-100.0, 20.0);
+        assert!(student > 0.0 && student < 1e-20);
+    }
+}
 pub fn normal_ppf(p: f64) -> f64 {
     if p == 0.0 {
         return f64::NEG_INFINITY;

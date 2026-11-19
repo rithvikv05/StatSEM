@@ -20,14 +20,18 @@ import {
   GitCompare,
 } from 'lucide-react';
 import { ReportExportModal } from '../components/ReportExportModal';
-import { copyAllTablesFromContainer } from '../utils/tableExport';
+import { collectVisibleReportTables, copyAllTablesFromContainer } from '../utils/tableExport';
 import { getCanvasGridColors } from '../utils/model-canvas';
 import { HypothesisTestingPanel } from '../components/HypothesisTestingPanel';
 import { ResultsNavigation } from '../components/ResultsNavigation';
 import { SpecificIndirectResults } from '../components/SpecificIndirectResults';
+import { ModerationDetails, moderationSections } from '../components/ModerationDetails';
 import { RunDetails } from '../components/RunDetails';
 import { hasRunDetails } from '../utils/run-details';
 import { ModelFitResults } from '../components/ModelFitResults';
+import { AnalysisRunDetails, StandaloneAnalysisResults, standaloneAnalysisTitles, standaloneAnalysisSections, standaloneAnalysisSectionIndex } from '../components/StandaloneAnalysisResults';
+import { BootstrapInference } from '../components/BootstrapInference';
+import { CollinearityResults } from '../components/CollinearityResults';
 import { DiagramExportModal } from '../components/DiagramExportModal';
 import { MgaActiveTableView } from '../mga/MgaActiveTableView';
 import { getMgaCanvasResultForMode } from '../mga/mgaToCanvas';
@@ -219,6 +223,10 @@ export const SnapshotView: React.FC = () => {
 
   const [mgaCanvasMode, setMgaCanvasMode] = useState<'group_a' | 'group_b' | 'difference'>('group_a');
   const rawResults = snapshot?.results;
+  const analysisSnapshot = rawResults?._statsemAnalysisSnapshot;
+  useEffect(() => {
+    if (analysisSnapshot?.id) setActiveResultTab(`analysis_${analysisSnapshot.id}`);
+  }, [snapshot?.id, analysisSnapshot?.id]);
   const results = useMemo(() => {
     if (!rawResults) return null;
     if (rawResults.is_mga) {
@@ -715,6 +723,13 @@ export const SnapshotView: React.FC = () => {
     formatPValue(val, decimals, decimalSystem);
 
   const reportTabDetails = useMemo(() => {
+    if (analysisSnapshot?.id) {
+      const title = activeResultTab === 'analysis_run_details' ? 'Run details' : standaloneAnalysisSections(analysisSnapshot.id, analysisSnapshot.data)[standaloneAnalysisSectionIndex(activeResultTab)] || standaloneAnalysisTitles[analysisSnapshot.id] || 'Analysis';
+      return { title, badge: 'Snapshot', subtitle: 'Saved calculation results.' };
+    }
+    if (activeResultTab.startsWith('moderation::')) {
+      return { title: moderationSections(results?.moderation, results).find(item => item.id === activeResultTab)?.label || 'Moderation effects', badge: 'Moderation', subtitle: 'Conditional effects at selected moderator levels.' };
+    }
     if (results?.is_mga) {
       const rep = results.mga_report;
       const gA = rep?.groupAName || 'Group A';
@@ -760,6 +775,16 @@ export const SnapshotView: React.FC = () => {
         };
       case 'specific_indirect_effects':
         return { title: 'Specific indirect effects', badge: 'Indirect', subtitle: 'Estimates for each distinct mediation path.' };
+      case 'moderation':
+        return { title: 'Moderation effects', badge: '', subtitle: 'Conditional effects at selected moderator levels.' };
+      case 'bootstrap_paths':
+      case 'bootstrap_significance':
+        return { title: 'Structural paths', badge: 'Bootstrap inference', subtitle: 'Bootstrap estimates and inference for structural paths.' };
+      case 'bootstrap_loadings':
+        return { title: 'Outer loadings', badge: 'Bootstrap inference', subtitle: 'Bootstrap estimates and inference for indicator loadings.' };
+      case 'collinearity_inner':
+      case 'collinearity_outer':
+        return { title: tab === 'collinearity_outer' ? 'Outer model collinearity' : 'Inner model collinearity', badge: 'VIF', subtitle: 'Variance inflation factors.' };
       case 'run_details':
         return { title: 'Run details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
       case 'total_indirect_effects':
@@ -854,7 +879,7 @@ export const SnapshotView: React.FC = () => {
           subtitle: `Saved snapshot calculation results for ${snapshot?.name || 'Model'}.`,
         };
     }
-  }, [activeResultTab, snapshot?.name, results]);
+  }, [activeResultTab, snapshot?.name, results, analysisSnapshot?.id]);
 
   const currentTabId = !results?.is_mga && activeResultTab.includes('__') ? activeResultTab.split('__')[0] : activeResultTab;
 
@@ -1016,7 +1041,7 @@ export const SnapshotView: React.FC = () => {
   };
 
   const handleExportCSV = () => {
-    const table = document.querySelector('.scientific-table');
+    const table = document.querySelector('.results-main .table-container .scientific-table');
     if (!table) return;
     let csv = '';
     const rows = table.querySelectorAll('tr');
@@ -1042,7 +1067,7 @@ export const SnapshotView: React.FC = () => {
   };
 
   const handleExportExcel = async () => {
-    const table = document.querySelector('.scientific-table');
+    const table = document.querySelector('.results-main .table-container .scientific-table');
     if (!table) {
       alert('No active table to export.');
       return;
@@ -1068,7 +1093,7 @@ export const SnapshotView: React.FC = () => {
   };
 
   const handleExportHtml = () => {
-    const table = document.querySelector('.scientific-table');
+    const table = document.querySelector('.results-main .table-container .scientific-table');
     if (!table) return;
     const html = `<!DOCTYPE html>
 <html>
@@ -1242,11 +1267,19 @@ export const SnapshotView: React.FC = () => {
                 activeTab={activeResultTab}
                 onSelect={setActiveResultTab}
                 hasRedundancy={!!results?.convergent_validity_redundancy}
-                hasRunDetails={hasRunDetails(results)}
+                hasBootstrap={!!(results?.significance || results?.bootstrap)}
+                hasRunDetails={analysisSnapshot ? true : hasRunDetails(results)}
                 hasSpecificIndirect={results?.is_mga ? !!(results?.mga_report?.specificIndirectEffects?.length) : !!(results?.effects_decomposition?.specific_indirect?.length || results?.structural?.specific_indirect?.length)}
                 isMga={!!results?.is_mga}
                 hasMicom={results?.is_mga && results?.mga_type === 'permutation'}
+                hasModeration={!results?.is_mga && moderationSections(results?.moderation, results).length > 0}
+                moderationSections={moderationSections(results?.moderation, results)}
+                analysisOnly={!!analysisSnapshot}
+                analysisTitle={standaloneAnalysisTitles[analysisSnapshot?.id]}
+                activeCalculation={analysisSnapshot?.id}
+                analysisSections={standaloneAnalysisSections(analysisSnapshot?.id, analysisSnapshot?.data)}
               />
+              {analysisSnapshot && <div hidden id="analysis-export-tables"><StandaloneAnalysisResults id={analysisSnapshot.id} data={analysisSnapshot.data} /><section><h2>Run details</h2><AnalysisRunDetails id={analysisSnapshot.id} data={analysisSnapshot.data} /></section></div>}
 
               {/* Main Content Area */}
               <main className="results-main" style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
@@ -1322,8 +1355,10 @@ export const SnapshotView: React.FC = () => {
 
                 {/* Table Container */}
                 <div className="table-container">
-                  <div className="scientific-table-wrap">
-                    {results?.is_mga && results?.mga_report ? (
+                  <div className={analysisSnapshot ? undefined : 'scientific-table-wrap'}>
+                    {analysisSnapshot ? (
+                      activeResultTab === 'analysis_run_details' ? <div className="scientific-table-wrap"><AnalysisRunDetails id={analysisSnapshot.id} data={analysisSnapshot.data} /></div> : <StandaloneAnalysisResults id={analysisSnapshot.id} data={analysisSnapshot.data} section={standaloneAnalysisSectionIndex(activeResultTab)} />
+                    ) : results?.is_mga && results?.mga_report ? (
                       <MgaActiveTableView
                         report={results.mga_report}
                         activeTab={activeResultTab}
@@ -1333,10 +1368,14 @@ export const SnapshotView: React.FC = () => {
                         results={results}
                         model={snapshot?.model_state || snapshot?.model}
                       />
+                    ) : currentTabId.startsWith('moderation') && results?.moderation ? (
+                      <ModerationDetails data={results.moderation} results={results} section={currentTabId.split('::')[1] ?? '0'} />
                     ) : currentTabId === 'specific_indirect_effects' ? (
                       <SpecificIndirectResults results={results} />
                     ) : currentTabId === 'run_details' ? (
                       <RunDetails results={results} />
+                    ) : ['bootstrap_paths', 'bootstrap_significance', 'bootstrap_loadings'].includes(currentTabId) ? (
+                      <BootstrapInference results={results} section={currentTabId === 'bootstrap_loadings' ? 'loadings' : 'paths'} constructName={getConstructName} indicatorName={getIndicatorName} />
                     ) : currentTabId === 'path_coefficients' ? (
                       getTableMode('path_coefficients') === 'matrix' ? (
                         <table className="scientific-table">
@@ -2032,23 +2071,8 @@ export const SnapshotView: React.FC = () => {
                           </tbody>
                         </table>
                       )
-                    ) : currentTabId === 'collinearity' ? (
-                      <table className="scientific-table">
-                        <thead>
-                          <tr>
-                            <th>Construct / Indicator</th>
-                            <th>Inner VIF</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(results?.quality_criteria?.inner_vif || results?.structural?.inner_vif || {}).map(([pair, vif]: [string, any]) => (
-                            <tr key={pair}>
-                              <td>{pair}</td>
-                              <td><strong>{fmt(vif)}</strong></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    ) : ['collinearity', 'collinearity_inner', 'collinearity_outer'].includes(currentTabId) ? (
+                      <CollinearityResults results={results} section={currentTabId === 'collinearity_outer' ? 'outer' : 'inner'} constructName={getConstructName} indicatorName={getIndicatorName} />
                     ) : currentTabId === 'convergent_validity_redundancy' ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                         <table className="scientific-table">
@@ -3726,6 +3750,7 @@ export const SnapshotView: React.FC = () => {
           onClose={() => { setIsReportExportModalOpen(false); setReportCurrentTableOnly(false); }}
           currentResultTab={activeResultTab}
           currentTableOnly={reportCurrentTableOnly}
+          currentSectionTitle={analysisSnapshot ? reportTabDetails.title : reportCurrentTableOnly && activeResultTab.startsWith('moderation::') ? collectVisibleReportTables(document.querySelector('.results-main .table-container'), reportTabDetails.title)[0]?.title : undefined}
           config={{
             modelName: snapshot?.name || activeTab?.title || 'Model Snapshot',
             studyName: activeStudy?.name,
@@ -3736,6 +3761,8 @@ export const SnapshotView: React.FC = () => {
             getIndicatorName,
             svgElement: svgRef.current,
             formatNumber: fmt,
+            formatPValue: fmtP,
+            providedSections: analysisSnapshot ? collectVisibleReportTables(document.getElementById('analysis-export-tables'), reportTabDetails.title) : reportCurrentTableOnly && activeResultTab.startsWith('moderation::') ? collectVisibleReportTables(document.querySelector('.results-main .table-container'), reportTabDetails.title) : undefined,
           }}
           onSuccessToast={(msg) => {
             setCopyToast(msg);

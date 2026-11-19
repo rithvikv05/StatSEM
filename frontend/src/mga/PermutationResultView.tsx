@@ -5,6 +5,7 @@ import { matchesResultSearch } from '../utils/result-search';
 import type { PermutationParamRow, PermutationReport } from './types';
 import { fmt3, TableExportBar, type ExportTablePayload } from './exportUtils';
 import { MicomPanel } from './MicomPanel';
+import { formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 
 interface PermutationResultViewProps {
   report: PermutationReport;
@@ -148,7 +149,7 @@ export const PermutationResultView: React.FC<PermutationResultViewProps> = ({ re
                     className={r.significant ? 'cell-sig--p05 cell-value' : 'cell-ns'}
                     style={{ textAlign: 'right' }}
                   >
-                    {f3(r.pValue)}
+                    {formatPValue(r.pValue, normalizeDecimalDigits(settings.decimalDigits), decimalSystem)}
                   </td>
                 </tr>
               ))

@@ -296,7 +296,7 @@ pub fn attach(mut result: Value, boot: Value) -> Result<Value, String> {
             row["diff_se"] = json!(se);
             row["diff_ci_lower"] = json!(inference::percentile(&draws, 0.025));
             row["diff_ci_upper"] = json!(inference::percentile(&draws, 0.975));
-            row["diff_pvalue"] = json!(2.0 * (1.0 - inference::normal_cdf(t.abs())));
+            row["diff_pvalue"] = json!(2.0 * inference::normal_cdf(-t.abs()));
         }
     }
     let mut tests = wald(&gc["orig_gc_coefs"], &samples, &targets)?;

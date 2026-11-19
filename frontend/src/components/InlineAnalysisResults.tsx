@@ -52,19 +52,20 @@ interface InlineAnalysisResultsProps {
   latest?: { id: string; revision: number };
   loading: Record<string, boolean>; errors: Record<string, string>; stale: Record<string, boolean>;
   onLoad: (id: string) => void;
+  onlySelected?: boolean;
 }
-export const InlineAnalysisResults: React.FC<InlineAnalysisResultsProps> = ({ results, analyses, available: saved, latest, loading, errors, stale, onLoad }) => {
+export const InlineAnalysisResults: React.FC<InlineAnalysisResultsProps> = ({ results, analyses, available: saved, latest, loading, errors, stale, onLoad, onlySelected = false }) => {
   const available = { ...analyses };
-  if (results?.moderation && !available.moderation) available.moderation = results.moderation;
-  if ((results?.nonlinear_effects?.length || results?.quadratic_effects?.length) && !available.quadratic) available.quadratic = results.nonlinear_effects ?? results.quadratic_effects;
-  if (results?.gaussian_copula && !available.copula) available.copula = results.gaussian_copula;
+  if (!onlySelected && results?.moderation && !available.moderation) available.moderation = results.moderation;
+  if (!onlySelected && (results?.nonlinear_effects?.length || results?.quadratic_effects?.length) && !available.quadratic) available.quadratic = results.nonlinear_effects ?? results.quadratic_effects;
+  if (!onlySelected && results?.gaussian_copula && !available.copula) available.copula = results.gaussian_copula;
   const entries = Array.from(new Set([...saved, ...Object.keys(available)]))
     .filter(id => id !== 'mediation' && id !== 'consistent_pls')
     .map(id => [id, available[id]] as const);
   if (!entries.length) return null;
   return <section className="inline-analysis" aria-label="Additional analysis output">
     <h2>Additional analysis output</h2>
-    <p>These details belong to their own analysis run. The estimates above reflect the displayed model run.</p>
+    {!onlySelected && <p>These details belong to their own analysis run. The estimates above reflect the displayed model run.</p>}
     {entries.map(([id, data]) => <AnalysisDetail key={`${id}-${id === latest?.id ? latest.revision : 'saved'}`} id={id} data={data} results={results} initiallyOpen={id === latest?.id} loading={loading[id]} error={errors[id]} stale={stale[id]} onLoad={onLoad} />)}
   </section>;
 };

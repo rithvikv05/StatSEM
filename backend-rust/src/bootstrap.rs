@@ -505,12 +505,12 @@ pub fn run_with_control(
             n.saturating_sub(1).max(1)
         };
         let statistic = if options.tails == "one" { if options.direction == "negative" { -t } else { t } } else { t.abs() };
-        let cdf = if options.test_distribution == "t" {
-            inference::student_t_cdf(statistic, df as f64)
+        let upper_tail = if options.test_distribution == "t" {
+            inference::student_t_cdf(-statistic, df as f64)
         } else {
-            inference::normal_cdf(statistic)
+            inference::normal_cdf(-statistic)
         };
-        let p = (1.0 - cdf) * if options.tails == "one" { 1.0 } else { 2.0 };
+        let p = upper_tail * if options.tails == "one" { 1.0 } else { 2.0 };
         let jackknife: Vec<_> = jack
             .iter()
             .filter_map(|sample| sample.iter().find(|(k, _)| k == key).map(|(_, v)| *v))

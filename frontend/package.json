@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test:results": "node --test tests/results-ui.test.mjs",
+    "test:results": "node --test --test-concurrency=1 tests/results-ui.test.mjs tests/project-results-api.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -6,6 +6,17 @@ export interface ExtractedTableData {
   title?: string;
 }
 
+/** Extract the tables actually displayed for a standalone analysis. */
+export function collectVisibleReportTables(container: Element | null, title: string): Array<{ title: string; headers: string[]; rows: string[][] }> {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('table')).filter(table => !table.closest('details:not([open])')).map((table, index, all) => {
+    const section = table.closest('section');
+    const heading = section?.querySelector('h2, h3, h4')?.textContent?.trim();
+    const data = extractTableData(table);
+    return { title: heading || (all.length === 1 ? title : `${title} ${index + 1}`), headers: data.headers, rows: data.rows };
+  });
+}
+
 /**
  * Extracts clean text matrix from an HTML table element.
  */

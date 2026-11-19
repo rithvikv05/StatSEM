@@ -632,7 +632,7 @@ export const api = {
     algorithm: string = 'pls',
     modelId?: string,
     analysisType?: string,
-  ): Promise<{ algorithm?: string; results?: any; created_at?: string; spec?: any; diagram_layout?: any; stale?: boolean; error?: string }> {
+  ): Promise<{ algorithm?: string; results?: any; created_at?: string; dataset_id?: string | null; spec?: any; diagram_layout?: any; stale?: boolean; error?: string }> {
     try {
       let url = `${API_BASE}/project/load-results?path=${encodeURIComponent(projectPath)}&algorithm=${encodeURIComponent(algorithm)}`;
       if (modelId) {
@@ -640,7 +640,11 @@ export const api = {
       }
       if (analysisType) url += `&analysis_type=${encodeURIComponent(analysisType)}`;
       const res = await fetch(url);
-      return await res.json();
+      const data = await res.json();
+      if (!res.ok) return { error: data?.error || `Failed to load calculation results (${res.status})` };
+      // The backend returns JSON null when a calculation does not exist.
+      // Callers can then safely check results or an error for every type.
+      return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
     } catch (err: any) {
       return { error: err?.message || 'Failed to load calculation results' };
     }

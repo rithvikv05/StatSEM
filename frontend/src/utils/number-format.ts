@@ -135,8 +135,8 @@ export function formatNumber(
 }
 
 /**
- * Format a p-value with dynamic precision threshold `< 10^(-decimals)` so
- * small p-values remain visible up to the selected decimal precision.
+ * Preserve small computed p-values using scientific notation rather than
+ * replacing them with a significance threshold.
  */
 export function formatPValue(
   val: unknown,
@@ -152,11 +152,8 @@ export function formatPValue(
   const sep = getDecimalSeparator(decimalSystem);
   const threshold = Number(`1e-${d}`);
 
-  if (num >= 0 && num < threshold) {
-    if (d === 0) {
-      return '< 1';
-    }
-    return `< 0${sep}${'0'.repeat(d - 1)}1`;
+  if (num > 0 && num < threshold) {
+    return num.toExponential(Math.max(2, d)).replace('.', sep);
   }
 
   return formatNumber(num, d, decimalSystem);

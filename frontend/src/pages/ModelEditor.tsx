@@ -10,14 +10,17 @@ import { CalculationMenu } from '../components/CalculationMenu';
 import { ModelFitResults } from '../components/ModelFitResults';
 import { ResultsNavigation } from '../components/ResultsNavigation';
 import { SpecificIndirectResults } from '../components/SpecificIndirectResults';
+import { ModerationDetails, moderationSections } from '../components/ModerationDetails';
 import { RunDetails } from '../components/RunDetails';
 import { hasRunDetails } from '../utils/run-details';
-import { InlineAnalysisResults } from '../components/InlineAnalysisResults';
+import { AnalysisRunDetails, StandaloneAnalysisResults, standaloneAnalysisTitles, standaloneAnalysisSections, standaloneAnalysisSectionIndex } from '../components/StandaloneAnalysisResults';
+import { BootstrapInference } from '../components/BootstrapInference';
+import { CollinearityResults } from '../components/CollinearityResults';
 import RedundancyWizardModal from '../components/RedundancyWizardModal';
 import { DiagramExportModal } from '../components/DiagramExportModal';
 import { ReportExportModal } from '../components/ReportExportModal';
 import { compileReportData } from '../utils/reportGenerator';
-import { copyAllTablesFromContainer } from '../utils/tableExport';
+import { collectVisibleReportTables, copyAllTablesFromContainer } from '../utils/tableExport';
 import { PermutationDialog } from '../mga/PermutationDialog';
 import { MgaDialog } from '../mga/MgaDialog';
 import { MgaActiveTableView } from '../mga/MgaActiveTableView';
@@ -136,7 +139,24 @@ function isModelTopologyEqual(specA: any, specB: any): boolean {
     return false;
   }
 
+  // Effect positions are visual only; their endpoints and methods change the model.
+  for (const [key, fields] of [
+    ['moderating_effects', ['id', 'source', 'target', 'moderator', 'method', 'standardize', 'attachToModId']],
+    ['quadratic_effects', ['id', 'predictor_construct', 'target_construct']],
+    ['gaussian_copulas', ['id', 'source_construct', 'target_construct']],
+  ] as Array<[string, string[]]>) {
+    const normalize = (spec: any) => (spec[key] || []).map((effect: any) => JSON.stringify(fields.map(field => effect[field] ?? null))).sort();
+    const left = normalize(specA);
+    const right = normalize(specB);
+    if (left.length !== right.length || left.some((value: string, index: number) => value !== right[index])) return false;
+  }
+
   return true;
+}
+
+function calculationList(analyses: string[]): string[] {
+  const allowed = new Set(['pls', '_saved_consistent_pls', '_saved_mga', '_saved_consistent_mga', '_saved_permutation', '_saved_consistent_permutation', 'cta', 'ipma', 'predict', 'pca']);
+  return Array.from(new Set(analyses.map(id => id === '_saved_bootstrap' ? 'pls' : id === '_saved_consistent_bootstrap' ? '_saved_consistent_pls' : id === '_saved_pls' && !analyses.includes('pls') ? 'pls' : id).filter(id => allowed.has(id))));
 }
 
 const ModelEditor = () => {
@@ -193,6 +213,9 @@ const ModelEditor = () => {
   }, [theme, settings?.theme, settings?.darkVariant]);
 
   const [currentView, setCurrentView] = useState<'model' | 'results'>(() => currentTab?.modelView || 'model');
+  const currentViewRef = useRef(currentView);
+  currentViewRef.current = currentView;
+  const canvasTopologyRef = useRef<any>(null);
   const [activeDataset, setActiveDataset] = useState<ParsedDataset | null>(() => {
     if (!effectiveStudyId) return null;
     const list = getStudyDatasets(datasetsByStudy, effectiveStudyId || '');
@@ -233,24 +256,101 @@ const ModelEditor = () => {
   const [analysisModalType, setAnalysisModalType] = useState<string>('predict');
   const [analysisResultsMap, setAnalysisResultsMap] = useState<Record<string, any>>({});
   const [availableAnalyses, setAvailableAnalyses] = useState<string[]>([]);
+  const [savedCalculations, setSavedCalculations] = useState<string[]>([]);
+  const [activeCalculation, setActiveCalculation] = useState(() => currentTab?.resultCalculation === '_saved_bootstrap' ? 'pls' : currentTab?.resultCalculation === '_saved_consistent_bootstrap' ? '_saved_consistent_pls' : (currentTab?.resultCalculation || 'pls'));
+  const openCurrentCalculationSettings = () => {
+    if (['bootstrap_significance', 'bootstrap_paths', 'bootstrap_loadings'].includes(activeResultTab)) {
+      setBootstrapConsistent(activeCalculation === '_saved_consistent_pls' || activeCalculation === '_saved_consistent_bootstrap');
+      setIsBootstrapModalOpen(true);
+      return;
+    }
+    switch (activeCalculation) {
+      case 'pls':
+      case '_saved_pls':
+      case '_saved_consistent_pls':
+        setModelSettingsConsistent(activeCalculation === '_saved_consistent_pls');
+        setModelSettingsOpen(true);
+        break;
+      case '_saved_bootstrap':
+      case '_saved_consistent_bootstrap':
+        setBootstrapConsistent(activeCalculation === '_saved_consistent_bootstrap');
+        setIsBootstrapModalOpen(true);
+        break;
+      case '_saved_mga':
+      case '_saved_consistent_mga':
+        setMgaConsistent(activeCalculation === '_saved_consistent_mga');
+        setIsMgaModalOpen(true);
+        break;
+      case '_saved_permutation':
+      case '_saved_consistent_permutation':
+        setPermutationConsistent(activeCalculation === '_saved_consistent_permutation');
+        setIsPermutationModalOpen(true);
+        break;
+      case 'cta': case 'ipma': case 'predict': case 'pca':
+        setAnalysisModalType(activeCalculation);
+        setIsAnalysisModalOpen(true);
+        break;
+      default:
+        setSaveToast('This calculation cannot be rerun from here. Choose it from Calculate.');
+    }
+  };
+  const refreshSavedCalculations = async () => {
+    if (!activeStudy?.path) return;
+    const requestedModel = analysisModelKey;
+    const analyses = await api.listProjectAnalyses(activeStudy.path, effectiveModelId || undefined);
+    if (analysisModelKeyRef.current === requestedModel) setSavedCalculations(calculationList(analyses));
+  };
   const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({});
   const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
   const [analysisStale, setAnalysisStale] = useState<Record<string, boolean>>({});
-  const [latestAnalysis, setLatestAnalysis] = useState<{ id: string; revision: number }>();
+  const [, setLatestAnalysis] = useState<{ id: string; revision: number }>();
   const analysisModelKey = `${activeStudy?.path || ''}::${effectiveModelId || 'default'}`;
   const analysisModelKeyRef = useRef(analysisModelKey);
   analysisModelKeyRef.current = analysisModelKey;
+  const resultSelectionRequestRef = useRef(0);
+  const loadCalculation = async (projectPath: string, modelId: string | undefined, id: string) => {
+    const baseId = id === '_saved_bootstrap' ? 'pls' : id === '_saved_consistent_bootstrap' ? '_saved_consistent_pls' : id;
+    const base = await api.loadProjectResults(projectPath, 'pls', modelId, baseId);
+    if (base.error) return base;
+    if (baseId !== 'pls' && baseId !== '_saved_consistent_pls') return base;
+    const legacyId = baseId === 'pls' ? '_saved_bootstrap' : '_saved_consistent_bootstrap';
+    const legacy = await api.loadProjectResults(projectPath, 'pls', modelId, legacyId);
+    if (!base.results) {
+      if (legacy.error) return legacy;
+      if (legacy.results) return legacy;
+      if (baseId === 'pls') return api.loadProjectResults(projectPath, 'pls', modelId, '_saved_pls');
+      return base;
+    }
+    if (legacy.results && !base.results.bootstrap && base.spec && legacy.spec &&
+        JSON.stringify(base.spec) === JSON.stringify(legacy.spec) &&
+        base.dataset_id === legacy.dataset_id &&
+        JSON.stringify(base.results.settings) === JSON.stringify(legacy.results.settings) &&
+        (legacy.created_at || '') >= (base.created_at || '')) return legacy;
+    return base;
+  };
   useEffect(() => {
     let cancelled = false;
     setAnalysisResultsMap({});
     setAvailableAnalyses([]);
+    setSavedCalculations([]);
     setAnalysisLoading({});
     setAnalysisErrors({});
     setAnalysisStale({});
     setLatestAnalysis(undefined);
     if (activeStudy?.path) {
-      void api.listProjectAnalyses(activeStudy.path, effectiveModelId || undefined).then(analyses => {
-        if (!cancelled) setAvailableAnalyses(previous => Array.from(new Set([...previous, ...analyses])));
+      const projectPath = activeStudy.path;
+      void api.listProjectAnalyses(projectPath, effectiveModelId || undefined).then(async analyses => {
+        if (cancelled) return;
+        setSavedCalculations(calculationList(analyses));
+        const visibleAnalyses = analyses.filter(id => id !== 'pls' && !id.startsWith('_saved_'));
+        setAvailableAnalyses(previous => Array.from(new Set([...previous, ...visibleAnalyses])));
+        const saved = await Promise.all(visibleAnalyses.map(async id => ({
+          id,
+          response: await api.loadProjectResults(projectPath, 'pls', effectiveModelId || undefined, id),
+        })));
+        if (cancelled) return;
+        setAnalysisResultsMap(previous => ({ ...Object.fromEntries(saved.filter(({ response }) => response.results != null).map(({ id, response }) => [id, response.results])), ...previous }));
+        setAnalysisStale(previous => ({ ...Object.fromEntries(saved.filter(({ response }) => response.results != null).map(({ id }) => [id, false])), ...previous }));
       });
     }
     return () => { cancelled = true; };
@@ -266,7 +366,7 @@ const ModelEditor = () => {
     setAnalysisLoading(previous => ({ ...previous, [id]: false }));
     if (response?.results != null) {
       setAnalysisResultsMap(previous => ({ ...previous, [id]: response.results }));
-      setAnalysisStale(previous => ({ ...previous, [id]: !!response.stale }));
+      setAnalysisStale(previous => ({ ...previous, [id]: false }));
     } else {
       setAnalysisErrors(previous => ({ ...previous, [id]: response?.error || 'Could not load this analysis.' }));
     }
@@ -513,9 +613,9 @@ const ModelEditor = () => {
   // while another workspace or document is active.
   useEffect(() => {
     if (currentTab?.type === 'model') {
-      setModelTabLocation(currentTab.id, currentView, activeResultTab);
+      setModelTabLocation(currentTab.id, currentView, activeResultTab, activeCalculation);
     }
-  }, [currentTab?.id, currentTab?.type, currentView, activeResultTab, setModelTabLocation]);
+  }, [currentTab?.id, currentTab?.type, currentView, activeResultTab, activeCalculation, setModelTabLocation]);
 
   // Canvas HUD confirmation popovers ('reset' | 'clear' | null)
   const [hudConfirm, setHudConfirm] = useState<'reset' | 'clear' | null>(null);
@@ -921,13 +1021,15 @@ const ModelEditor = () => {
 
   const performSilentRecalculate = async () => {
     if (!hasCalculatedOnceRef.current || isAutoCalculatingRef.current || !activeStudy?.path) return;
-    if (plsResultsRef.current?.is_mga || plsResultsRef.current?.is_bootstrap) return;
+    if (plsResultsRef.current?.is_mga || plsResultsRef.current?.is_bootstrap || plsResultsRef.current?.bootstrap) return;
     if (hasInvalidLatentVariables()) {
       setIsModelOutdated(true);
       return;
     }
     try {
       isAutoCalculatingRef.current = true;
+      const requestedModel = analysisModelKey;
+      const requestId = resultSelectionRequestRef.current;
       const spec = exportModelSpec();
       const currentDs = activeDatasetRef.current || activeDataset;
       if (currentDs?.id) {
@@ -954,6 +1056,7 @@ const ModelEditor = () => {
       });
 
       if (runRes && runRes.results) {
+        if (analysisModelKeyRef.current !== requestedModel || resultSelectionRequestRef.current !== requestId) return;
         setPlsResults(runRes.results);
         plsResultsRef.current = runRes.results;
         setCanvasResults(runRes.results);
@@ -961,6 +1064,7 @@ const ModelEditor = () => {
         setLastCalculatedModel(calculatedSnapshot);
         lastCalculatedModelRef.current = calculatedSnapshot;
         setIsModelOutdated(false);
+        void refreshSavedCalculations();
       }
     } catch (err) {
       console.debug('Silent recalculate skipped:', err);
@@ -1117,19 +1221,9 @@ const ModelEditor = () => {
         setIsModelOutdated(false);
         setHasCalculatedOnce(true);
         hasCalculatedOnceRef.current = true;
-        if (effectiveModelId) {
-          setModelResultCache(effectiveModelId, runRes.results);
-          if (activeStudy?.path) {
-            void api.saveProjectResults({
-              projectPath: activeStudy.path,
-              modelId: effectiveModelId || undefined,
-              datasetId: activeDataset?.id,
-              algorithm: 'pls',
-              analysisType: 'pls',
-              results: runRes.results,
-            });
-          }
-        }
+        if (effectiveModelId) setModelResultCache(effectiveModelId, runRes.results);
+        setActiveCalculation(consistent ? '_saved_consistent_pls' : 'pls');
+        void refreshSavedCalculations();
         setActiveResultTab('path_coefficients');
       }
 
@@ -1165,8 +1259,11 @@ const ModelEditor = () => {
   }, [effectiveModelId]);
 
   useEffect(() => {
+    let cancelled = false;
+    const requestId = ++resultSelectionRequestRef.current;
     if (activeStudy?.path) {
-      api.loadProjectResults(activeStudy.path, 'pls', effectiveModelId || undefined).then((res) => {
+      loadCalculation(activeStudy.path, effectiveModelId || undefined, ['cta', 'ipma', 'predict', 'pca'].includes(currentTab?.resultCalculation || '') ? 'pls' : (currentTab?.resultCalculation || 'pls')).then((res) => {
+        if (cancelled || requestId !== resultSelectionRequestRef.current) return;
         if (res && res.results) {
           const finalResults = res.results;
           setPlsResults(finalResults);
@@ -1208,6 +1305,7 @@ const ModelEditor = () => {
           setIsModelOutdated(false);
         }
       }).catch(() => {
+        if (cancelled || requestId !== resultSelectionRequestRef.current) return;
         setHasCalculatedOnce(false);
         hasCalculatedOnceRef.current = false;
         setPlsResults(null);
@@ -1225,6 +1323,7 @@ const ModelEditor = () => {
       lastCalculatedModelRef.current = null;
       setIsModelOutdated(false);
     }
+    return () => { cancelled = true; };
   }, [activeStudy?.path, effectiveModelId]);
 
   const handleConfirmClearCanvas = () => {
@@ -1249,17 +1348,26 @@ const ModelEditor = () => {
 
   const handleSaveSnapshot = async () => {
     const targetStudy = studies.find(s => s.id === snapshotTargetStudyId) || activeStudy;
-    if (!targetStudy?.path || !plsResults) return;
+    const analysisId = activeResultTab.startsWith('analysis_') ? activeCalculation : null;
+    if (!targetStudy?.path || (!plsResults && !analysisId)) return;
     try {
       setIsSavingSnapshot(true);
-      const spec = lastCalculatedModel?.spec || exportModelSpec();
-      const layout = lastCalculatedModel?.layout || getModelCanvasState();
+      const savedAnalysis = analysisId && activeStudy?.path
+        ? await api.loadProjectResults(activeStudy.path, 'pls', effectiveModelId || undefined, analysisId)
+        : null;
+      if (analysisId && !savedAnalysis?.results) throw new Error(savedAnalysis?.error || 'The selected analysis has not been saved yet.');
+      if (analysisId && !savedAnalysis?.diagram_layout && savedAnalysis?.spec && !isModelTopologyEqual(savedAnalysis.spec, exportModelSpec())) {
+        throw new Error('This analysis has no saved diagram and the model has changed. Recalculate it before saving a snapshot.');
+      }
+      const spec = analysisId ? (savedAnalysis?.spec || exportModelSpec()) : (lastCalculatedModel?.spec || exportModelSpec());
+      const layout = analysisId ? (savedAnalysis?.diagram_layout || getModelCanvasState()) : (lastCalculatedModel?.layout || getModelCanvasState());
+      const snapshotResults = analysisId ? { _statsemAnalysisSnapshot: { id: analysisId, data: savedAnalysis?.results } } : plsResults;
       const res = await api.saveSnapshot({
         projectPath: targetStudy.path,
         name: snapshotName.trim() || `Snapshot ${new Date().toLocaleDateString()}`,
         description: '',
-        algorithm: 'pls',
-        results: plsResults,
+        algorithm: analysisId || 'pls',
+        results: snapshotResults,
         spec,
         diagramLayout: layout,
         sourceModelId: effectiveModelId || undefined,
@@ -1426,7 +1534,7 @@ const ModelEditor = () => {
   };
 
   const handleExportExcel = async () => {
-    if (!plsResults) return;
+    if (!plsResults && !activeResultTab.startsWith('analysis_')) return;
     const tables = Array.from(document.querySelectorAll('.results-main .scientific-table, .results-main table'));
     if (!tables.length) {
       alert('No active table to export.');
@@ -1459,7 +1567,7 @@ const ModelEditor = () => {
   };
 
   const handleExportHtml = () => {
-    if (!plsResults) return;
+    if (!plsResults && !activeResultTab.startsWith('analysis_')) return;
     const tables = Array.from(document.querySelectorAll('.results-main .scientific-table, .results-main table'));
     if (!tables.length) return;
     const tablesHtml = tables.map(t => {
@@ -1815,6 +1923,13 @@ const ModelEditor = () => {
   }, [plsResults]);
 
   const reportTabDetails = useMemo(() => {
+    if (activeResultTab.startsWith('analysis_')) {
+      const title = activeResultTab === 'analysis_run_details' ? 'Run details' : standaloneAnalysisSections(activeCalculation, analysisResultsMap[activeCalculation])[standaloneAnalysisSectionIndex(activeResultTab)] || standaloneAnalysisTitles[activeCalculation] || 'Analysis';
+      return { title, badge: '', subtitle: 'Results from the saved calculation.' };
+    }
+    if (activeResultTab.startsWith('moderation::')) {
+      return { title: moderationSections(plsResults?.moderation, plsResults).find(item => item.id === activeResultTab)?.label || 'Moderation effects', badge: 'Moderation', subtitle: 'Conditional effects at selected moderator levels.' };
+    }
     if (plsResults?.is_mga) {
       const rep = plsResults.mga_report;
       const gA = rep?.groupAName || 'Group A';
@@ -1860,6 +1975,8 @@ const ModelEditor = () => {
         };
       case 'specific_indirect_effects':
         return { title: 'Specific indirect effects', badge: 'Indirect', subtitle: 'Estimates for each distinct mediation path.' };
+      case 'moderation':
+        return { title: 'Moderation effects', badge: '', subtitle: 'Conditional effects at selected moderator levels.' };
       case 'run_details':
         return { title: 'Run details', badge: 'Run information', subtitle: 'Convergence and iteration information reported by the engine.' };
       case 'total_indirect_effects':
@@ -1912,8 +2029,10 @@ const ModelEditor = () => {
           subtitle: 'Assessment of construct distinction via Heterotrait-Monotrait ratio and Fornell-Larcker criterion.',
         };
       case 'collinearity':
+      case 'collinearity_inner':
+      case 'collinearity_outer':
         return {
-          title: 'Collinearity (VIF)',
+          title: activeResultTab === 'collinearity_outer' ? 'Outer model collinearity' : 'Inner model collinearity',
           badge: 'VIF',
           subtitle: 'Variance Inflation Factors evaluating multicollinearity among predictors and indicators.',
         };
@@ -1930,11 +2049,18 @@ const ModelEditor = () => {
           subtitle: 'Model fit statistics and reference values.',
         };
       case 'bootstrap_significance':
+      case 'bootstrap_paths':
         return {
-          title: 'Bootstrap inference',
-          badge: 'p-values, t-stats, 95% CI',
-          subtitle: 'Non-parametric bootstrap distributions, standard errors, t-statistics, p-values, and 95% confidence intervals.',
+          title: 'Structural paths',
+          badge: 'Bootstrap inference',
+          subtitle: 'Bootstrap estimates and inference for structural paths.',
         };
+      case 'bootstrap_loadings':
+        return { title: 'Outer loadings', badge: 'Bootstrap inference', subtitle: 'Bootstrap estimates and inference for indicator loadings.' };
+      case 'discriminant_htmt':
+        return { title: 'HTMT', badge: 'Discriminant validity', subtitle: 'Heterotrait–monotrait ratios between constructs.' };
+      case 'discriminant_fornell':
+        return { title: 'Fornell-Larcker', badge: 'Discriminant validity', subtitle: 'Construct correlations and square roots of AVE.' };
       case 'convergent_validity_redundancy':
         return {
           title: 'Convergent validity (redundancy)',
@@ -1948,12 +2074,12 @@ const ModelEditor = () => {
           subtitle: 'Algorithm output, criteria checks, and parameters.',
         };
     }
-  }, [activeResultTab, plsResults]);
+  }, [activeResultTab, plsResults, activeCalculation, analysisResultsMap]);
 
   const currentTabId = !plsResults?.is_mga && activeResultTab.includes('__') ? activeResultTab.split('__')[0] : activeResultTab;
 
   useEffect(() => {
-    if (plsResults) {
+    if (plsResults && !activeResultTab.startsWith('analysis_')) {
       if (!plsResults.is_mga && activeResultTab.includes('__')) {
         setActiveResultTab(activeResultTab.split('__')[0]);
       } else if (plsResults.is_mga && !activeResultTab.includes('__') && activeResultTab !== 'run_details' && activeResultTab !== 'micom') {
@@ -2016,7 +2142,7 @@ const ModelEditor = () => {
   };
 
   const handleExportAllTables = async (format: 'csv' | 'excel' | 'html' | 'pdf') => {
-    if (!plsResults) {
+    if (!plsResults && !activeResultTab.startsWith('analysis_')) {
       alert('Please calculate the model first.');
       return;
     }
@@ -2033,10 +2159,18 @@ const ModelEditor = () => {
       getConstructName,
       getIndicatorName,
       formatNumber: fmt,
+      formatPValue: fmtP,
+      providedSections: activeResultTab.startsWith('analysis_') ? collectVisibleReportTables(document.getElementById('analysis-export-tables'), reportTabDetails.title) : undefined,
     }).sections;
 
     if ((format === 'csv' || format === 'excel') && canonicalSections.length === 0) {
       alert('No result tables are available to export.');
+      return;
+    }
+
+    if (format === 'html' && activeResultTab.startsWith('analysis_')) {
+      if (canonicalSections.length === 0) { alert('No visible result tables are available to export.'); return; }
+      handleExportHtml();
       return;
     }
 
@@ -2443,11 +2577,17 @@ const ModelEditor = () => {
           }
           // Canvas setup itself emits change events. Let those settle before
           // treating later user-originated edits as stale-result changes.
-          requestAnimationFrame(() => { suppressStaleCheckRef.current = false; });
+          requestAnimationFrame(() => {
+            canvasTopologyRef.current = exportModelSpec();
+            suppressStaleCheckRef.current = false;
+          });
         }
       } else {
         isCanvasLoadingRef.current = false;
-        requestAnimationFrame(() => { suppressStaleCheckRef.current = false; });
+        requestAnimationFrame(() => {
+          canvasTopologyRef.current = exportModelSpec();
+          suppressStaleCheckRef.current = false;
+        });
       }
 
       const viewSlider = document.getElementById('main-view-slider');
@@ -2486,28 +2626,17 @@ const ModelEditor = () => {
     
     const handleCanvasChanged = () => {
       if (isCanvasLoadingRef.current || suppressStaleCheckRef.current) return;
+      if (currentViewRef.current !== 'model') return;
       triggerDebouncedAutoSave();
-      if (lastCalculatedModelRef.current?.spec) {
-        try {
-          const currentSpec = exportModelSpec();
-          if (!isModelTopologyEqual(currentSpec, lastCalculatedModelRef.current.spec)) {
-            setIsModelOutdated(true);
-            if (!hasCalculatedOnceRef.current) {
-              setCanvasResults(null);
-            }
-          } else {
-            setIsModelOutdated(false);
-            const res = plsResultsRef.current || plsResults;
-            if (res) {
-              if (res.is_mga) {
-                setCanvasResults(getMgaCanvasResultForMode(res, mgaCanvasMode));
-              } else {
-                setCanvasResults(res);
-              }
-            }
-          }
-        } catch (e) {}
-      }
+      try {
+        const currentSpec = exportModelSpec();
+        const previousSpec = canvasTopologyRef.current;
+        canvasTopologyRef.current = currentSpec;
+        if (previousSpec && !isModelTopologyEqual(currentSpec, previousSpec)) {
+          if (hasCalculatedOnceRef.current) setIsModelOutdated(true);
+          setAnalysisStale(previous => Object.fromEntries(Object.keys(previous).map(id => [id, true])));
+        }
+      } catch (e) {}
     };
 
     document.addEventListener('color-picker-closed', handleColorPickerClosed);
@@ -4115,6 +4244,43 @@ const ModelEditor = () => {
       {/* ─── Results Hierarchy Tree (Left) ─── */}
       <ResultsNavigation
         activeTab={activeResultTab}
+        savedCalculations={savedCalculations}
+        activeCalculation={activeCalculation}
+        onSelectSavedCalculation={id => {
+          if (!activeStudy?.path) return;
+          const requestId = ++resultSelectionRequestRef.current;
+          if (['cta', 'ipma', 'predict', 'pca'].includes(id)) {
+            setActiveCalculation(id);
+            setActiveResultTab(`analysis_${id}`);
+            setLatestAnalysis({ id, revision: Date.now() });
+            if (!analysisResultsMap[id]) void loadAnalysis(id);
+            return;
+          }
+          const requestedModel = analysisModelKey;
+          void loadCalculation(activeStudy.path, effectiveModelId || undefined, id).then(async response => {
+            // Projects saved by older versions may have put MGA or bootstrap in
+            // the base slot. Prefer the preserved PLS estimate when available.
+            if (id === 'pls' && response.results?.is_mga) {
+              const base = await api.loadProjectResults(activeStudy.path, 'pls', effectiveModelId || undefined, '_saved_pls');
+              if (base.results) response = base;
+            }
+            if (analysisModelKeyRef.current !== requestedModel || requestId !== resultSelectionRequestRef.current) return;
+            if (!response.results) { setSaveToast(response.error || 'Could not load saved calculation'); return; }
+            setActiveCalculation(id);
+            setPlsResults(response.results);
+            plsResultsRef.current = response.results;
+            setCanvasResults(response.results.is_mga ? getMgaCanvasResultForMode(response.results, mgaCanvasMode) : response.results);
+            const calculatedSnapshot = { spec: response.spec, layout: response.diagram_layout };
+            setLastCalculatedModel(calculatedSnapshot);
+            lastCalculatedModelRef.current = calculatedSnapshot;
+            setIsModelOutdated(false);
+            setActiveResultTab(response.results.is_mga ? `path_coefficients__${response.results.mga_type === 'permutation' ? 'permutation_test' : 'bootstrap_mga'}` : 'path_coefficients');
+          }).catch(error => {
+            if (analysisModelKeyRef.current === requestedModel && requestId === resultSelectionRequestRef.current) {
+              setSaveToast(`Could not load saved calculation: ${error?.message || 'Unknown error'}`);
+            }
+          });
+        }}
         onSelect={(id) => {
           setActiveResultTab(id);
           if (id === 'specific_indirect_effects' && availableAnalyses.includes('mediation') && !analysisResultsMap.mediation && !analysisLoading.mediation) {
@@ -4122,27 +4288,40 @@ const ModelEditor = () => {
           }
         }}
         hasRedundancy={!!plsResults?.convergent_validity_redundancy}
-        hasRunDetails={hasRunDetails(plsResults)}
+        hasRunDetails={activeResultTab.startsWith('analysis_') ? !!analysisResultsMap[activeCalculation] : hasRunDetails(plsResults)}
         hasSpecificIndirect={plsResults?.is_mga ? !!(plsResults?.mga_report?.specificIndirectEffects?.length) : !!(plsResults?.effects_decomposition?.specific_indirect?.length || plsResults?.structural?.specific_indirect?.length || availableAnalyses.includes('mediation') || analysisResultsMap.mediation)}
-        isMga={!!plsResults?.is_mga}
+        isMga={!!plsResults?.is_mga && !activeResultTab.startsWith('analysis_')}
         hasMicom={plsResults?.is_mga && plsResults?.mga_type === 'permutation'}
+        mgaAvailable={plsResults?.mga_report ? [
+          ['path_coefficients', 'pathCoefficients'], ['total_effects', 'totalEffects'],
+          ['total_indirect_effects', 'totalIndirectEffects'], ['specific_indirect_effects', 'specificIndirectEffects'],
+          ['outer_loadings', 'outerLoadings'], ['outer_weights', 'outerWeights'],
+        ].filter(([, key]) => Array.isArray(plsResults.mga_report[key]) && plsResults.mga_report[key].length > 0).map(([id]) => id) : undefined}
+        analysisOnly={activeResultTab.startsWith('analysis_')}
+        analysisTitle={standaloneAnalysisTitles[activeCalculation]}
+        analysisSections={standaloneAnalysisSections(activeCalculation, analysisResultsMap[activeCalculation])}
+        hasBootstrap={!!(plsResults?.bootstrap || plsResults?.significance)}
+        hasModeration={!plsResults?.is_mga && moderationSections(plsResults?.moderation, plsResults).length > 0}
+        moderationSections={moderationSections(plsResults?.moderation, plsResults)}
       />
+      {activeResultTab.startsWith('analysis_') && <div hidden id="analysis-export-tables"><StandaloneAnalysisResults id={activeCalculation} data={analysisResultsMap[activeCalculation]} /><section><h2>Run details</h2><AnalysisRunDetails id={activeCalculation} data={analysisResultsMap[activeCalculation]} /></section></div>}
       {/* ─── Center Results Area ─── */}
       <main className="results-main">
         {/* Secondary Header inline with filter search */}
         <div className="results-secondary-header">
           <button
-            className="results-tool-btn"
+            className="results-tool-btn results-snapshot-copy"
             type="button"
             onClick={handleOpenSnapshotModal}
             title="Save results and model diagram as a snapshot in this study"
+            style={{ marginLeft: 'auto' }}
           >
             <History size={13} />
             <span>Save Snapshot</span>
           </button>
 
           {/* Export All dropdown on right end (below Calculate) */}
-          <div className="subheader__dropdown-container" ref={exportAllRef} style={{ marginLeft: 'auto' }}>
+          <div className="subheader__dropdown-container" ref={exportAllRef}>
             <button
               type="button"
               aria-expanded={isExportAllMenuOpen}
@@ -4167,7 +4346,7 @@ const ModelEditor = () => {
         </div>
 
         {/* Outdated Calculation Notice Banner */}
-        {isModelOutdated && (
+        {(activeResultTab.startsWith('analysis_') ? !!analysisStale[activeCalculation] : isModelOutdated) && (
           <div
             style={{
               margin: '12px 24px 0',
@@ -4196,7 +4375,7 @@ const ModelEditor = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
               <button
                 type="button"
-                onClick={() => void handleCalculate(!!plsResults?.is_consistent)}
+                onClick={openCurrentCalculationSettings}
                 disabled={isCalculating}
                 style={{
                   padding: '6px 14px',
@@ -4222,19 +4401,17 @@ const ModelEditor = () => {
               <h1 className="report-header__title">
                 {reportTabDetails.title}
                 <span className="report-header__title-sub">{reportTabDetails.badge}</span>
-                {plsResults?.is_consistent && <span className="report-header__title-sub">Consistent PLS</span>}
+                {!activeResultTab.startsWith('analysis_') && plsResults?.is_consistent && <span className="report-header__title-sub">Consistent PLS</span>}
               </h1>
               <p className="report-header__subtitle">{reportTabDetails.subtitle}</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
               <button
-                className="results-tool-btn"
+                className="results-tool-btn results-snapshot-copy"
                 type="button"
                 onClick={handleCopyCurrentTable}
                 title="Copy all tables on this page to clipboard"
                 style={{
-                  minWidth: 112,
-                  justifyContent: 'center',
                   backgroundColor: copiedPageTable ? 'rgba(34, 197, 94, 0.12)' : undefined,
                   color: copiedPageTable ? '#16a34a' : undefined,
                   borderColor: copiedPageTable ? '#16a34a' : undefined,
@@ -4272,12 +4449,16 @@ const ModelEditor = () => {
 
         {/* Dynamic Table Area */}
         <div className="table-container">
-          <div className="scientific-table-wrap">
-            {plsResults?.is_mga && plsResults?.mga_report ? (
+          <div className={currentTabId.startsWith('analysis_') ? undefined : 'scientific-table-wrap'}>
+            {currentTabId.startsWith('analysis_') ? (
+              analysisLoading[activeCalculation] ? <p className="results-empty-note">Loading analysis output…</p> : analysisErrors[activeCalculation] ? <p className="results-empty-note">{analysisErrors[activeCalculation]} <button type="button" onClick={() => void loadAnalysis(activeCalculation)}>Retry</button></p> : currentTabId === 'analysis_run_details' ? <div className="scientific-table-wrap"><AnalysisRunDetails id={activeCalculation} data={analysisResultsMap[activeCalculation]} /></div> : <StandaloneAnalysisResults id={activeCalculation} data={analysisResultsMap[activeCalculation]} section={standaloneAnalysisSectionIndex(activeResultTab)} />
+            ) : plsResults?.is_mga && plsResults?.mga_report ? (
               <MgaActiveTableView
                 report={plsResults.mga_report}
                 activeTab={activeResultTab}
               />
+            ) : currentTabId.startsWith('moderation') && plsResults?.moderation ? (
+              <ModerationDetails data={plsResults.moderation} results={plsResults} section={currentTabId.split('::')[1] ?? '0'} />
             ) : currentTabId === 'specific_indirect_effects' && (plsResults || analysisResultsMap.mediation || analysisLoading.mediation || analysisErrors.mediation) ? (
               <>
                 {analysisLoading.mediation && <p className="results-empty-note">Loading mediation results...</p>}
@@ -4874,9 +5055,9 @@ const ModelEditor = () => {
                   })}
                 </tbody>
               </table>
-            ) : currentTabId === 'discriminant' ? (
+            ) : ['discriminant', 'discriminant_htmt', 'discriminant_fornell'].includes(currentTabId) ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
+                {currentTabId !== 'discriminant_fornell' && <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
                   <div className="results-table-section-title">Heterotrait--Monotrait Ratio (HTMT)</div>
                   {getTableMode('htmt') === 'matrix' ? (
                     <table className="scientific-table">
@@ -4980,9 +5161,9 @@ const ModelEditor = () => {
                       </tbody>
                     </table>
                   )}
-                </div>
+                </div>}
 
-                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
+                {currentTabId === 'discriminant_fornell' && <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
                   <div className="results-table-section-title">Fornell--Larcker Criterion</div>
                   {getTableMode('fornell_larcker') === 'matrix' ? <table className="scientific-table">
                     <thead>
@@ -5022,73 +5203,10 @@ const ModelEditor = () => {
                       return <tr key={`${c1}-${c2}`}><td>{getConstructName(c1)}</td><td>{getConstructName(c2)}</td><td>{fmt(value)}</td></tr>;
                     }))}</tbody>
                   </table>}
-                </div>
+                </div>}
               </div>
-            ) : currentTabId === 'collinearity' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
-                  <table className="scientific-table">
-                    <thead>
-                      <tr>
-                        <th>Target Construct</th>
-                        <th>Predictor Construct</th>
-                        <th>Inner VIF</th>
-                        <th>Collinearity Evaluation</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(plsResults.structural?.inner_vif || {}).flatMap(([target, preds]: [string, any]) =>
-                        Object.entries(preds || {}).map(([pred, val]: [string, any]) => {
-                          const vif = Number(val);
-                          const ok = vif < 3.3;
-                          return (
-                            <tr key={`${pred}->${target}`}>
-                              <td>{renderConstructLabel(target)}</td>
-                              <td>{renderConstructLabel(pred)}</td>
-                              <td className={ok ? 'cell-sig' : 'cell-ns'}>{fmt(vif)}</td>
-                              <td>
-                                <span style={{
-                                  padding: '2px 8px',
-                                  borderRadius: '4px',
-                                  fontSize: '11px',
-                                  fontWeight: 600,
-                                  backgroundColor: ok ? '#dcfce7' : '#fee2e2',
-                                  color: ok ? '#166534' : '#991b1b'
-                                }}>
-                                  {ok ? 'No Collinearity Issue (VIF < 3.3)' : 'Potential Multicollinearity (VIF ≥ 3.3)'}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
-                  <table className="scientific-table">
-                    <thead>
-                      <tr>
-                        <th>Construct</th>
-                        <th>Indicator</th>
-                        <th>Outer VIF</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(plsResults.measurement?.outer_vif || {}).flatMap(([cid, vifs]: [string, any]) =>
-                        Object.entries(vifs || {}).map(([iid, val]: [string, any]) => (
-                          <tr key={`${cid}-${iid}`}>
-                            <td>{renderConstructLabel(cid)}</td>
-                            <td><strong>{getIndicatorName(iid)}</strong></td>
-                            <td>{fmt(val)}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+            ) : ['collinearity', 'collinearity_inner', 'collinearity_outer'].includes(currentTabId) ? (
+              <CollinearityResults results={plsResults} section={currentTabId === 'collinearity_outer' ? 'outer' : 'inner'} constructName={getConstructName} indicatorName={getIndicatorName} />
             ) : currentTabId === 'convergent_validity_redundancy' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -5223,162 +5341,14 @@ const ModelEditor = () => {
                   ))}
                 </tbody>
               </table>
-            ) : currentTabId === 'bootstrap_significance' ? (
-              !plsResults.significance ? (
-                <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
-                  <svg style={{ width: 48, height: 48, margin: '0 auto 16px', color: '#94a3b8' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                    <path d="M18 20V10M12 20V4M6 20v-6" />
-                  </svg>
-                  <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 600, color: '#334155' }}>No Bootstrapping Run Yet</h3>
-                  <p style={{ margin: 0, fontSize: '13px' }}>Click the <strong>Bootstrap</strong> button in the top bar to run multi-core significance testing for standard errors, t-statistics, and p-values.</p>
-                </div>
-              ) : (
-                <div>
-                  {/* Summary Bar */}
-                  <div style={{
-                    display: 'flex',
-                    gap: '20px',
-                    padding: '10px 16px',
-                    backgroundColor: 'var(--color-bg-raised, #f8fafc)',
-                    border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                    borderRadius: 'var(--radius-sm, 6px)',
-                    marginBottom: '18px',
-                    alignItems: 'center',
-                    fontSize: '12px',
-                    color: 'var(--color-text-secondary, #334155)',
-                  }}>
-                    <span>Bootstrap Subsamples: <strong style={{ color: 'var(--color-text-primary)' }}>{plsResults.significance.n_boot?.toLocaleString()}</strong></span>
-                    <span>Test: <strong style={{ color: 'var(--color-text-primary)' }}>Two-Tailed (α = 0.05)</strong></span>
-                    <span>Confidence Interval: <strong style={{ color: 'var(--color-text-primary)' }}>95% Percentile</strong></span>
-                  </div>
-
-                  {/* Path Coefficients Significance Table */}
-                  <h4 style={{ margin: '0 0 10px', fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                    Structural Path Significance
-                  </h4>
-                  <table className="scientific-table" style={{ marginBottom: '28px' }}>
-                    <thead>
-                      <tr>
-                        <th>Path (Predictor → Target)</th>
-                        <th>Original (β)</th>
-                        <th>Sample Mean</th>
-                        <th>Std Error (SE)</th>
-                        <th>t-Statistic</th>
-                        <th>p-Value</th>
-                        <th>95% Confidence Interval</th>
-                        <th>Significance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(plsResults.significance.paths || []).map((p: any, idx: number) => {
-                        const cellSigClass = p.p_value < 0.001 ? 'cell-sig--p001' : (p.p_value < 0.01 ? 'cell-sig--p01' : (p.p_value < 0.05 ? 'cell-sig--p05' : ''));
-                        return (
-                          <tr key={idx}>
-                            <td>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                {renderConstructLabel(p.from, p.from_name)}
-                                <span style={{ color: '#94a3b8' }}>→</span>
-                                {renderConstructLabel(p.to, p.to_name)}
-                              </div>
-                            </td>
-                            <td className={cellSigClass}>
-                              <div className="cell-value">{fmt(p.original)}</div>
-                            </td>
-                            <td>{fmt(p.mean)}</td>
-                            <td>{fmt(p.se)}</td>
-                            <td><strong>{fmt(p.t_stat)}</strong></td>
-                            <td className={cellSigClass} style={{ fontWeight: 600 }}>
-                              {fmtP(p.p_value)}
-                            </td>
-                            <td>[{fmt(p.ci_low)}, {fmt(p.ci_high)}]</td>
-                            <td>
-                              {p.p_value < 0.001 ? (
-                                <span className="sig-badge sig-badge--p001">p &lt; 0.001</span>
-                              ) : p.p_value < 0.01 ? (
-                                <span className="sig-badge sig-badge--p01">p &lt; 0.01</span>
-                              ) : p.p_value < 0.05 ? (
-                                <span className="sig-badge sig-badge--p05">p &lt; 0.05</span>
-                              ) : (
-                                <span className="sig-badge sig-badge--ns">ns</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-
-                  {/* Outer Loadings Significance Table */}
-                  <h4 style={{ margin: '0 0 10px', fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                    Outer Loadings Significance
-                  </h4>
-                  <table className="scientific-table">
-                    <thead>
-                      <tr>
-                        <th>Construct</th>
-                        <th>Indicator</th>
-                        <th>Outer Loading (λ)</th>
-                        <th>Sample Mean</th>
-                        <th>Std Error (SE)</th>
-                        <th>t-Statistic</th>
-                        <th>p-Value</th>
-                        <th>95% Confidence Interval</th>
-                        <th>Sig.</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(plsResults.significance.loadings || []).map((l: any, idx: number) => {
-                        const cellSigClass = l.p_value < 0.001 ? 'cell-sig--p001' : (l.p_value < 0.01 ? 'cell-sig--p01' : (l.p_value < 0.05 ? 'cell-sig--p05' : ''));
-                        return (
-                          <tr key={idx}>
-                            <td>{l.construct_name || getConstructName(l.construct)}</td>
-                            <td><strong>{generatedIndicatorNames[l.indicator] || l.indicator_name || getIndicatorName(l.indicator)}</strong></td>
-                            <td className={cellSigClass}>
-                              <div className="cell-value">{fmt(l.original)}</div>
-                            </td>
-                            <td>{fmt(l.mean)}</td>
-                            <td>{fmt(l.se)}</td>
-                            <td>{fmt(l.t_stat)}</td>
-                            <td className={cellSigClass} style={{ fontWeight: 600 }}>
-                              {fmtP(l.p_value)}
-                            </td>
-                            <td>[{fmt(l.ci_low)}, {fmt(l.ci_high)}]</td>
-                            <td>
-                              {l.p_value < 0.001 ? (
-                                <span className="sig-badge sig-badge--p001">p &lt; 0.001</span>
-                              ) : l.p_value < 0.01 ? (
-                                <span className="sig-badge sig-badge--p01">p &lt; 0.01</span>
-                              ) : l.p_value < 0.05 ? (
-                                <span className="sig-badge sig-badge--p05">p &lt; 0.05</span>
-                              ) : (
-                                <span className="sig-badge sig-badge--ns">ns</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <div className="sig-legend-minimal">
-                    <span className="sig-legend-minimal__label">Significance:</span>
-                    <div className="sig-legend-minimal__item"><span className="sig-legend-minimal__dot sig-legend-minimal__dot--p001" /> p &lt; 0.001</div>
-                    <div className="sig-legend-minimal__item"><span className="sig-legend-minimal__dot sig-legend-minimal__dot--p01" /> p &lt; 0.01</div>
-                    <div className="sig-legend-minimal__item"><span className="sig-legend-minimal__dot sig-legend-minimal__dot--p05" /> p &lt; 0.05</div>
-                    <div className="sig-legend-minimal__item"><span className="sig-legend-minimal__dot sig-legend-minimal__dot--ns" /> ns (≥ 0.05)</div>
-                    <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--color-text-muted)' }}>{plsResults.significance.settings?.tails === 'one' ? `One-sided ${plsResults.significance.settings?.direction === 'negative' ? 'negative' : 'positive'}` : 'Two-sided'} bootstrap test ({plsResults.significance.n_boot?.toLocaleString()} subsamples)</span>
-                  </div>
-                </div>
-              )
+            ) : ['bootstrap_paths', 'bootstrap_significance', 'bootstrap_loadings'].includes(currentTabId) ? (
+              <BootstrapInference results={plsResults} section={currentTabId === 'bootstrap_loadings' ? 'loadings' : 'paths'} constructName={getConstructName} indicatorName={getIndicatorName} />
             ) : currentTabId === 'run_details' ? (
               <RunDetails results={plsResults} />
             ) : currentTabId === 'model_fit' ? (
               <ModelFitResults results={plsResults} />
             ) : null}
           </div>
-          {currentTabId === 'path_coefficients' && !plsResults?.is_mga && (
-            <InlineAnalysisResults results={plsResults} analyses={analysisResultsMap} available={availableAnalyses} latest={latestAnalysis}
-              loading={analysisLoading} errors={analysisErrors} stale={analysisStale} onLoad={id => void loadAnalysis(id)} />
-          )}
         </div>
       </main>
     </div>{/* /app-body */}
@@ -5419,20 +5389,10 @@ const ModelEditor = () => {
       setIsModelOutdated(false);
       setHasCalculatedOnce(true);
       hasCalculatedOnceRef.current = true;
-      if (effectiveModelId) {
-        setModelResultCache(effectiveModelId, results);
-        if (activeStudy?.path) {
-          void api.saveProjectResults({
-            projectPath: activeStudy.path,
-            modelId: effectiveModelId || undefined,
-            datasetId: activeDataset?.id,
-            algorithm: 'pls',
-            analysisType: 'pls',
-            results,
-          });
-        }
-      }
-      setActiveResultTab('bootstrap_significance');
+      if (effectiveModelId) setModelResultCache(effectiveModelId, results);
+      setActiveCalculation(bootstrapConsistent ? '_saved_consistent_pls' : 'pls');
+      void refreshSavedCalculations();
+      setActiveResultTab('bootstrap_paths');
       const viewSlider = document.getElementById('main-view-slider');
       if (viewSlider) {
         (viewSlider as HTMLElement).style.display = 'flex';
@@ -5462,7 +5422,9 @@ const ModelEditor = () => {
       setAvailableAnalyses(previous => Array.from(new Set([...previous, type])));
       setAnalysisStale(previous => ({ ...previous, [type]: false }));
       setLatestAnalysis({ id: type, revision: Date.now() });
-      setActiveResultTab('path_coefficients');
+      setActiveCalculation(type);
+      setActiveResultTab(`analysis_${type}`);
+      void refreshSavedCalculations();
       switchView('results');
       setValidationSuccessToast('Calculation completed successfully!');
       setTimeout(() => setValidationSuccessToast(null), 3500);
@@ -5485,6 +5447,7 @@ const ModelEditor = () => {
     onComplete={(report) => {
       setIsPermutationModalOpen(false);
       const mgaResults = createMgaPlsResults(report);
+      setActiveCalculation(permutationConsistent ? '_saved_consistent_permutation' : '_saved_permutation');
       setPlsResults(mgaResults);
       plsResultsRef.current = mgaResults;
       if (effectiveModelId) {
@@ -5497,10 +5460,13 @@ const ModelEditor = () => {
           modelId: effectiveModelId || undefined,
           datasetId: activeDataset?.id,
           algorithm: 'pls',
-          analysisType: 'pls',
+          analysisType: permutationConsistent ? '_saved_consistent_permutation' : '_saved_permutation',
           results: mgaResults,
           spec: exportModelSpec(),
           diagramLayout: getModelCanvasState(),
+        }).then(response => {
+          if (response.error) setSaveToast(`Could not save results: ${response.error}`);
+          else void refreshSavedCalculations();
         });
       }
       const calculatedSnapshot = { spec: exportModelSpec(), layout: getModelCanvasState() };
@@ -5533,6 +5499,7 @@ const ModelEditor = () => {
     onComplete={(report) => {
       setIsMgaModalOpen(false);
       const mgaResults = createMgaPlsResults(report);
+      setActiveCalculation(mgaConsistent ? '_saved_consistent_mga' : '_saved_mga');
       setPlsResults(mgaResults);
       plsResultsRef.current = mgaResults;
       if (effectiveModelId) {
@@ -5545,10 +5512,13 @@ const ModelEditor = () => {
           modelId: effectiveModelId || undefined,
           datasetId: activeDataset?.id,
           algorithm: 'pls',
-          analysisType: 'pls',
+          analysisType: mgaConsistent ? '_saved_consistent_mga' : '_saved_mga',
           results: mgaResults,
           spec: exportModelSpec(),
           diagramLayout: getModelCanvasState(),
+        }).then(response => {
+          if (response.error) setSaveToast(`Could not save results: ${response.error}`);
+          else void refreshSavedCalculations();
         });
       }
       const calculatedSnapshot = { spec: exportModelSpec(), layout: getModelCanvasState() };
@@ -5588,6 +5558,7 @@ const ModelEditor = () => {
     onClose={() => { setIsReportExportModalOpen(false); setReportCurrentTableOnly(false); }}
     currentResultTab={activeResultTab}
     currentTableOnly={reportCurrentTableOnly}
+    currentSectionTitle={activeResultTab.startsWith('analysis_') ? reportTabDetails.title : reportCurrentTableOnly && activeResultTab.startsWith('moderation::') ? collectVisibleReportTables(document.querySelector('.results-main .table-container'), reportTabDetails.title)[0]?.title : undefined}
     config={{
       modelName: activeModel?.name || 'Model',
       studyName: activeStudy?.name || 'Study',
@@ -5599,6 +5570,8 @@ const ModelEditor = () => {
       getIndicatorName,
       svgElement: typeof document !== 'undefined' ? (document.getElementById('model-svg') as unknown as SVGSVGElement) : null,
       formatNumber: fmt,
+      formatPValue: fmtP,
+      providedSections: activeResultTab.startsWith('analysis_') ? collectVisibleReportTables(document.getElementById('analysis-export-tables'), reportTabDetails.title) : reportCurrentTableOnly && activeResultTab.startsWith('moderation::') ? collectVisibleReportTables(document.querySelector('.results-main .table-container'), reportTabDetails.title) : undefined,
     }}
     onSuccessToast={(msg) => {
       setValidationSuccessToast(msg);

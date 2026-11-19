@@ -818,6 +818,7 @@ fn run_pls(body: &Value, query: &HashMap<String, String>) -> Result<Value, Strin
     store.save_model(&spec, &layout, text(body, query, "model_id").as_deref())?;
     store.save_results(Results {
         results: results.clone(),
+        analysis_type: if body["consistent"].as_bool().unwrap_or(false) { "_saved_consistent_pls".into() } else { "pls".into() },
         spec,
         diagram_layout: layout,
         model_id: text(body, query, "model_id"),
@@ -923,14 +924,21 @@ fn bootstrap_start(body: &Value, query: &HashMap<String, String>) -> Result<Valu
                 }
                 if let Some(path) = path {
                     let store = Store::new(path);
-                    let _ = store.save_results(Results {
+                    if let Err(error) = store.save_results(Results {
                         results: results.clone(),
+                        analysis_type: if results["is_consistent"] == true || results["settings"]["consistent"] == true { "_saved_consistent_pls".into() } else { "pls".into() },
                         spec: model,
                         diagram_layout: layout,
                         model_id,
                         dataset_id: dataset_id.as_str().map(str::to_owned),
                         ..Default::default()
-                    });
+                    }) {
+                        if let Ok(mut j) = job.lock() {
+                            j.status = "failed".into();
+                            j.error = Some(format!("Could not save bootstrap results: {error}"));
+                        }
+                        return;
+                    }
                 }
                 if let Ok(mut j) = job.lock() {
                     j.status = "completed".into();
@@ -1113,10 +1121,55 @@ mod tests {
         let base_result = route("GET", "/project/load-results", &query, json!({})).unwrap();
         assert_eq!(base_result["results"]["kind"], "base");
         let list = route("GET", "/project/analysis-list", &query, json!({})).unwrap();
-        assert_eq!(list["analyses"], json!(["predict"]));
+        assert_eq!(list["analyses"], json!(["predict", "pls"]));
         query.insert("analysis_type".into(), "predict".into());
         let prediction = route("GET", "/project/load-results", &query, json!({})).unwrap();
         assert_eq!(prediction["results"]["kind"], "prediction");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bootstrap_creates_the_matching_pls_result_when_run_first() {
+        let base = std::env::temp_dir().join(format!("statsem-bootstrap-save-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("model.pls");
+        let store = Store::new(&path);
+        store.create("Test").unwrap();
+        let columns = vec!["a1", "a2", "a3", "b1", "b2", "b3"];
+        let rows: Vec<Vec<f64>> = (0..48).map(|i| {
+            let x = i as f64 * 0.13 - 3.0;
+            let noise = (i as f64 * 1.7).sin();
+            let y = 0.6 * x + 0.4 * noise;
+            vec![x + 0.1 * noise, x - 0.2 * noise, 0.9 * x + 0.07 * noise,
+                 y + 0.1 * noise, y - 0.08 * noise, 1.1 * y + 0.03 * noise]
+        }).collect();
+        let spec = json!({
+            "constructs": [
+                {"id":"A","name":"A","type":"reflective","indicators":["a1","a2","a3"]},
+                {"id":"B","name":"B","type":"reflective","indicators":["b1","b2","b3"]}
+            ],
+            "indicators": columns.iter().map(|id| json!({"id":id,"column":id})).collect::<Vec<_>>(),
+            "paths":[{"from":"A","to":"B"}]
+        });
+        for consistent in [false, true] {
+            let body = json!({"project_path":path,"columns":columns,"rows":rows,"spec":spec,"consistent":consistent,"n_boot":8,"mode":"basic","parallel":false});
+            let started = bootstrap_start(&body, &HashMap::new()).unwrap();
+            let job_id = started["job_id"].as_str().unwrap();
+            let deadline = Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                let status = bootstrap_status(job_id).unwrap();
+                if status["status"] == "completed" { break; }
+                assert_ne!(status["status"], "failed", "{status}");
+                assert!(Instant::now() < deadline, "bootstrap timed out: {status}");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let kind = if consistent { "_saved_consistent_pls" } else { "pls" };
+            let saved = store.load_results("pls", Some("default"), Some(kind)).unwrap();
+            assert!(saved["results"]["bootstrap"].is_object(), "{saved}");
+            assert_eq!(saved["results"]["is_consistent"] == true, consistent);
+        }
+        assert!(!store.load_results("pls", Some("default"), Some("pls")).unwrap()["results"]["bootstrap"].is_null());
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -1182,9 +1235,16 @@ mod tests {
         assert!(run_pls(&body, &HashMap::new()).is_err());
         body["settings"] = json!({});
         body["consistent"] = json!(true);
+        let saved_standard = Store::new(&path).load_results("pls", Some("default"), Some("pls")).unwrap();
         let consistent = run_pls(&body, &HashMap::new()).unwrap();
         assert_eq!(consistent["results"]["is_consistent"], true);
         assert!(consistent["results"]["structural"]["path_coefficients"]["B"]["A"].is_number());
+        let store = Store::new(&path);
+        assert_eq!(store.load_results("pls", Some("default"), Some("pls")).unwrap()["results"], saved_standard["results"]);
+        assert_eq!(store.load_results("pls", Some("default"), Some("_saved_consistent_pls")).unwrap()["results"]["is_consistent"], true);
+        let calculations = store.list_analysis_types(Some("default")).unwrap();
+        assert!(calculations.contains(&"pls".to_string()));
+        assert!(calculations.contains(&"_saved_consistent_pls".to_string()));
         fs::remove_dir_all(base).unwrap();
     }
 

@@ -155,7 +155,7 @@ pub fn slopes(o: SlopesOptions) -> Result<Value, String> {
             let mut draws:Vec<_>=a.iter().zip(b).map(|(a,b)|a+b*m).collect();
             let sd=stats::std(&draws,None,1);
             let statistic=if sd>1e-12 {slope/sd} else {0.0};
-            se=Some(sd); t=Some(statistic); p=Some(2.0*(1.0-inference::normal_cdf(statistic.abs())));
+            se=Some(sd); t=Some(statistic); p=Some(2.0*inference::normal_cdf(-statistic.abs()));
             draws.sort_by(f64::total_cmp);
             lo=Some(inference::percentile(&draws,o.alpha/2.0));
             hi=Some(inference::percentile(&draws,1.0-o.alpha/2.0));

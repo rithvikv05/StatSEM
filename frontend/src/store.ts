@@ -162,6 +162,7 @@ export interface AppTab {
   /** Per-tab navigation state for a model, retained while switching workspaces. */
   modelView?: 'model' | 'results';
   resultSection?: string;
+  resultCalculation?: string;
 }
 
 interface AppState {
@@ -201,7 +202,7 @@ interface AppState {
   closeTabs: (ids: string[]) => void;
   setActiveTab: (id: string) => void;
   updateTabTitle: (id: string, title: string) => void;
-  setModelTabLocation: (id: string, view: 'model' | 'results', resultSection: string) => void;
+  setModelTabLocation: (id: string, view: 'model' | 'results', resultSection: string, resultCalculation?: string) => void;
   reorderTabs: (fromIndex: number, toIndex: number) => void;
 
   // Workspaces & Studies
@@ -748,9 +749,9 @@ export const useStore = create<AppState>()(
       updateTabTitle: (id, title) => set((state) => ({
         tabs: state.tabs.map(t => t.id === id ? { ...t, title } : t)
       })),
-      setModelTabLocation: (id, view, resultSection) => set((state) => ({
+      setModelTabLocation: (id, view, resultSection, resultCalculation) => set((state) => ({
         tabs: state.tabs.map(tab => tab.id === id && tab.type === 'model'
-          ? { ...tab, modelView: view, resultSection }
+          ? { ...tab, modelView: view, resultSection, resultCalculation }
           : tab),
       })),
       reorderTabs: (fromIndex, toIndex) => set((state) => {

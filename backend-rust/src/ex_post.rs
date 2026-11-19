@@ -305,7 +305,7 @@ pub fn logistic(
         Err(_) => vec![1.0; p],
     };
     let coefficients:Vec<_>=(0..p).map(|j|{
-        let z=beta[j]/se[j].max(1e-12);let prob=2.0*(1.0-inference::normal_cdf(z.abs()));
+        let z=beta[j]/se[j].max(1e-12);let prob=2.0*inference::normal_cdf(-z.abs());
         json!({"predictor":names[j],"coefficient":beta[j],"std_error":se[j],"z_statistic":z,"p_value":prob,"odds_ratio":beta[j].clamp(-10.0,10.0).exp(),"is_significant":prob<0.05})
     }).collect();
     Ok(

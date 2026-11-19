@@ -15,6 +15,7 @@ import {
 } from 'docx';
 import { isTauri } from '@tauri-apps/api/core';
 import { prepareDiagramSvg, rasterizeDiagram } from './diagram-export';
+import { formatPValue } from './number-format';
 
 export interface ReportConfig {
   modelName: string;
@@ -35,7 +36,9 @@ export interface ReportConfig {
   includeSettings?: boolean;
   /** Optional report-table title prefixes. When supplied, only matching result sections are exported. */
   sectionFilter?: string[];
+  providedSections?: ReportSectionData[];
   formatNumber?: (val: any, decimals?: number) => string;
+  formatPValue?: (val: any) => string;
 }
 
 export interface ReportSectionData {
@@ -105,6 +108,7 @@ export function compileReportData(config: ReportConfig): {
     formatNumber = (v: any) => (v != null && Number.isFinite(Number(v)) ? Number(v).toFixed(3) : String(v ?? '-')),
   } = config;
   const fmt = formatNumber;
+  const fmtP = config.formatPValue || formatPValue;
 
   // Resolve Construct Name (Never show raw internal node IDs)
   const getCName = (id: string): string => {
@@ -163,6 +167,33 @@ export function compileReportData(config: ReportConfig): {
 
   const sections: ReportSectionData[] = [];
 
+  if (config.providedSections) {
+    const selected = config.sectionFilter ? config.providedSections.filter(section => config.sectionFilter!.includes(section.title)) : config.providedSections;
+    return { metadata, sections: selected };
+  }
+
+  const moderation = plsResults?.moderation;
+  if (!plsResults?.is_mga && Array.isArray(moderation?.moderating_effects) && moderation.moderating_effects.length) {
+    const summaries = plsResults?.significance?.parameter_summary || plsResults?.bootstrap?.parameter_summary || {};
+    const slopeRows: string[][] = [];
+    moderation.moderating_effects.forEach((effect: any) => (effect.simple_slopes || []).forEach((slope: any) => {
+      const level = String(slope.moderator_level || '').split(' ')[0];
+      const inference = summaries[`simple_slope:${effect.interaction_term}->${effect.target}:${level}`] || {};
+      const low = slope.ci_lower ?? inference.ci_lower ?? inference.ci_low;
+      const high = slope.ci_upper ?? inference.ci_upper ?? inference.ci_high;
+      slopeRows.push([`${getCName(effect.source)} -> ${getCName(effect.target)}`, getCName(effect.moderator), slope.moderator_level || '-', fmt(slope.slope), fmt(slope.standard_error ?? inference.standard_error ?? inference.se), fmtP(slope.p_value ?? inference.p_value), low != null && high != null ? `[${fmt(low)}, ${fmt(high)}]` : '-']);
+    }));
+    if (slopeRows.length) sections.push({ title: 'Moderation: Conditional Direct Effects', headers: ['Path', 'Moderator', 'Level', 'Slope', 'Std. Error', 'p-Value', 'Confidence Interval'], rows: slopeRows });
+    const indirectRows: string[][] = [];
+    (moderation.conditional_indirect_effects || []).forEach((effect: any) => (effect.conditional_effects || []).forEach((row: any) => {
+      const level = String(row.w_label || '').split(' ')[0];
+      const inference = summaries[`cond_indirect:${effect.chain}(${effect.moderator}):${level}`] || {};
+      const low = inference.ci_lower ?? inference.ci_low, high = inference.ci_upper ?? inference.ci_high;
+      indirectRows.push([String(effect.chain || '').split(/\s*->\s*/).map(getCName).join(' -> '), getCName(effect.moderator), row.w_label || '-', fmt(row.indirect_effect), fmt(inference.standard_error ?? inference.se), fmtP(inference.p_value), low != null && high != null ? `[${fmt(low)}, ${fmt(high)}]` : '-']);
+    }));
+    if (indirectRows.length) sections.push({ title: 'Moderation: Conditional Indirect Effects', headers: ['Path', 'Moderator', 'Level', 'Indirect Effect', 'Std. Error', 'p-Value', 'Confidence Interval'], rows: indirectRows });
+  }
+
   // 1. Structural Model: Path Coefficients (Direct Effects)
   if (config.includeStructural !== false && plsResults?.structural?.path_coefficients) {
     const rows: string[][] = [];
@@ -184,7 +215,7 @@ export function compileReportData(config: ReportConfig): {
           boot.mean != null ? fmt(boot.mean) : '-',
           boot.std_error != null ? fmt(boot.std_error) : '-',
           boot.t_statistic != null ? fmt(boot.t_statistic) : '-',
-          boot.p_value != null ? (Number(boot.p_value) < 0.001 ? '< 0.001' : fmt(boot.p_value)) : '-',
+          boot.p_value != null ? fmtP(boot.p_value) : '-',
           f2 != null ? fmt(f2) : '-',
           vif != null ? fmt(vif) : '-',
         ]);
@@ -216,7 +247,7 @@ export function compileReportData(config: ReportConfig): {
           item.mean != null ? fmt(item.mean) : '-',
           item.std_error != null ? fmt(item.std_error) : '-',
           item.t_statistic != null ? fmt(item.t_statistic) : '-',
-          item.p_value != null ? (Number(item.p_value) < 0.001 ? '< 0.001' : fmt(item.p_value)) : '-',
+          item.p_value != null ? fmtP(item.p_value) : '-',
         ]);
       });
       if (rows.length > 0) {
@@ -586,12 +617,12 @@ export function compileReportData(config: ReportConfig): {
       headers: ['Path', 'Original', 'Sample Mean', 'Std. Error', 't-Statistic', 'p-Value', 'Confidence Interval'],
       rows: bootstrapPaths.map((path: any) => [
         `${getCName(path.from)} -> ${getCName(path.to)}`,
-        fmt(path.original), fmt(path.mean), fmt(path.se ?? path.std_error), fmt(path.t_stat ?? path.t_statistic), fmt(path.p_value),
+        fmt(path.original), fmt(path.mean), fmt(path.se ?? path.std_error), fmt(path.t_stat ?? path.t_statistic), fmtP(path.p_value),
         path.ci_low != null || path.ci_high != null ? `[${fmt(path.ci_low)}, ${fmt(path.ci_high)}]` : '-',
       ]),
     });
   }
-  const bootstrapOuterLoadings = plsResults?.significance?.outer_loadings
+  const bootstrapOuterLoadings = plsResults?.significance?.loadings || plsResults?.significance?.outer_loadings
     || config.analysisResultsMap?.bootstrap?.outer_loadings;
   if (Array.isArray(bootstrapOuterLoadings) && bootstrapOuterLoadings.length) {
     sections.push({
@@ -604,7 +635,7 @@ export function compileReportData(config: ReportConfig): {
         fmt(loading.mean ?? loading.sample_mean),
         fmt(loading.se ?? loading.std_error),
         fmt(loading.t_stat ?? loading.t_statistic),
-        fmt(loading.p_value),
+        fmtP(loading.p_value),
         loading.ci_low != null || loading.ci_high != null ? `[${fmt(loading.ci_low)}, ${fmt(loading.ci_high)}]` : '-',
       ]),
     });
@@ -618,7 +649,7 @@ export function compileReportData(config: ReportConfig): {
       sections.push({
         title: `MGA: ${title}`,
         headers: ['Parameter', mga.groupAName || 'Group A', mga.groupBName || 'Group B', 'Difference', 'p-Value'],
-        rows: rows.map(row => [row.parameter || row.key || '-', fmt(row.originalA), fmt(row.originalB), fmt(row.difference ?? row.originalDifference), fmt(row.parametricP ?? row.pValue)]),
+        rows: rows.map(row => [row.parameter || row.key || '-', fmt(row.originalA), fmt(row.originalB), fmt(row.difference ?? row.originalDifference), fmtP(row.parametricP ?? row.pValue)]),
       });
     };
     addMgaSection('Path coefficients', mga.pathCoefficients);
@@ -629,7 +660,7 @@ export function compileReportData(config: ReportConfig): {
     addMgaSection('Outer weights', mga.outerWeights);
   }
 
-  const filteredSections = config.sectionFilter?.length
+  const filteredSections = config.sectionFilter
     ? sections.filter(section => config.sectionFilter!.includes(section.title))
     : sections;
   return { metadata, sections: filteredSections };

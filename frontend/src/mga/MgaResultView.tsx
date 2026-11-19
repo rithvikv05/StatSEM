@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useStore } from '../store';
-import { formatNumber, normalizeDecimalDigits } from '../utils/number-format';
+import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 import { matchesResultSearch } from '../utils/result-search';
 import type { MgaParamRow, MgaReport } from './types';
 import { TableExportBar, type ExportTablePayload } from './exportUtils';
@@ -601,7 +601,7 @@ export const MgaResultView: React.FC<MgaResultViewProps> = ({ report }) => {
                               title={hasVal ? String(cell.raw) : undefined}
                               style={{ textAlign: 'right' }}
                             >
-                              {hasVal ? fmt(cell.raw) : '—'}
+                              {hasVal ? (cell.isP ? formatPValue(cell.raw, decimalDigits, decimalSystem) : fmt(cell.raw)) : '—'}
                             </td>
                           );
                         })}

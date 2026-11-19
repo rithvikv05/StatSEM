@@ -21,7 +21,7 @@ pub fn tests(beta: [f64; 2], se: [f64; 2], n: [usize; 2]) -> Result<Value, Strin
     let pooled = ((n1 - 1.0).powi(2) / df) * se1.powi(2) + ((n2 - 1.0).powi(2) / df) * se2.powi(2);
     let se_diff = (pooled * (1.0 / n1 + 1.0 / n2)).max(1e-12).sqrt();
     let t = if se_diff > 1e-12 { diff / se_diff } else { 0.0 };
-    let p = 2.0 * (1.0 - inference::student_t_cdf(t.abs(), df));
+    let p = 2.0 * inference::student_t_cdf(-t.abs(), df);
     let parametric = json!({"t_statistic":t,"degrees_of_freedom":df as usize,"p_value":p,"is_significant":p<0.05});
     let variance = ((n1 - 1.0) / n1) * se1.powi(2) + ((n2 - 1.0) / n2) * se2.powi(2);
     let t = diff / variance.max(1e-12).sqrt();
@@ -32,7 +32,7 @@ pub fn tests(beta: [f64; 2], se: [f64; 2], n: [usize; 2]) -> Result<Value, Strin
     } else {
         df
     };
-    let p = 2.0 * (1.0 - inference::student_t_cdf(t.abs(), df));
+    let p = 2.0 * inference::student_t_cdf(-t.abs(), df);
     Ok(
         json!({"parametric":parametric,"welch":{"t_statistic":t,"degrees_of_freedom":df,"p_value":p,"is_significant":p<0.05}}),
     )

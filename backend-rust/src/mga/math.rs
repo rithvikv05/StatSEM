@@ -250,14 +250,14 @@ pub fn student_t_cdf(t: f64, df: f64) -> f64 {
     }
 }
 
-/// twoTailedP_t(t, df) = 2 * (1 - studentTCdf(abs(t), df))
+/// Two-sided p-value evaluated directly in the lower tail for numerical accuracy.
 pub fn two_tailed_p_t(t: f64, df: f64) -> f64 {
-    (2.0 * (1.0 - student_t_cdf(t.abs(), df))).clamp(0.0, 1.0)
+    (2.0 * student_t_cdf(-t.abs(), df)).clamp(0.0, 1.0)
 }
 
 /// One-tailed upper p-value: 1 - studentTCdf(abs(t), df)
 pub fn one_tailed_p_t(t: f64, df: f64) -> f64 {
-    (1.0 - student_t_cdf(t.abs(), df)).clamp(0.0, 1.0)
+    student_t_cdf(-t.abs(), df).clamp(0.0, 1.0)
 }
 
 /// Fisher-Yates in-place shuffle using the seeded RNG.

@@ -26,7 +26,7 @@ fn r(v: f64) -> f64 {
 fn effect_stat(coefficient: f64, stat: &Value, alpha: f64) -> Value {
     let p = stat["p_value"].as_f64().unwrap_or(1.0);
     json!({"coefficient":r(coefficient),"standard_error":r(num(&stat["standard_error"])),"t_statistic":r(num(&stat["t_statistic"])),
-        "p_value":r(p),"ci_lower":r(num(&stat["ci_lower"])),"ci_upper":r(num(&stat["ci_upper"])),"is_significant":p < alpha})
+        "p_value":p,"ci_lower":r(num(&stat["ci_lower"])),"ci_upper":r(num(&stat["ci_upper"])),"is_significant":p < alpha})
 }
 #[derive(Deserialize)]
 #[serde(default)]
@@ -96,7 +96,7 @@ pub fn mediation(
         let classification = classify(p < options.alpha, direct_sig, coefficient, direct);
         let mut entry = json!({"path":path_name,"path_nodes":path["path_nodes"],"original_effect":r(coefficient),
             "bootstrap_mean":r(stat["bootstrap_mean"].as_f64().unwrap_or(coefficient)),"standard_error":r(num(&stat["standard_error"])),
-            "t_statistic":r(num(&stat["t_statistic"])),"p_value":r(p),"ci_lower":r(num(&stat["ci_lower"])),"ci_upper":r(num(&stat["ci_upper"])),
+            "t_statistic":r(num(&stat["t_statistic"])),"p_value":p,"ci_lower":r(num(&stat["ci_lower"])),"ci_upper":r(num(&stat["ci_upper"])),
             "is_significant":p < options.alpha,"classification":classification.0,"interpretation":classification.1});
         if options.include_sobel
             && path["path_nodes"]
@@ -114,8 +114,8 @@ pub fn mediation(
                 .max(1e-12)
                 .sqrt();
                 let z = a_coef * b_coef / denominator;
-                let p = 2.0 * (1.0 - inference::normal_cdf(z.abs()));
-                entry["sobel_test"] = json!({"z_statistic":r(z),"p_value":r(p),"is_significant":p < 0.05,
+                let p = 2.0 * inference::normal_cdf(-z.abs());
+                entry["sobel_test"] = json!({"z_statistic":r(z),"p_value":p,"is_significant":p < 0.05,
                     "warning":"The Sobel test assumes a normal distribution for the indirect product term, which is frequently violated in finite samples. Non-parametric bootstrapping (BCa confidence interval) is strongly recommended as the primary basis for inference."});
             }
         }

@@ -19,7 +19,9 @@ export interface IndirectPath extends InferenceValues {
 
 export interface SimpleSlope extends InferenceValues {
   moderator_level?: string;
+  moderator_value?: number;
   slope?: number | null;
+  line_points?: Array<{ x: number; y: number }>;
 }
 
 export interface ModerationEffect {
@@ -28,6 +30,8 @@ export interface ModerationEffect {
   target: string;
   moderator: string;
   interaction_term?: string;
+  estimates?: { beta_source?: number; beta_moderator?: number; beta_interaction?: number };
+  method?: string;
   simple_slopes?: SimpleSlope[];
 }
 
@@ -36,7 +40,7 @@ export interface ModerationData {
   conditional_indirect_effects?: Array<{
     chain?: string;
     moderator: string;
-    conditional_effects?: Array<{ w_label?: string; indirect_effect?: number | null }>;
+    conditional_effects?: Array<{ w_label?: string; indirect_effect?: number | null; direct_effect?: number | null; total_effect?: number | null }>;
   }>;
 }
 

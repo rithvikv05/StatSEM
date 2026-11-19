@@ -405,6 +405,27 @@ impl Store {
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or("default");
+        // Preserve the previous result with all of its original metadata before
+        // replacing the legacy active-result slot. Older projects continue to
+        // read that slot unchanged.
+        if o.analysis_type == "pls" {
+            let previous = db.query(
+                "SELECT id, results_json FROM results WHERE algorithm=? AND model_key=? AND (analysis_type='pls' OR analysis_type IS NULL) ORDER BY id DESC LIMIT 1",
+                &[json!(o.algorithm), json!(key)],
+            )?;
+            if let Some(row) = previous.first() {
+                let result = decoded(&row[1])?;
+                let kind = if result["is_mga"] == true {
+                    if result["mga_type"] == "permutation" { "_saved_permutation" } else { "_saved_mga" }
+                } else if !result["bootstrap"].is_null() || result["is_bootstrap"] == true {
+                    "_saved_bootstrap"
+                } else {
+                    "_saved_pls"
+                };
+                db.execute("DELETE FROM results WHERE algorithm=? AND model_key=? AND analysis_type=?", &[json!(o.algorithm), json!(key), json!(kind)])?;
+                db.execute("UPDATE results SET analysis_type=? WHERE id=?", &[json!(kind), row[0].clone()])?;
+            }
+        }
         let delete_query = if o.analysis_type == "pls" {
             "DELETE FROM results WHERE algorithm=? AND model_key=? AND (analysis_type=? OR analysis_type IS NULL)"
         } else {
@@ -473,7 +494,7 @@ impl Store {
         let db = self.connect()?;
         let key = key.filter(|s| !s.is_empty()).unwrap_or("default");
         let rows = db.query(
-            "SELECT DISTINCT analysis_type FROM results WHERE algorithm='pls' AND (model_key=? OR (?='default' AND (model_key IS NULL OR model_key=''))) AND analysis_type IS NOT NULL AND analysis_type<>'' AND analysis_type<>'pls' ORDER BY analysis_type",
+            "SELECT COALESCE(NULLIF(analysis_type,''),'pls') AS kind FROM results WHERE algorithm='pls' AND (model_key=? OR (?='default' AND (model_key IS NULL OR model_key=''))) GROUP BY kind ORDER BY MAX(id) DESC",
             &[json!(key), json!(key)],
         )?;
         Ok(rows.into_iter().filter_map(|row| row[0].as_str().map(str::to_owned)).collect())
@@ -1026,6 +1047,60 @@ pub fn scenario(timestamp: String, actions: Vec<Value>) -> Result<Value, String>
 mod tests {
     use super::*;
     #[test]
+    fn snapshot_retains_selected_analysis_and_calculation_model() {
+        let directory = std::env::temp_dir().join(format!("statsem-analysis-snapshot-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let store = Store::new(directory.join("model.pls"));
+        store.create("Test").unwrap();
+        let saved = store.save_snapshot(Snapshot {
+            name: "PCA snapshot".into(),
+            algorithm: "pca".into(),
+            results: json!({"_statsemAnalysisSnapshot":{"id":"pca","data":{"constructs":[{"id":"A"}]}}}),
+            spec: json!({"constructs":[{"id":"A"}]}),
+            diagram_layout: json!({"nodes":[{"id":"A"}]}),
+            ..Default::default()
+        }).unwrap();
+        let snapshot = store.snapshot(saved["id"].as_str().unwrap()).unwrap();
+        assert_eq!(snapshot["algorithm"], "pca");
+        assert_eq!(snapshot["results"]["_statsemAnalysisSnapshot"]["data"]["constructs"][0]["id"], "A");
+        assert_eq!(snapshot["spec"]["constructs"][0]["id"], "A");
+        assert_eq!(snapshot["diagram_layout"]["nodes"][0]["id"], "A");
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn calculation_variants_are_separate_and_listed_newest_first() {
+        let directory = std::env::temp_dir().join(format!("statsem-calculation-list-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let store = Store::new(directory.join("model.pls"));
+        store.create("Test").unwrap();
+        let kinds = ["pls", "_saved_consistent_pls", "_saved_bootstrap", "_saved_consistent_bootstrap", "cta", "ipma", "predict", "pca", "_saved_mga", "_saved_consistent_mga", "_saved_permutation", "_saved_consistent_permutation"];
+        for kind in kinds {
+            store.save_results(Results { analysis_type: kind.into(), results: json!({"kind":kind}), ..Default::default() }).unwrap();
+        }
+        let expected: Vec<String> = kinds.iter().rev().map(|kind| (*kind).into()).collect();
+        assert_eq!(store.list_analysis_types(Some("default")).unwrap(), expected);
+        for kind in kinds {
+            assert_eq!(store.load_results("pls", Some("default"), Some(kind)).unwrap()["results"]["kind"], kind);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn replacing_active_results_preserves_prior_calculation_and_metadata() {
+        let directory = std::env::temp_dir().join(format!("statsem-result-history-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let store = Store::new(directory.join("model.pls"));
+        store.create("Test").unwrap();
+        store.save_results(Results { results: json!({"paths": [1]}), spec: json!({"name":"base"}), ..Default::default() }).unwrap();
+        store.save_results(Results { results: json!({"bootstrap": {"samples": 500}}), ..Default::default() }).unwrap();
+        store.save_results(Results { results: json!({"is_mga": true, "mga_type": "permutation"}), ..Default::default() }).unwrap();
+        let base = store.load_results("pls", Some("default"), Some("_saved_pls")).unwrap();
+        let bootstrap = store.load_results("pls", Some("default"), Some("_saved_bootstrap")).unwrap();
+        assert_eq!(base["results"]["paths"], json!([1]));
+        assert_eq!(base["spec"]["name"], "base");
+        assert_eq!(bootstrap["results"]["bootstrap"]["samples"], 500);
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
     fn renaming_dataset_preserves_values_and_metadata() {
         let directory = std::env::temp_dir().join(format!("statsem-dataset-rename-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&directory).unwrap();
@@ -1058,7 +1133,7 @@ mod tests {
         store.save_results(Results { analysis_type: "predict".into(), results: json!({"kind":"prediction"}), ..Default::default() }).unwrap();
         let base = store.load_results("pls", Some("default"), Some("pls")).unwrap();
         assert_eq!(base["results"]["kind"], "legacy-base");
-        assert_eq!(store.list_analysis_types(Some("default")).unwrap(), vec!["predict"]);
+        assert_eq!(store.list_analysis_types(Some("default")).unwrap(), vec!["predict", "pls"]);
         fs::remove_dir_all(directory).unwrap();
     }
 

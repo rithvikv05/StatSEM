@@ -3,20 +3,24 @@ import { AlertTriangle, Info } from 'lucide-react';
 import { useStore } from '../store';
 import type { PermutationReport } from './types';
 import { fmt3, TableExportBar, type ExportTablePayload } from './exportUtils';
+import { formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 
 interface MicomPanelProps {
   report: PermutationReport;
+  selectedTab?: MicomSubTab;
 }
 
 type MicomSubTab = 'summary' | 'step1' | 'step2' | 'step3a' | 'step3b';
 
-export const MicomPanel: React.FC<MicomPanelProps> = ({ report }) => {
+export const MicomPanel: React.FC<MicomPanelProps> = ({ report, selectedTab }) => {
   const { settings } = useStore();
   const decimalSystem = settings.decimalSystem;
   const f3 = (v: unknown) => fmt3(v, decimalSystem);
+  const fmtP = (v: unknown) => formatPValue(v, normalizeDecimalDigits(settings.decimalDigits), decimalSystem);
   const { micom } = report;
 
-  const [subTab, setSubTab] = useState<MicomSubTab>('summary');
+  const [localTab, setSubTab] = useState<MicomSubTab>('summary');
+  const subTab = selectedTab || localTab;
 
   const alpha = report.significanceLevel || 0.05;
   const loPct = `${((alpha / 2) * 100).toFixed(2)}%`;
@@ -151,7 +155,7 @@ export const MicomPanel: React.FC<MicomPanelProps> = ({ report }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* Sub-tabs bar + Export Bar */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+      {!selectedTab && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
         <div className="view-toggle" role="tablist" aria-label="MICOM steps">
           {tabs.map(t => (
             <button
@@ -168,7 +172,7 @@ export const MicomPanel: React.FC<MicomPanelProps> = ({ report }) => {
         </div>
 
         <TableExportBar payload={activePayload} />
-      </div>
+      </div>}
 
       {/* Warning banner when Step 2 fails for any construct (§6.2) */}
       {micom.failedCompositionalConstructs.length > 0 && (
@@ -308,7 +312,7 @@ export const MicomPanel: React.FC<MicomPanelProps> = ({ report }) => {
                       className={r.singleIndicator ? 'cell-ns' : r.passed ? 'cell-value' : 'cell-sig--p05 cell-value'}
                       style={{ textAlign: 'right' }}
                     >
-                      {r.singleIndicator ? 'N/A' : f3(r.pValue)}
+                      {r.singleIndicator ? 'N/A' : fmtP(r.pValue)}
                     </td>
                     <td style={{ fontFamily: 'var(--font-sans)' }}>
                       {r.singleIndicator ? (
@@ -361,7 +365,7 @@ export const MicomPanel: React.FC<MicomPanelProps> = ({ report }) => {
                     <td style={{ textAlign: 'right' }}>{f3(r.ciLower)}</td>
                     <td style={{ textAlign: 'right' }}>{f3(r.ciUpper)}</td>
                     <td className={r.passed ? 'cell-ns' : 'cell-sig--p05 cell-value'} style={{ textAlign: 'right' }}>
-                      {f3(r.pValue)}
+                      {fmtP(r.pValue)}
                     </td>
                   </tr>
                 ))
@@ -403,7 +407,7 @@ export const MicomPanel: React.FC<MicomPanelProps> = ({ report }) => {
                     <td style={{ textAlign: 'right' }}>{f3(r.ciLower)}</td>
                     <td style={{ textAlign: 'right' }}>{f3(r.ciUpper)}</td>
                     <td className={r.passed ? 'cell-ns' : 'cell-sig--p05 cell-value'} style={{ textAlign: 'right' }}>
-                      {f3(r.pValue)}
+                      {fmtP(r.pValue)}
                     </td>
                   </tr>
                 ))

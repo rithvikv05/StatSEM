@@ -9,6 +9,7 @@ export interface ReportExportModalProps {
   config: Omit<ReportConfig, 'includeDiagram' | 'includeMeasurement' | 'includeStructural' | 'includeCollinearity' | 'includeFit' | 'includeSettings' | 'sectionFilter'>;
   currentResultTab?: string;
   currentTableOnly?: boolean;
+  currentSectionTitle?: string;
   onSuccessToast?: (msg: string) => void;
 }
 
@@ -23,14 +24,19 @@ const titleForTab: Record<string, string[]> = {
   discriminant: ['Discriminant Validity:'], collinearity: ['Inner Model Collinearity', 'Outer Model Collinearity'],
   r_squared: ['Explained Variance'], f_squared: ['f^2 Effect Sizes'],
   model_fit: ['Model Fit Criteria'], run_details: ['Algorithm & Execution Settings'],
+  moderation: ['Moderation:'],
+  discriminant_htmt: ['Discriminant Validity: Heterotrait'], discriminant_fornell: ['Discriminant Validity: Fornell'],
+  collinearity_inner: ['Inner Model Collinearity'], collinearity_outer: ['Outer Model Collinearity'],
+  bootstrap_paths: ['Bootstrapping: Path Coefficients'], bootstrap_loadings: ['Bootstrapping: Outer Loadings'],
 };
 
 export const ReportExportModal: React.FC<ReportExportModalProps> = ({
-  isOpen, onClose, config, currentResultTab, currentTableOnly = false, onSuccessToast,
+  isOpen, onClose, config, currentResultTab, currentTableOnly = false, currentSectionTitle, onSuccessToast,
 }) => {
   const [format, setFormat] = useState<ReportFormat>('pdf');
   const [includeDiagram, setIncludeDiagram] = useState(true);
-  const availableSections = useMemo(() => compileReportData({ ...config, includeMeasurement: true, includeStructural: true, includeCollinearity: true, includeFit: true, includeSettings: true }).sections.map(section => ({ id: section.title, label: section.title })), [config]);
+  const sectionSignature = JSON.stringify(compileReportData({ ...config, includeMeasurement: true, includeStructural: true, includeCollinearity: true, includeFit: true, includeSettings: true }).sections.map(section => ({ id: section.title, label: section.title })));
+  const availableSections = useMemo<Array<{ id: string; label: string }>>(() => JSON.parse(sectionSignature), [sectionSignature]);
   const [selected, setSelected] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -41,14 +47,14 @@ export const ReportExportModal: React.FC<ReportExportModalProps> = ({
     setGenerating(false);
     if (currentTableOnly && currentResultTab) {
       setIncludeDiagram(false);
-      const prefixes = titleForTab[currentResultTab] || [];
+      const prefixes = currentSectionTitle ? [currentSectionTitle] : titleForTab[currentResultTab] || [];
       const matching = availableSections.filter(section => prefixes.some(prefix => section.id.startsWith(prefix))).map(section => section.id);
-      setSelected(matching.length ? matching : availableSections.map(section => section.id));
+      setSelected(matching.length || currentSectionTitle ? matching : availableSections.map(section => section.id));
     } else {
       setIncludeDiagram(true);
       setSelected(availableSections.map(section => section.id));
     }
-  }, [isOpen, currentResultTab, currentTableOnly, availableSections]);
+  }, [isOpen, currentResultTab, currentTableOnly, currentSectionTitle, availableSections]);
 
   if (!isOpen) return null;
 

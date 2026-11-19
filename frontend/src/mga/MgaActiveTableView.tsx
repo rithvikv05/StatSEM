@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { useStore } from '../store';
-import { formatNumber, normalizeDecimalDigits } from '../utils/number-format';
+import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 import type { MgaParamRow, MgaReport, PermutationParamRow, PermutationReport } from './types';
 import { MicomPanel } from './MicomPanel';
+import { RunDetails } from '../components/RunDetails';
 
 interface MgaActiveTableViewProps {
   report: MgaReport | PermutationReport;
@@ -48,6 +49,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
   const decimalSystem = settings.decimalSystem;
   const decimalDigits = normalizeDecimalDigits(settings.decimalDigits);
   const fmt = (v: unknown) => formatNumber(v, decimalDigits, decimalSystem);
+  const fmtP = (v: unknown) => formatPValue(v, decimalDigits, decimalSystem);
 
   // Parse category and subView from activeTab (e.g. "path_coefficients__parametric")
   const [category, subViewRaw] = activeTab.includes('__')
@@ -122,7 +124,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
     </div>
   );
 
-  if (viewMode === 'matrix' && relationRows.length > 0) {
+  if (viewMode === 'matrix' && relationRows.length > 0 && category !== 'run_details' && category !== 'micom') {
     const sources = [...new Set(relationRows.map(row => row.source))];
     const targets = [...new Set(relationRows.map(row => row.target))];
     const values = new Map(relationRows.map(row => [`${row.source}\u0000${row.target}`, row.value]));
@@ -139,59 +141,12 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
 
   // MICOM view for permutation report
   if (category === 'micom' && isPermutation) {
-    return <MicomPanel report={report as PermutationReport} />;
+    return <MicomPanel report={report as PermutationReport} selectedTab={(['summary', 'step1', 'step2', 'step3a', 'step3b'].includes(subViewRaw) ? subViewRaw : 'summary') as 'summary' | 'step1' | 'step2' | 'step3a' | 'step3b'} />;
   }
 
   // Run details / settings view
   if (category === 'run_details') {
-    const isMga = !isPermutation;
-    const mReport = report as MgaReport;
-    const pReport = report as PermutationReport;
-    const settingRows: Array<[string, any]> = [
-      ['Group A name', report.groupAName],
-      ['Group A sample size (nA)', report.nA],
-      ['Group B name', report.groupBName],
-      ['Group B sample size (nB)', report.nB],
-      ...(isMga ? [
-        ['Subsamples requested', mReport.subsamplesRequested] as [string, any],
-        ['Subsamples completed (A)', mReport.subsamplesCompletedA] as [string, any],
-        ['Subsamples completed (B)', mReport.subsamplesCompletedB] as [string, any],
-      ] : [
-        ['Permutations requested', pReport.permutationsRequested] as [string, any],
-        ['Permutations completed', pReport.permutationsCompleted] as [string, any],
-        ['Failed runs', pReport.failedRuns] as [string, any],
-      ]),
-      ['Random seed', report.seed],
-      ['Hypothesis test type', report.testType],
-      ['Significance level (alpha)', report.significanceLevel],
-      ['Parallel processing', report.parallelProcessing === false ? 'Disabled' : 'Enabled'],
-      ['PLS weighting scheme', report.plsSettings?.weightingScheme || 'path'],
-      ['PLS max iterations', report.plsSettings?.maxIterations ?? 5000],
-      ['PLS stop criterion', `1e-${report.plsSettings?.stopCriterionExponent ?? 7}`],
-      ['Missing values treatment', report.plsSettings?.missingValues || 'mean'],
-      ['Consistent PLS-SEM', report.plsSettings?.consistent ? 'Yes' : 'No'],
-    ];
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-        <table className="scientific-table">
-          <thead>
-            <tr>
-              <th style={{ width: '280px' }}>Setting / Metric</th>
-              <th>Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            {settingRows.map(([k, v], idx) => (
-              <tr key={idx}>
-                <td style={{ fontWeight: 500 }}>{k}</td>
-                <td>{String(v)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
+    return <RunDetails report={report} />;
   }
 
   // Permutation Parameter Table
@@ -228,7 +183,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
                   <td>{fmt(r.ciLower)}</td>
                   <td>{fmt(r.ciUpper)}</td>
                   <td className={sig ? 'cell-sig sig-highlight' : ''} style={sig ? { color: 'var(--color-accent)', fontWeight: 600 } : undefined}>
-                    {fmt(r.pValue)}
+                    {fmtP(r.pValue)}
                     {sig && <span style={{ marginLeft: '4px', fontSize: '10px' }}>*</span>}
                   </td>
                 </tr>
@@ -267,10 +222,10 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
                   <td style={{ fontWeight: 500 }}>{r.parameter}</td>
                   <td style={{ fontWeight: 600 }}>{fmt(r.difference)}</td>
                   <td className={sig1 ? 'cell-sig sig-highlight' : ''} style={sig1 ? { color: 'var(--color-accent)', fontWeight: 600 } : undefined}>
-                    {fmt(p1)}
+                    {fmtP(p1)}
                   </td>
                   <td className={sig2 ? 'cell-sig sig-highlight' : ''} style={sig2 ? { color: 'var(--color-accent)', fontWeight: 600 } : undefined}>
-                    {fmt(p2)}
+                    {fmtP(p2)}
                     {sig2 && <span style={{ marginLeft: '4px', fontSize: '10px' }}>*</span>}
                   </td>
                 </tr>
@@ -296,7 +251,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
                   <td style={{ fontWeight: 600 }}>{fmt(r.difference)}</td>
                   <td>{fmt(Math.abs(r.parametricT))}</td>
                   <td className={sig ? 'cell-sig sig-highlight' : ''} style={sig ? { color: 'var(--color-accent)', fontWeight: 600 } : undefined}>
-                    {fmt(r.parametricP)}
+                    {fmtP(r.parametricP)}
                     {sig && <span style={{ marginLeft: '4px', fontSize: '10px' }}>*</span>}
                   </td>
                 </tr>
@@ -322,7 +277,7 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
                   <td style={{ fontWeight: 600 }}>{fmt(r.difference)}</td>
                   <td>{fmt(Math.abs(r.welchT))}</td>
                   <td className={sig ? 'cell-sig sig-highlight' : ''} style={sig ? { color: 'var(--color-accent)', fontWeight: 600 } : undefined}>
-                    {fmt(r.welchP)}
+                    {fmtP(r.welchP)}
                     {sig && <span style={{ marginLeft: '4px', fontSize: '10px' }}>*</span>}
                   </td>
                 </tr>
@@ -386,10 +341,10 @@ export const MgaActiveTableView: React.FC<MgaActiveTableViewProps> = ({ report, 
                   <td>{fmt(ta)}</td>
                   <td>{fmt(tb)}</td>
                   <td className={sigA ? 'cell-sig' : ''} style={sigA ? { color: 'var(--color-accent)', fontWeight: 600 } : undefined}>
-                    {fmt(r.pValueA)}
+                    {fmtP(r.pValueA)}
                   </td>
                   <td className={sigB ? 'cell-sig' : ''} style={sigB ? { color: 'var(--color-accent)', fontWeight: 600 } : undefined}>
-                    {fmt(r.pValueB)}
+                    {fmtP(r.pValueB)}
                   </td>
                 </tr>
               );

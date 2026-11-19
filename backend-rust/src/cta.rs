@@ -270,7 +270,7 @@ pub fn run(
         for ((def, draw), original) in defs.iter().zip(draws).zip(original) {
             let sd = stats::std(&draw, None, 1);
             let statistic = if sd > 1e-12 { original / sd } else { 0.0 };
-            let pvalue = if o.tails == "two" { 2.0 * (1.0 - inference::normal_cdf(statistic.abs())) } else if o.direction == "positive" { 1.0 - inference::normal_cdf(statistic) } else { inference::normal_cdf(statistic) };
+            let pvalue = if o.tails == "two" { 2.0 * inference::normal_cdf(-statistic.abs()) } else if o.direction == "positive" { inference::normal_cdf(-statistic) } else { inference::normal_cdf(statistic) };
             let below = (draw.iter().filter(|&&v| v < original).count() as f64 / draw.len() as f64)
                 .clamp(1e-5, 1.0 - 1e-5);
             let z0 = inference::normal_ppf(below);

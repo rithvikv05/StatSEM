@@ -150,7 +150,7 @@ export interface StudySnapshot {
 
 export interface AppTab {
   id: string;
-  type: 'get-started' | 'workspace' | 'model' | 'archive' | 'dataset' | 'docs' | 'samples' | 'feedback' | 'changelog' | 'snapshot' | 'mga-report';
+  type: 'get-started' | 'workspace' | 'model' | 'archive' | 'dataset' | 'docs' | 'samples' | 'feedback' | 'changelog' | 'snapshot' | 'mga-report' | 'power-planner';
   title: string;
   workspaceId?: string | null;
   studyId?: string | null;

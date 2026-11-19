@@ -112,6 +112,24 @@ export interface LoadModelResponse {
 }
 
 export const api = {
+  planPower: async (body: Record<string, unknown>) => {
+    const response = await fetch(`${API_BASE}/power/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok || result.error) throw new Error(result.error || 'Could not calculate sample size');
+    return result;
+  },
+  listDatasetStatistics: async (projectPath: string, datasetId: string) => {
+    const response = await fetch(`${API_BASE}/project/dataset-statistics?path=${encodeURIComponent(projectPath)}&dataset_id=${encodeURIComponent(datasetId)}`);
+    const result = await response.json();
+    if (!response.ok || result.error) throw new Error(result.error || 'Could not load saved statistics');
+    return result.results as Array<{ id: string; data: any; created_at: string }>;
+  },
+  datasetStatistics: async (body: Record<string, unknown>) => {
+    const response = await fetch(`${API_BASE}/dataset/statistics`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok || result.error) throw new Error(result.error || 'Could not calculate statistics');
+    return result;
+  },
   async openExternalUrl(url: string): Promise<void> {
     if ('__TAURI_INTERNALS__' in window) {
       try {

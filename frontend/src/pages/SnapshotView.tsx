@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { formatNumber, formatPValue, normalizeDecimalDigits } from '../utils/number-format';
 import { makeResultIndicatorNames } from '../utils/result-indicator-names';
 import { getCanvasFitTransform } from '../utils/fit-canvas';
+import { toggleIndicatorVisibility } from '../utils/indicator-visibility';
 import AppSidebar from '../components/AppSidebar';
 import {
   History,
@@ -178,6 +179,7 @@ export const SnapshotView: React.FC = () => {
   const [selectedEffect, setSelectedEffect] = useState<{ kind: 'gc' | 'qe'; index: number } | null>(null);
   const [draggingEffect, setDraggingEffect] = useState<{ kind: 'gc' | 'qe'; index: number; x: number; y: number } | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [resizingNode, setResizingNode] = useState<{ id: string; radius: number; x: number; y: number } | null>(null);
   const dragStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const initialNodesPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
@@ -555,8 +557,10 @@ export const SnapshotView: React.FC = () => {
   };
 
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
+    setSelectedIds(new Set([nodeId]));
     setDraggingNodeId(nodeId);
     setSelectedEffect(null);
     dragStartPosRef.current = { x: e.clientX, y: e.clientY };
@@ -571,12 +575,20 @@ export const SnapshotView: React.FC = () => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    setSelectedIds(new Set());
     setSelectedEffect({ kind, index });
     setDraggingEffect({ kind, index, x, y });
     dragStartPosRef.current = { x: e.clientX, y: e.clientY };
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (resizingNode) {
+      const dx = (e.clientX - resizingNode.x) / zoomLevel;
+      const dy = (e.clientY - resizingNode.y) / zoomLevel;
+      const radius = Math.max(20, resizingNode.radius + Math.max(dx, dy) / 2);
+      setLayoutNodes(prev => prev.map(node => node.id === resizingNode.id ? { ...node, r: radius, width: radius * 2, height: radius * 2 } : node));
+      return;
+    }
     if (draggingEffect) {
       let x = draggingEffect.x + (e.clientX - dragStartPosRef.current.x) / zoomLevel;
       let y = draggingEffect.y + (e.clientY - dragStartPosRef.current.y) / zoomLevel;
@@ -628,6 +640,7 @@ export const SnapshotView: React.FC = () => {
 
   const handleCanvasMouseUp = () => {
     setDraggingNodeId(null);
+    setResizingNode(null);
     setDraggingEffect(null);
     setIsPanning(false);
   };
@@ -2193,6 +2206,8 @@ export const SnapshotView: React.FC = () => {
             }}
             onMouseDown={(e) => {
               if ((e.button === 0 || e.button === 1 || isSpacePressed) && !draggingNodeId) {
+                setSelectedIds(new Set());
+                setSelectedEffect(null);
                 setIsPanning(true);
                 panStartRef.current = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y };
               }
@@ -3272,6 +3287,14 @@ export const SnapshotView: React.FC = () => {
                                 setHoveredLatent(null);
                                 setContextMenuPos(prev => prev ? null : { x: e.clientX, y: e.clientY, targetNodeId: node.id });
                               }}
+                              style={{ cursor: 'move', pointerEvents: 'all' }}
+                            >
+                              <title>{node.label} ({node.type === 'formative' ? 'Formative' : 'Reflective'} Construct{r2 !== undefined ? `, R² = ${fmt(r2)}` : ''})</title>
+                              <circle
+                                r={node.r || 36}
+                                fill={node.fill || "var(--canvas-latent-fill, #334155)"}
+                                stroke={node.stroke || "var(--canvas-latent-stroke, #1e293b)"}
+                                strokeWidth="2"
                               onPointerEnter={() => {
                                 const r2Val = results?.structural?.r_squared?.[node.label] ?? results?.structural?.r_squared?.[node.id] ?? results?.r_squared?.[node.label];
                                 const r2AdjVal = results?.structural?.r_squared_adj?.[node.label] ?? results?.structural?.r_squared_adj?.[node.id] ?? results?.r_squared_adj?.[node.label];
@@ -3295,14 +3318,6 @@ export const SnapshotView: React.FC = () => {
                                 });
                               }}
                               onPointerLeave={() => setHoveredLatent(null)}
-                              style={{ cursor: 'move', pointerEvents: 'all' }}
-                            >
-                              <title>{node.label} ({node.type === 'formative' ? 'Formative' : 'Reflective'} Construct{r2 !== undefined ? `, R² = ${fmt(r2)}` : ''})</title>
-                              <circle
-                                r={node.r || 36}
-                                fill={node.fill || "var(--canvas-latent-fill, #334155)"}
-                                stroke={node.stroke || "var(--canvas-latent-stroke, #1e293b)"}
-                                strokeWidth="2"
                               />
                               {node.textInside === true ? (
                                 <>
@@ -3313,6 +3328,7 @@ export const SnapshotView: React.FC = () => {
                                     fontSize={r2 !== undefined ? "12" : "13"}
                                     fontWeight="600"
                                     fill={node.textColor || "var(--canvas-latent-text, #ffffff)"}
+                                    pointerEvents="none"
                                     style={{ userSelect: 'none' }}
                                   >
                                     {node.label}
@@ -3324,6 +3340,7 @@ export const SnapshotView: React.FC = () => {
                                       fontSize="11"
                                       fontWeight="500"
                                       fill="#ffffff"
+                                      pointerEvents="none"
                                       style={{ userSelect: 'none' }}
                                     >
                                       R² = {fmt(r2)}
@@ -3378,6 +3395,7 @@ export const SnapshotView: React.FC = () => {
                                       fontSize="11"
                                       fontWeight="600"
                                       fill="#ffffff"
+                                      pointerEvents="none"
                                       style={{ userSelect: 'none' }}
                                     >
                                       R² = {fmt(r2)}
@@ -3386,57 +3404,38 @@ export const SnapshotView: React.FC = () => {
                                 </>
                               )}
 
-                              {/* If indicators are hidden, render a clean purple eye icon beside the label */}
-                              {node.indicatorsHidden && (() => {
-                                const childInds = displayNodes.filter((n: any) => n.parentId === node.id && !n.isLatent);
-                                if (childInds.length === 0) return null;
-                                const labelLen = (node.label || '').length * 8;
-                                const r = node.r || 36;
-                                const textPos = node.textPosition || 'bottom';
-                                let eyeX = (labelLen / 2) + 12;
-                                let eyeY = r + 18;
-
-                                if (node.textInside) {
-                                  eyeX = (labelLen / 2) + 12;
-                                  eyeY = r2 !== undefined ? -4 : 4;
-                                } else {
-                                  if (textPos === 'top') {
-                                    eyeX = (labelLen / 2) + 12;
-                                    eyeY = -r - 10;
-                                  } else if (textPos === 'left') {
-                                    eyeX = -r - 10 + 12;
-                                    eyeY = 4;
-                                  } else if (textPos === 'right') {
-                                    eyeX = r + 10 + labelLen + 12;
-                                    eyeY = 4;
-                                  } else {
-                                    eyeX = (labelLen / 2) + 12;
-                                    eyeY = r + 18;
-                                  }
-                                }
-                                return (
-                                  <g
-                                    className="canvas-hidden-indicators-icon-btn"
-                                    transform={`translate(${eyeX}, ${eyeY - 9})`}
-                                    style={{ cursor: 'pointer', pointerEvents: 'all' }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setLayoutNodes(prev => prev.map(n => n.id === node.id ? { ...n, indicatorsHidden: false } : n));
-                                      setToastMsg('Indicators visible');
-                                      setTimeout(() => setToastMsg(null), 2000);
-                                    }}
-                                  >
-                                    <title>{childInds.length} indicators hidden. Click to show.</title>
-                                    <rect x="-4" y="-3" width="24" height="20" fill="transparent" />
-                                    <g transform="scale(0.7) translate(-2, 0)">
-                                      <path
-                                        d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
-                                        fill="var(--color-accent, #6B4EE6)"
-                                        fillRule="evenodd"
-                                      />
+                              {selectedIds.has(node.id) && (() => {
+                                const radius = node.r || 36;
+                                const gap = 8;
+                                const hasIndicators = displayNodes.some((child: any) => child.parentId === node.id && !child.isLatent);
+                                const hidden = !!node.indicatorsHidden;
+                                const toggle = () => {
+                                  if (!hasIndicators) return;
+                                  setLayoutNodes(prev => {
+                                    const next = prev.map(item => item.id === node.id ? { ...item } : item);
+                                    return toggleIndicatorVisibility(next, node.id) ? next : prev;
+                                  });
+                                };
+                                return <g data-export-ui="true">
+                                  <rect x={-radius-gap} y={-radius-gap} width={(radius+gap)*2} height={(radius+gap)*2} rx={12} fill="none" stroke="var(--color-accent, #6B4EE6)" strokeWidth={1.5} strokeDasharray="6 6" pointerEvents="none" />
+                                  <g transform={`translate(${radius+gap+5}, ${radius+gap+5})`} style={{ cursor: 'se-resize' }} onMouseDown={event => {
+                                    if (event.button !== 0) return;
+                                    event.preventDefault(); event.stopPropagation();
+                                    setResizingNode({ id: node.id, radius, x: event.clientX, y: event.clientY });
+                                  }}>
+                                    <rect x={-12} y={-12} width={20} height={20} fill="transparent" />
+                                    <path d="M -8 0 L 0 0 L 0 -8" fill="none" stroke="var(--color-accent, #6B4EE6)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
+                                  </g>
+                                  <g className="canvas-indicator-toggle" transform={`translate(${radius+gap}, ${-radius-gap})`} role="button" tabIndex={hasIndicators ? 0 : -1} aria-disabled={!hasIndicators} aria-label={hidden ? 'Show indicators' : 'Hide indicators'} opacity={hasIndicators ? 1 : 0.45} style={{ cursor: hasIndicators ? 'pointer' : 'default' }} onMouseDown={event => event.stopPropagation()} onClick={event => { event.preventDefault(); event.stopPropagation(); toggle(); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); toggle(); } }}>
+                                    <title>{hasIndicators ? (hidden ? 'Show indicators' : 'Hide indicators') : 'No indicators'}</title>
+                                    <circle r={10} fill="var(--color-bg-surface, #fff)" stroke="var(--color-accent, #6B4EE6)" />
+                                    <g transform="translate(-7, -7) scale(0.5833)" fill="none" stroke="var(--color-accent, #6B4EE6)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" />
+                                      <circle cx={12} cy={12} r={3} />
+                                      {hidden && <path d="M4 4l16 16" />}
                                     </g>
                                   </g>
-                                );
+                                </g>;
                               })()}
                             </g>
                           );

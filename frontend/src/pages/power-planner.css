@@ -1,0 +1,21 @@
+.power-planner { padding: 24px 0 36px; color: var(--color-text-primary); overflow: auto; }
+.power-planner__intro { max-width: 680px; margin-bottom: 24px; }
+.power-planner__intro h2 { font-size: 16px; font-weight: 600; color: var(--color-accent); margin: 0 0 8px; }
+.power-planner__intro p, .power-planner__panel p, .power-planner__note { font-size: 12px; line-height: 1.6; color: var(--color-text-muted); }
+.power-planner__layout { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(240px, 1fr); gap: 16px; align-items: start; }
+.power-planner__panel { padding: 20px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); background: var(--color-bg-surface); }
+.power-planner__panel h3 { font-size: 13px; font-weight: 600; margin: 0 0 18px; }
+.power-planner__field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; font-size: 12px; }
+.power-planner__field input, .power-planner__field select { width: 100%; box-sizing: border-box; min-height: 34px; padding: 0 10px; font: inherit; color: var(--color-text-primary); background: var(--color-bg-surface); border: 1px solid var(--color-border-default); border-radius: var(--radius-md); }
+.power-planner__field small { color: var(--color-text-muted); font-size: 11px; line-height: 1.4; }
+.power-planner__row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.power-planner__calculate { min-height: 32px; }
+.power-planner__result { font-size: 30px; color: var(--color-accent); font-weight: 650; margin: 0 0 16px; }
+.power-planner__result span { font-size: 12px; color: var(--color-text-muted); font-weight: 400; }
+.power-planner__panel .scientific-table { width: 100%; }
+.power-planner__chart { margin-top: 24px; }
+.power-planner__chart h3 { margin-bottom: 8px; }
+.power-planner__chart svg { width: 100%; max-width: 400px; height: auto; }
+.power-planner__note { max-width: 850px; margin-top: 20px; }
+.power-planner__error { color: var(--color-danger, #cf3f3f) !important; }
+@media (max-width: 800px) { .power-planner__layout { grid-template-columns: 1fr; } }

@@ -10,6 +10,7 @@ import './dataset-view.css';
 import { DataGroupsTab } from '../mga/DataGroupsTab';
 import type { DataGroup } from '../mga/types';
 import { getGroupRows } from '../mga/groupUtils';
+import { DatasetStatistics } from '../components/DatasetStatistics';
 
 export const DatasetView: React.FC = () => {
   const {
@@ -47,7 +48,7 @@ export const DatasetView: React.FC = () => {
   }, [studyDatasets, activeTab?.datasetId]);
 
   const [dataset, setDataset] = useState<ParsedDataset | null>(activeDataset);
-  const [currentView, setCurrentView] = useState<'variables' | 'data' | 'groups'>('variables');
+  const [currentView, setCurrentView] = useState<'variables' | 'data' | 'groups' | 'statistics'>('variables');
   const [searchFilter, setSearchFilter] = useState('');
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -286,6 +287,7 @@ export const DatasetView: React.FC = () => {
               <button type="button" className={`subheader__switcher-btn ${currentView === 'groups' ? 'active' : ''}`} aria-pressed={currentView === 'groups'} onClick={() => setCurrentView('groups')}>
                 Data Groups <span style={{ opacity: 0.55, fontWeight: 400 }}>({dataset.dataGroups?.length ?? 0})</span>
               </button>
+              <button type="button" className={`subheader__switcher-btn ${currentView === 'statistics' ? 'active' : ''}`} aria-pressed={currentView === 'statistics'} onClick={() => setCurrentView('statistics')}>Statistics</button>
             </div>
           </div>
         </header>
@@ -405,7 +407,7 @@ export const DatasetView: React.FC = () => {
                 </tbody>
               </table>
             </div>
-          ) : (
+          ) : currentView === 'groups' ? (
             <DataGroupsTab
               dataset={dataset}
               studyId={currentStudyId}
@@ -433,7 +435,8 @@ export const DatasetView: React.FC = () => {
                 }
               }}
             />
-          )}
+          ) : null}
+          <div hidden={currentView !== 'statistics'} className="dataset-statistics-container"><DatasetStatistics key={dataset.id || dataset.filename} dataset={dataset} projectPath={activeStudy?.path} /></div>
         </div>
 
             <div className="dataset-status">

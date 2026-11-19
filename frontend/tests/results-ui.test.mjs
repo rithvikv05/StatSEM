@@ -11,16 +11,29 @@ before(async () => {
   globalThis.window = { fetch: globalThis.fetch, localStorage: globalThis.localStorage, atob: globalThis.atob, btoa: globalThis.btoa };
   server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
   components = Object.assign({}, ...await Promise.all([
-    'ResultsNavigation', 'CalculationMenu', 'ModelFitResults', 'SpecificIndirectResults', 'RunDetails', 'ModerationDetails', 'AdvancedResultPanels', 'InlineAnalysisResults', 'StandaloneAnalysisResults', 'BootstrapInference', 'CollinearityResults',
+    'ResultsNavigation', 'CalculationMenu', 'ModelFitResults', 'SpecificIndirectResults', 'RunDetails', 'ModerationDetails', 'AdvancedResultPanels', 'InlineAnalysisResults', 'StandaloneAnalysisResults', 'BootstrapInference', 'CollinearityResults', 'DatasetStatistics',
   ].map(name => server.ssrLoadModule(`/src/components/${name}.tsx`))));
   Object.assign(components, await server.ssrLoadModule('/src/utils/result-search.ts'));
   Object.assign(components, await server.ssrLoadModule('/src/utils/window-drag.ts'));
   Object.assign(components, await server.ssrLoadModule('/src/utils/diagram-export.ts'));
+  Object.assign(components, await server.ssrLoadModule('/src/utils/indicator-visibility.ts'));
   Object.assign(components, await server.ssrLoadModule('/src/utils/reportGenerator.ts'));
 });
 after(async () => { await server?.close(); });
 
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
+
+test('indicator visibility toggles without deleting items or leaving hidden indicators selected', () => {
+  const nodes = [{ id: 'latent', isLatent: true }, { id: 'i1', parentId: 'latent', isLatent: false }, { id: 'i2', parentId: 'latent', isLatent: false }, { id: 'other', isLatent: true }];
+  const selected = new Set(['latent', 'i1', 'edge_ind_i1', 'other']);
+  assert.equal(components.toggleIndicatorVisibility(nodes, 'latent', selected), true);
+  assert.equal(nodes[0].indicatorsHidden, true);
+  assert.deepEqual([...selected], ['latent', 'other']);
+  assert.equal(nodes.length, 4);
+  assert.equal(components.toggleIndicatorVisibility(nodes, 'latent', selected), true);
+  assert.equal(nodes[0].indicatorsHidden, false);
+  assert.equal(components.toggleIndicatorVisibility(nodes, 'other', selected), false);
+});
 
 test('diagram export resolves theme styles, removes canvas backgrounds and hides indicators', () => {
   class FakeElement {
@@ -36,7 +49,7 @@ test('diagram export resolves theme styles, removes canvas backgrounds and hides
     insertBefore(child, before) { child.parent = this; const i = this.children.indexOf(before); this.children.splice(i < 0 ? this.children.length : i, 0, child); }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
     matches(selector) {
-      return selector.split(',').some(part => { const p = part.trim(); return p === '*' || (p.startsWith('#') && this.attrs.id === p.slice(1)) || (p === '[data-export-indicator="true"]' && this.attrs['data-export-indicator'] === 'true'); });
+      return selector.split(',').some(part => { const p = part.trim(); return p === '*' || (p.startsWith('#') && this.attrs.id === p.slice(1)) || (p === '[data-export-ui]' && 'data-export-ui' in this.attrs) || (p === '[data-export-indicator="true"]' && this.attrs['data-export-indicator'] === 'true'); });
     }
     closest(selector) { for (let node = this; node; node = node.parent) if (node.matches(selector) || (selector === 'marker' && node.tagName === 'marker')) return node; return null; }
     querySelectorAll(selector) { return this.children.flatMap(child => [...(child.matches(selector) ? [child] : []), ...child.querySelectorAll(selector)]); }
@@ -49,6 +62,7 @@ test('diagram export resolves theme styles, removes canvas backgrounds and hides
       new FakeElement('g', { id: 'edges-layer' }, {}, [new FakeElement('path', { id: 'edge' }, { stroke: 'rgb(255, 255, 255)', fill: 'none' })]),
       new FakeElement('g', { id: 'node' }, { fill: 'rgb(20, 30, 40)' }, [new FakeElement('circle', { id: 'shape' }, { fill: 'rgb(20, 30, 40)', stroke: 'rgb(90, 20, 30)' })]),
       new FakeElement('g', { id: 'indicator', 'data-export-indicator': 'true' }),
+      new FakeElement('g', { id: 'visibility-control', 'data-export-ui': 'true' }),
     ]),
   ]);
   const originalDocument = globalThis.document;
@@ -60,6 +74,7 @@ test('diagram export resolves theme styles, removes canvas backgrounds and hides
     assert.equal(result.querySelector('#bg-color-rect'), null);
     assert.equal(result.querySelector('#bg-rect'), null);
     assert.equal(result.querySelector('#indicator'), null);
+    assert.equal(result.querySelector('#visibility-control'), null);
     assert.equal(result.querySelector('#node').style.values.fill, 'rgb(20, 30, 40)');
     assert.equal(result.querySelector('#edge').style.values.stroke, '#1f2937');
     assert.ok(result.children.some(child => child.tagName === 'rect' && child.attrs.fill === '#ffffff'));
@@ -186,6 +201,14 @@ test('model check and moderation tables have separate navigation and data', () =
   assert.doesNotMatch(direct, /Conditional indirect effects/);
   assert.match(indirect, /Conditional indirect effects/);
   assert.doesNotMatch(indirect, /Conditional direct effects/);
+});
+
+test('dataset statistics provides normality and group tests without adding a separate page', () => {
+  const dataset = { filename: 'Example', variables: [{ name: 'score', type: 'numeric' }, { name: 'group', type: 'numeric' }], rows: [[1, 1], [2, 2]] };
+  const html = render(components.DatasetStatistics, { dataset });
+  assert.match(html, /Distribution/);
+  assert.match(html, /Group tests/);
+  assert.match(html, /score/);
 });
 
 test('selected analysis does not append unrelated model analyses', () => {

@@ -4310,13 +4310,12 @@ const ModelEditor = () => {
         {/* Secondary Header inline with filter search */}
         <div className="results-secondary-header">
           <button
-            className="results-tool-btn results-snapshot-copy"
+            className="results-tool-btn results-tool-btn--accent results-snapshot-copy"
             type="button"
             onClick={handleOpenSnapshotModal}
             title="Save results and model diagram as a snapshot in this study"
             style={{ marginLeft: 'auto' }}
           >
-            <History size={13} />
             <span>Save Snapshot</span>
           </button>
 
@@ -4407,7 +4406,7 @@ const ModelEditor = () => {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
               <button
-                className="results-tool-btn results-snapshot-copy"
+                className="results-tool-btn results-snapshot-copy results-table-action"
                 type="button"
                 onClick={handleCopyCurrentTable}
                 title="Copy all tables on this page to clipboard"
@@ -4427,7 +4426,7 @@ const ModelEditor = () => {
                   aria-haspopup="menu"
                   onClick={() => setIsExportMenuOpen(prev => !prev)}
                   title="Export the current results table"
-                  className="results-tool-btn results-aligned-action"
+                  className="results-tool-btn results-aligned-action results-table-action"
                 >
                   <Download size={13} />
                   <span>Export</span>

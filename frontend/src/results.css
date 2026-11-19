@@ -214,6 +214,10 @@
   color: var(--color-text-primary);
   border-color: var(--color-border-strong, var(--color-border-default));
 }
+.results-table-action:hover {
+  color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
 
 .results-export-select {
   min-width: 90px;

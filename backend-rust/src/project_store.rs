@@ -499,6 +499,17 @@ impl Store {
         )?;
         Ok(rows.into_iter().filter_map(|row| row[0].as_str().map(str::to_owned)).collect())
     }
+
+    pub fn list_dataset_statistics(&self, dataset_id: &str) -> Result<Value, String> {
+        if !self.path.exists() { return Ok(json!([])); }
+        let db = self.connect()?;
+        let rows = db.query("SELECT analysis_type,results_json,created_at FROM results WHERE algorithm='dataset_statistics' AND dataset_id=? ORDER BY id DESC", &[json!(dataset_id)])?;
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            items.push(json!({"id":row[0],"data":decoded(&row[1])?,"created_at":row[2]}));
+        }
+        Ok(json!(items))
+    }
     pub fn save_snapshot(&self, o: Snapshot) -> Result<Value, String> {
         let db = self.connect()?;
         let tx = db.transaction()?;
@@ -1046,6 +1057,21 @@ pub fn scenario(timestamp: String, actions: Vec<Value>) -> Result<Value, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dataset_statistics_are_isolated_and_recoverable() {
+        let directory = std::env::temp_dir().join(format!("statsem-dataset-results-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let store = Store::new(directory.join("study.pls")); store.create("Test").unwrap();
+        for (id, dataset) in [("first", "a"), ("second", "a"), ("other", "b")] {
+            store.save_results(Results { algorithm: "dataset_statistics".into(), analysis_type: id.into(), dataset_id: Some(dataset.into()), model_id: Some(format!("dataset:{dataset}")), results: json!({"result":id}), ..Default::default() }).unwrap();
+        }
+        let runs=store.list_dataset_statistics("a").unwrap();
+        assert_eq!(runs.as_array().unwrap().len(), 2);
+        assert_eq!(runs[0]["data"]["result"], "second");
+        assert_eq!(runs[1]["data"]["result"], "first");
+        assert!(store.list_analysis_types(Some("dataset:a")).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
     #[test]
     fn snapshot_retains_selected_analysis_and_calculation_model() {
         let directory = std::env::temp_dir().join(format!("statsem-analysis-snapshot-{}", uuid::Uuid::new_v4()));

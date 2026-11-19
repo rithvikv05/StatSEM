@@ -398,6 +398,10 @@ fn route(
             let item: Results = serde_json::from_value(body.clone()).map_err(|e| e.to_string())?;
             store.save_results(item)
         }
+        ("GET", "/project/dataset-statistics") => {
+            let id = query.get("dataset_id").ok_or("dataset_id required")?;
+            Ok(json!({"results":project(&body,query)?.list_dataset_statistics(id)?}))
+        }
         ("GET", "/project/analysis-list") => Ok(json!({"analyses":project(&body,query)?.list_analysis_types(query.get("model_id").map(String::as_str))?})),
         ("POST", "/project/save-snapshot") => {
             let store = project(&body, query)?;
@@ -472,6 +476,8 @@ fn route(
             )
         }
         ("POST", "/power/calculate") => power_route(&body),
+        ("POST", "/power/plan") => power::plan(&body),
+        ("POST", "/dataset/statistics") => crate::dataset_statistics::calculate(&body),
         ("POST", "/system/open-url") => {
             let url = text(&body, query, "url").ok_or("url parameter required")?;
             #[cfg(target_os = "macos")]
@@ -1090,6 +1096,17 @@ fn analysis(path: &str, body: &Value, query: &HashMap<String, String>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn study_planner_and_distribution_routes_return_results() {
+        let query=HashMap::new();
+        let plan=route("POST","/power/plan",&query,json!({"test":"independent_t","effect_size":0.5,"alpha":0.05,"power":0.8})).unwrap();
+        assert_eq!(plan["sample_size"],128);
+        assert!(plan["curve"].as_array().is_some_and(|v|v.len()>1));
+        let distribution=route("POST","/dataset/statistics",&query,json!({"test":"normality","values":[1,2,3,4,5,6,7,20]})).unwrap();
+        assert!(distribution["shapiro_wilk"]["p_value"].is_number());
+        assert!(distribution["lilliefors"]["p_value"].is_number());
+    }
 
     #[test]
     fn pca_analysis_is_saved_as_a_distinct_result() {

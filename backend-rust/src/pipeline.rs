@@ -21,6 +21,31 @@ pub fn run_without_fit(
 ) -> Result<Value, String> {
     run_inner(columns, rows, spec, settings, false)
 }
+
+/// Bootstrap needs inference parameters, not reduced-model effect-size diagnostics.
+pub(crate) fn run_bootstrap_replicate(
+    columns: Vec<String>,
+    rows: Vec<Vec<Value>>,
+    spec: Value,
+    settings: Value,
+) -> Result<Value, String> {
+    let has_copula = ["gaussian_copulas", "gaussianCopulas"].iter()
+        .any(|key| spec[*key].as_array().is_some_and(|items| !items.is_empty()));
+    let has_nonlinear = ["quadratic_effects", "quadraticEffects", "moderating_effects", "moderatingEffects"].iter()
+        .any(|key| spec[*key].as_array().is_some_and(|items| !items.is_empty()));
+    if has_copula || has_nonlinear {
+        if rows.iter().any(|row| row.len() != columns.len()) {
+            return Err("Dataset row width differs from columns".into());
+        }
+        if has_copula {
+            crate::copula::run_for_bootstrap(columns, rows, spec, settings)
+        } else {
+            crate::quadratic::run_for_bootstrap(columns, rows, spec, settings)
+        }
+    } else {
+        run_without_fit(columns, rows, spec, settings)
+    }
+}
 fn run_inner(
     columns: Vec<String>,
     rows: Vec<Vec<Value>>,

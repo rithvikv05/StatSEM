@@ -541,11 +541,31 @@ fn diagnostics(values: &[f64], id: &str, role: &str, distinct: Option<usize>) ->
 }
 
 pub fn run(
+    columns: Vec<String>,
+    rows: Vec<Vec<Value>>,
+    spec: Value,
+    settings: Value,
+    compute_fit: bool,
+) -> Result<Value, String> {
+    run_impl(columns, rows, spec, settings, compute_fit, false)
+}
+
+pub(crate) fn run_for_bootstrap(
+    columns: Vec<String>,
+    rows: Vec<Vec<Value>>,
+    spec: Value,
+    settings: Value,
+) -> Result<Value, String> {
+    run_impl(columns, rows, spec, settings, false, true)
+}
+
+fn run_impl(
     mut columns: Vec<String>,
     rows: Vec<Vec<Value>>,
     spec: Value,
     settings: Value,
     compute_fit: bool,
+    bootstrap_replicate: bool,
 ) -> Result<Value, String> {
     let cfg = model::settings(&settings)?;
     let prepared = model::prepare_analysis_rows(&columns, rows, &spec, &cfg)?;
@@ -555,7 +575,9 @@ pub fn run(
     base_spec["gaussian_copulas"] = json!([]);
     base_spec["gaussianCopulas"] = json!([]);
     let fit = |columns, rows, spec| {
-        if compute_fit {
+        if bootstrap_replicate {
+            pipeline::run_bootstrap_replicate(columns, rows, spec, cfg.clone())
+        } else if compute_fit {
             pipeline::run(columns, rows, spec, cfg.clone())
         } else {
             pipeline::run_without_fit(columns, rows, spec, cfg.clone())

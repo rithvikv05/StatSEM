@@ -405,9 +405,29 @@ fn expanded(
 pub fn run(
     columns: Vec<String>,
     rows: Vec<Vec<Value>>,
+    spec: Value,
+    settings: Value,
+    compute_fit: bool,
+) -> Result<Value, String> {
+    run_impl(columns, rows, spec, settings, compute_fit, false)
+}
+
+pub(crate) fn run_for_bootstrap(
+    columns: Vec<String>,
+    rows: Vec<Vec<Value>>,
+    spec: Value,
+    settings: Value,
+) -> Result<Value, String> {
+    run_impl(columns, rows, spec, settings, false, true)
+}
+
+fn run_impl(
+    columns: Vec<String>,
+    rows: Vec<Vec<Value>>,
     mut spec: Value,
     settings: Value,
     compute_fit: bool,
+    bootstrap_replicate: bool,
 ) -> Result<Value, String> {
     let quads = normalize(&spec);
     let mods = moderation::normalize(&spec);
@@ -433,7 +453,7 @@ pub fn run(
     )?;
     if !mods.is_empty() {
         let mut f2 = serde_json::Map::new();
-        for m in &mods {
+        for m in mods.iter().filter(|_| !bootstrap_replicate) {
             let target = m["target"].as_str().unwrap();
             let others: Vec<_> = mods
                 .iter()
@@ -457,7 +477,7 @@ pub fn run(
         moderation::diagnostics(&mut result, &mods, f2)?;
     }
     let mut diagnostics = Vec::new();
-    for q in &quads {
+    for q in quads.iter().filter(|_| !bootstrap_replicate) {
         let pred = q["predictor"].as_str().unwrap();
         let target = q["target"].as_str().unwrap();
         let term = q["quad_construct_name"].as_str().unwrap();

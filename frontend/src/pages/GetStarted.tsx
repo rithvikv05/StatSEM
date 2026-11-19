@@ -468,6 +468,15 @@ const GetStarted = () => {
                 </div>
 
                 <div className="project-list">
+                  <div className="project-card" style={{ cursor: 'pointer' }} onClick={() => openTab({ id: 'tab-power-planner', type: 'power-planner', title: 'Study Planner' })}>
+                    <div className="project-card__content" style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                      <div className="project-card__info" style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>query_stats</span>
+                        <div><h3 className="project-card__title">Study Planner</h3><p className="project-card__desc">Plan sample size and statistical power</p></div>
+                      </div>
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
+                    </div>
+                  </div>
                   <div
                     className="project-card"
                     style={{ cursor: 'pointer' }}

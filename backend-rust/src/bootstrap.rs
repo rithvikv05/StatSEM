@@ -3,6 +3,7 @@
 use crate::{inference, model, pipeline, rng, stats};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Mutex,
@@ -363,7 +364,17 @@ pub fn run_with_control(
     let entropy = rng::integer_entropy(options.seed.unwrap_or(42));
     let seeds = rng::seed_sequence(&entropy, options.n_boot);
     let next = AtomicUsize::new(0);
-    let samples: Mutex<Vec<Option<(Parameters, Option<Parameters>)>>> = Mutex::new(vec![None; options.n_boot]);
+    let parameter_indices: HashMap<&str, usize> = original.iter().enumerate().map(|(i, (key, _))| (key.as_str(), i)).collect();
+    let encode = |params: Parameters| {
+        // JSON numeric results are finite; NaN marks an absent parameter.
+        let mut values = vec![f64::NAN; original.len()];
+        for (key, value) in params {
+            if let Some(&index) = parameter_indices.get(key.as_str()) { values[index] = value; }
+        }
+        values
+    };
+    let samples: Mutex<Vec<Option<(Vec<f64>, Option<Vec<f64>>)>>>
+        = Mutex::new(vec![None; options.n_boot]);
     let completed = AtomicUsize::new(0);
     let workers = options
         .n_workers
@@ -385,12 +396,17 @@ pub fn run_with_control(
                         break;
                     }
                     let mut random = rng::Pcg64::new(&[seeds[i]]);
-                    let resampled: Vec<_> = (0..n)
+                    let mut resampled: Vec<_> = (0..n)
                         .map(|_| clean[random.bounded(n as u64).unwrap() as usize].clone())
                         .collect();
-                    let sample = pipeline::run_without_fit(
+                    let sample_rows = if options.ci_method == "studentized" {
+                        resampled.clone()
+                    } else {
+                        std::mem::take(&mut resampled)
+                    };
+                    let sample = pipeline::run_bootstrap_replicate(
                         used_columns.clone(),
-                        resampled.clone(),
+                        sample_rows,
                         spec.clone(),
                         settings.clone(),
                     )
@@ -403,7 +419,7 @@ pub fn run_with_control(
                             for _ in 0..options.studentized_resamples {
                                 if cancel.load(Ordering::Relaxed) { break; }
                                 let nested: Vec<_> = (0..n).map(|_| resampled[random.bounded(n as u64).unwrap() as usize].clone()).collect();
-                                if let Ok(mut estimate) = pipeline::run_without_fit(used.clone(), nested, spec.clone(), settings.clone()).and_then(|r| extract(&r, &spec, &options.mode)) {
+                                if let Ok(mut estimate) = pipeline::run_bootstrap_replicate(used.clone(), nested, spec.clone(), settings.clone()).and_then(|r| extract(&r, &spec, &options.mode)) {
                                     align(&mut estimate, &params, &parsed, &options.sign_change);
                                     inner.push(estimate);
                                 }
@@ -417,7 +433,7 @@ pub fn run_with_control(
                             }
                             Some(ses)
                         } else { None };
-                        (params, standard_errors)
+                        (encode(params), standard_errors.map(&encode))
                     });
 
                     local_batch.push((i, sample));
@@ -452,11 +468,24 @@ pub fn run_with_control(
         .into_iter()
         .flatten()
         .collect();
-    let samples: Vec<_> = sample_pairs.iter().map(|(params, _)| params.clone()).collect();
-    if samples.len() < 2 {
+    if sample_pairs.len() < 2 {
         return Err("Fewer than two bootstrap models succeeded; inference could not be calculated.".into());
     }
     let names: Vec<_> = original.iter().map(|(k, _)| k.clone()).collect();
+    // Build all parameter distributions in one pass. Repeated linear searches
+    // made finalization quadratic in parameter count and cloned every key.
+    let mut distributions: Vec<Vec<f64>> = (0..names.len()).map(|_| Vec::with_capacity(sample_pairs.len())).collect();
+    let mut matrix = Vec::with_capacity(sample_pairs.len());
+    for (sample, _) in &sample_pairs {
+        let mut row = vec![0.0; names.len()];
+        for (index, value) in sample.iter().enumerate() {
+            if !value.is_nan() {
+                row[index] = *value;
+                distributions[index].push(*value);
+            }
+        }
+        matrix.push(row);
+    }
     let mut jack = Vec::<Parameters>::new();
     if options.ci_method == "bca" {
         for i in 0..n {
@@ -469,7 +498,7 @@ pub fn run_with_control(
                 .filter(|(j, _)| *j != i)
                 .map(|(_, r)| r.clone())
                 .collect();
-            let mut result = pipeline::run_without_fit(used.clone(), subset, spec.clone(), settings.clone())
+            let mut result = pipeline::run_bootstrap_replicate(used.clone(), subset, spec.clone(), settings.clone())
                 .and_then(|r| extract(&r, &spec, &options.mode))
                 .map_err(|_| "A jackknife model failed; BCa intervals could not be calculated")?;
             align(&mut result, &original, &parsed, &options.sign_change);
@@ -478,11 +507,9 @@ pub fn run_with_control(
     }
     let mut parameters = Map::new();
     let mut samples_dict = Map::new();
-    for (key, &original_value) in original.iter().map(|(k, v)| (k, v)) {
-        let distribution: Vec<_> = samples
-            .iter()
-            .filter_map(|sample| sample.iter().find(|(k, _)| k == key).map(|(_, v)| *v))
-            .collect();
+    for (index, (key, original_value)) in original.iter().enumerate() {
+        let original_value = *original_value;
+        let distribution = &distributions[index];
         samples_dict.insert(key.clone(), json!(distribution));
         if distribution.len() < 2 { return Err(format!("Fewer than two bootstrap estimates are available for {key}")); }
         let se = stats::std(&distribution, None, 1);
@@ -520,7 +547,7 @@ pub fn run_with_control(
         }
         let mut intervals = inference::intervals(
             original_value,
-            &distribution,
+            distribution,
             if jackknife.is_empty() {
                 None
             } else {
@@ -532,11 +559,11 @@ pub fn run_with_control(
         if options.ci_method != "bca" { intervals.as_object_mut().unwrap().remove("bca"); }
         if options.ci_method == "studentized" {
             let mut pivots: Vec<f64> = sample_pairs.iter().filter_map(|(params, errors)| {
-                let estimate = params.iter().find(|(k, _)| k == key)?.1;
-                let error = errors.as_ref()?.iter().find(|(k, _)| k == key)?.1;
+                let estimate = params[index];
+                let error = errors.as_ref()?[index];
                 if error > 1e-12 { Some((estimate - original_value) / error) } else { None }
             }).filter(|x| x.is_finite()).collect();
-            let interval = if se > 1e-12 && pivots.len() >= (samples.len() * 4).div_ceil(5) && pivots.len() >= 2 {
+            let interval = if se > 1e-12 && pivots.len() >= (sample_pairs.len() * 4).div_ceil(5) && pivots.len() >= 2 {
                 let low = if options.tails == "one" { options.significance_level } else { options.significance_level / 2.0 };
                 json!(studentized_interval(original_value, se, &mut pivots, low))
             } else { Value::Null };
@@ -625,12 +652,8 @@ pub fn run_with_control(
             item
         })
         .collect();
-    let matrix: Vec<Vec<f64>> = samples
-        .iter()
-        .map(|sample| names.iter().map(|k| get(sample, k)).collect())
-        .collect();
     Ok(
-        json!({"n_boot":options.n_boot,"actual_samples":samples.len(),"settings":{"mode":options.mode,"sign_change":options.sign_change,
+        json!({"n_boot":options.n_boot,"actual_samples":sample_pairs.len(),"settings":{"mode":options.mode,"sign_change":options.sign_change,
         "test_distribution":options.test_distribution,"significance_level":options.significance_level,"tails":options.tails,"direction":options.direction,"ci_method":options.ci_method,"studentized_resamples":options.studentized_resamples,"seed":options.seed,"consistent":options.consistent},
         "parameters":parameters,"parameter_summary":parameters,"paths":paths,"loadings":loadings,"weights":weights,"indirect_effects":indirect,
         "samples_matrix":matrix,"samples_dict":samples_dict,"parameter_names":names}),
@@ -703,6 +726,55 @@ mod tests {
             rows,
             json!({"constructs":[{"id":"X","name":"X","indicators":["x"]},{"id":"Y","name":"Y","indicators":["y"]}],"paths":[{"from":"X","to":"Y"}]}),
         )
+    }
+    #[test]
+    fn optimized_replicates_preserve_all_bootstrap_parameters() {
+        let columns: Vec<String> = ["x1", "x2", "m1", "m2", "y1", "y2"].iter().map(|s| s.to_string()).collect();
+        let rows: Vec<Vec<Value>> = (0..60).map(|i| {
+            let i=i as f64;
+            let x=(i*0.13).sin()+(i*0.07).cos();
+            let m=(i*0.19).sin()+(i*0.11).cos();
+            let y=0.4*x+0.3*m+0.2*x*m+0.1*(i*0.47).sin();
+            vec![json!(x+0.1*(i*0.31).sin()),json!(x+0.13*(i*0.21).cos()),json!(m+0.09*(i*0.41).cos()),json!(m+0.1*(i*0.29).sin()),json!(y+0.11*(i*0.53).sin()),json!(y+0.14*(i*0.37).cos())]
+        }).collect();
+        let base=json!({"constructs":[{"id":"X","name":"X","type":"reflective","indicators":["x1","x2"]},{"id":"M","name":"M","type":"reflective","indicators":["m1","m2"]},{"id":"Y","name":"Y","type":"reflective","indicators":["y1","y2"]}],"indicators":columns.iter().map(|c|json!({"id":c,"column":c})).collect::<Vec<_>>(),"paths":[{"from":"X","to":"Y"},{"from":"M","to":"Y"}]});
+        for method in ["two_stage", "product_indicator", "orthogonalizing"] {
+            for quadratic in [false, true] {
+                for consistent in [false, true] {
+                    let mut spec=base.clone();
+                    spec["moderating_effects"]=json!([{"id":"mod","source":"X","moderator":"M","target":"Y","method":method}]);
+                    if quadratic { spec["quadratic_effects"]=json!([{"id":"q","predictor":"X","target":"Y"}]); }
+                    let settings=json!({"consistent":consistent,"max_iter":300,"missing_treatment":"mean","sign_convention":"none"});
+                    let full=pipeline::run_without_fit(columns.clone(),rows.clone(),spec.clone(),settings.clone()).unwrap();
+                    let fast=pipeline::run_bootstrap_replicate(columns.clone(),rows.clone(),spec.clone(),settings).unwrap();
+                    for mode in ["basic","complete"] {
+                        assert_eq!(extract(&full,&spec,mode).unwrap(),extract(&fast,&spec,mode).unwrap(),"{method}, quadratic={quadratic}, consistent={consistent}, {mode}");
+                    }
+                }
+            }
+        }
+        let mut with_copula=base.clone();
+        with_copula["moderating_effects"]=json!([{"id":"mod","source":"X","moderator":"M","target":"Y","method":"two_stage"}]);
+        with_copula["gaussian_copulas"]=json!([{"source_construct":"X","target_construct":"Y"}]);
+        let settings=json!({"max_iter":300,"missing_treatment":"mean","sign_convention":"none"});
+        let full=pipeline::run_without_fit(columns.clone(),rows.clone(),with_copula.clone(),settings.clone()).unwrap();
+        let fast=pipeline::run_bootstrap_replicate(columns,rows,with_copula.clone(),settings).unwrap();
+        assert!(full["gaussian_copula"]["effects_of_correction"].as_array().is_some_and(|items| !items.is_empty()),"copula fixture must exercise correction estimates");
+        for mode in ["basic","complete"] {
+            assert_eq!(extract(&full,&with_copula,mode).unwrap(),extract(&fast,&with_copula,mode).unwrap(),"copula with moderation, {mode}");
+        }
+    }
+    #[test]
+    fn moderated_bootstrap_is_reproducible_across_worker_counts() {
+        let columns:Vec<String>=["x","m","y"].iter().map(|v|v.to_string()).collect();
+        let rows:Vec<Vec<Value>>=(0..30).map(|i| {
+            let x=(i as f64*0.23).sin();
+            let m=(i as f64*0.31).cos();
+            vec![json!(x),json!(m),json!(0.5*x+0.3*m+0.2*x*m+0.1*(i as f64*0.71).sin())]
+        }).collect();
+        let spec=json!({"constructs":[{"id":"X","indicators":["x"]},{"id":"M","indicators":["m"]},{"id":"Y","indicators":["y"]}],"paths":[{"from":"X","to":"Y"},{"from":"M","to":"Y"}],"moderating_effects":[{"id":"mod","source":"X","moderator":"M","target":"Y","method":"two_stage"}]});
+        let options=|workers| Options {n_boot:20,n_workers:Some(workers),seed:Some(42),..Options::default()};
+        assert_eq!(run(columns.clone(),rows.clone(),spec.clone(),options(1)).unwrap(),run(columns,rows,spec,options(3)).unwrap());
     }
     #[test]
     fn results_are_identical_across_worker_counts() {

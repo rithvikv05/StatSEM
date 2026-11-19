@@ -265,6 +265,8 @@ export const TabBar: React.FC = () => {
         return 'dataset';
       case 'docs':
         return 'menu_book';
+      case 'power-planner':
+        return 'query_stats';
       case 'samples':
         return 'science';
       case 'feedback':

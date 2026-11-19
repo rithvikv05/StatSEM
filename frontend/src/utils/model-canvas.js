@@ -4,6 +4,7 @@
  */
 import { performAutoLayout, resolveBadgePositions } from './semLayoutEngine';
 import { getCanvasFitTransform } from './fit-canvas';
+import { toggleIndicatorVisibility } from './indicator-visibility';
 import {
   formatNumber,
   formatPValue,
@@ -5379,11 +5380,14 @@ export function initModelCanvas() {
       g.style.cursor = mode === 'select' ? 'move' : (mode === 'connect' ? 'crosshair' : (mode === 'erase' ? 'pointer' : 'default'));
 
       const isSelected = selectedIds.has(node.id);
+      let latentShape = null;
 
       if (node.isLatent) {
         let w = node.width || NODE_R * 2;
         let h = node.height || NODE_R * 2;
-        g.appendChild(createNodeShape(node, NODE_R * 2, NODE_R * 2, 'var(--canvas-latent-fill)', 'var(--canvas-latent-stroke)', isSelected));
+        let visibilityControl = null;
+        latentShape = createNodeShape(node, NODE_R * 2, NODE_R * 2, 'var(--canvas-latent-fill)', 'var(--canvas-latent-stroke)', isSelected);
+        g.appendChild(latentShape);
 
         // Visual indicator for pending moderator construct
         if (pendingModeratorNode && pendingModeratorNode.id === node.id) {
@@ -5409,17 +5413,31 @@ export function initModelCanvas() {
           selShape.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
           selShape.setAttribute('stroke-width', '1.5');
           selShape.setAttribute('stroke-dasharray', '6 6');
+          selShape.setAttribute('data-export-ui', 'true');
+          selShape.setAttribute('pointer-events', 'none');
           g.appendChild(selShape);
           
           // Resize handle
-          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-          handle.setAttribute('x', w/2 + gap - 4);
-          handle.setAttribute('y', h/2 + gap - 4);
-          handle.setAttribute('width', '8');
-          handle.setAttribute('height', '8');
-          handle.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          handle.setAttribute('transform', `translate(${w/2 + gap + 5}, ${h/2 + gap + 5})`);
+          handle.setAttribute('data-export-ui', 'true');
           handle.style.cursor = 'se-resize';
+          const handleHit = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          handleHit.setAttribute('x', '-12'); handleHit.setAttribute('y', '-12');
+          handleHit.setAttribute('width', '20'); handleHit.setAttribute('height', '20');
+          handleHit.setAttribute('fill', 'transparent');
+          handle.appendChild(handleHit);
+          const corner = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          corner.setAttribute('d', 'M -8 0 L 0 0 L 0 -8');
+          corner.setAttribute('fill', 'none');
+          corner.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
+          corner.setAttribute('stroke-width', '2.5');
+          corner.setAttribute('stroke-linecap', 'round');
+          corner.setAttribute('stroke-linejoin', 'round');
+          corner.setAttribute('pointer-events', 'none');
+          handle.appendChild(corner);
           handle.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
             e.stopPropagation();
             resizingNode = node;
             const pt = svg.createSVGPoint();
@@ -5431,6 +5449,58 @@ export function initModelCanvas() {
             resizeStartPt = svgPt;
           });
           g.appendChild(handle);
+
+          const indicators = nodes.filter(n => n.parentId === node.id && !n.isLatent);
+          const visibility = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          visibility.setAttribute('class', 'canvas-indicator-toggle');
+          visibility.setAttribute('data-export-ui', 'true');
+          visibility.setAttribute('transform', `translate(${w/2 + gap}, ${-h/2 - gap})`);
+          visibility.setAttribute('role', 'button');
+          visibility.setAttribute('tabindex', indicators.length ? '0' : '-1');
+          visibility.setAttribute('aria-disabled', indicators.length ? 'false' : 'true');
+          visibility.setAttribute('aria-label', node.indicatorsHidden ? 'Show indicators' : 'Hide indicators');
+          visibility.style.cursor = indicators.length ? 'pointer' : 'default';
+          if (!indicators.length) visibility.setAttribute('opacity', '0.45');
+          const background = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          background.setAttribute('r', '10');
+          background.setAttribute('fill', 'var(--color-bg-surface, #fff)');
+          background.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
+          background.setAttribute('stroke-width', '1');
+          visibility.appendChild(background);
+          const icon = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          icon.setAttribute('transform', 'translate(-7, -7) scale(0.5833)');
+          icon.setAttribute('fill', 'none');
+          icon.setAttribute('stroke', 'var(--color-accent, #6B4EE6)');
+          icon.setAttribute('stroke-width', '2');
+          icon.setAttribute('stroke-linecap', 'round');
+          icon.setAttribute('stroke-linejoin', 'round');
+          const eye = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          eye.setAttribute('d', 'M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z');
+          icon.appendChild(eye);
+          const pupil = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          pupil.setAttribute('cx', '12'); pupil.setAttribute('cy', '12'); pupil.setAttribute('r', '3');
+          icon.appendChild(pupil);
+          if (node.indicatorsHidden) {
+            const slash = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            slash.setAttribute('d', 'M4 4l16 16');
+            icon.appendChild(slash);
+          }
+          visibility.appendChild(icon);
+          const visibilityTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+          visibilityTitle.textContent = indicators.length ? (node.indicatorsHidden ? 'Show indicators' : 'Hide indicators') : 'No indicators';
+          visibility.appendChild(visibilityTitle);
+          const toggleIndicators = (event) => {
+            event.preventDefault(); event.stopPropagation();
+            if (!indicators.length) return;
+            if (toggleIndicatorVisibility(nodes, node.id, selectedIds)) {
+              pushHistory();
+              render();
+            }
+          };
+          visibility.addEventListener('mousedown', event => event.stopPropagation());
+          visibility.addEventListener('click', toggleIndicators);
+          visibility.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') toggleIndicators(event); });
+          visibilityControl = visibility;
         }
 
         // Label
@@ -5496,91 +5566,6 @@ export function initModelCanvas() {
           text.style.visibility = 'hidden';
         }
         g.appendChild(text);
-
-        // If indicators are hidden, render a clean minimal no-background vector eye icon in purple beside the text
-        if (node.indicatorsHidden) {
-          const childInds = nodes.filter(n => n.parentId === node.id && !n.isLatent);
-          if (childInds.length > 0 && !node._isRenaming) {
-            let textLen = 0;
-            try {
-              textLen = text.getComputedTextLength();
-            } catch (e) {}
-            if (!textLen || textLen <= 0) {
-              textLen = (node.label || '').length * 8.2;
-            }
-            const textFontSize = Number(node.fontSize) || 14;
-            const visualMidY = labelY - (textFontSize * 0.36);
-            const iconScale = (textFontSize * 1.15) / 24;
-            const iconX = (textLen / 2) + 6;
-
-            const hideBtn = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            hideBtn.setAttribute('class', 'canvas-hidden-indicators-icon-btn');
-            hideBtn.setAttribute('transform', `translate(${iconX + 8}, ${visualMidY})`);
-            hideBtn.style.cursor = 'pointer';
-            hideBtn.style.pointerEvents = 'all';
-
-            // Invisible hit rect for easy, responsive clicking without visual clutter
-            const hitRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            hitRect.setAttribute('x', '-10');
-            hitRect.setAttribute('y', '-10');
-            hitRect.setAttribute('width', '20');
-            hitRect.setAttribute('height', '20');
-            hitRect.setAttribute('fill', 'transparent');
-            hitRect.setAttribute('pointer-events', 'all');
-            hideBtn.appendChild(hitRect);
-
-            // Exact Material Symbols 'visibility' vector (from right-click menu, without dash), precisely centered
-            const pathGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            pathGroup.setAttribute('transform', `scale(${iconScale}) translate(-12, -12)`);
-
-            const eyePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            eyePath.setAttribute('d', 'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z');
-            eyePath.setAttribute('fill', 'var(--color-accent, #6B4EE6)');
-            eyePath.setAttribute('fill-rule', 'evenodd');
-            pathGroup.appendChild(eyePath);
-
-            hideBtn.appendChild(pathGroup);
-
-            const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-            titleEl.textContent = `${childInds.length} indicators hidden. Click to show.`;
-            hideBtn.appendChild(titleEl);
-
-            hideBtn.addEventListener('mouseenter', () => {
-              hideBtn.style.opacity = '0.7';
-            });
-            hideBtn.addEventListener('mouseleave', () => {
-              hideBtn.style.opacity = '1';
-            });
-
-            // Reliable unhide logic
-            const triggerUnhide = (ev) => {
-              if (ev) {
-                ev.stopPropagation();
-                ev.preventDefault();
-              }
-              node.indicatorsHidden = false;
-              render();
-              pushHistory();
-              window.dispatchEvent(new CustomEvent('canvas-changed'));
-            };
-
-            let isDownOnHide = false;
-            hideBtn.addEventListener('mousedown', (ev) => {
-              ev.stopPropagation();
-              if (ev.button === 0) isDownOnHide = true;
-            });
-            hideBtn.addEventListener('mouseup', (ev) => {
-              ev.stopPropagation();
-              if (isDownOnHide) {
-                isDownOnHide = false;
-                triggerUnhide(ev);
-              }
-            });
-            hideBtn.addEventListener('click', triggerUnhide);
-
-            g.appendChild(hideBtn);
-          }
-        }
 
         // Display R² inside circle for endogenous latent constructs
         if (hasR2) {
@@ -5655,6 +5640,7 @@ export function initModelCanvas() {
           warnG.appendChild(warnTitle);
           g.appendChild(warnG);
         }
+        if (visibilityControl) g.appendChild(visibilityControl);
       } else if (node.isText) {
         const rectBox = node.rectBox || {width: 100, height: 40};
         
@@ -6098,13 +6084,13 @@ export function initModelCanvas() {
       }
       
       // Interaction
-      if (node.isLatent) {
-        g.addEventListener('pointerenter', () => {
+      if (latentShape) {
+        latentShape.addEventListener('pointerenter', () => {
           if (!activeResults) return;
           const m = getConstructMetrics(node);
           if (m) showLatentHoverPopup(node, m);
         });
-        g.addEventListener('pointerleave', () => {
+        latentShape.addEventListener('pointerleave', () => {
           hideLatentHoverPopup();
         });
       }

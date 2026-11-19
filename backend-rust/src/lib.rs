@@ -7,6 +7,7 @@ pub mod contrast;
 pub mod copula;
 pub mod cta;
 pub mod data_groups;
+pub mod dataset_statistics;
 pub mod derived;
 pub mod effects;
 pub mod ex_post;

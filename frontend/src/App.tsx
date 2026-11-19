@@ -13,6 +13,7 @@ import DocsView from './pages/DocumentationView';
 import SamplesView from './pages/SamplesView';
 import FeedbackView from './pages/FeedbackView';
 import ChangelogView from './pages/ChangelogView';
+import PowerPlanner from './pages/PowerPlanner';
 const ModelEditor = React.lazy(() => import('./pages/ModelEditor'));
 const SnapshotView = React.lazy(() => import('./pages/SnapshotView'));
 const MgaReportPage = React.lazy(() => import('./mga/MgaReportPage'));
@@ -142,6 +143,9 @@ function App() {
     }
     if (activeTab.type === 'docs') {
       return <DocsView key={activeTab.id} />;
+    }
+    if (activeTab.type === 'power-planner') {
+      return <PowerPlanner key={activeTab.id} />;
     }
     if (activeTab.type === 'samples') {
       return <SamplesView key={activeTab.id} />;

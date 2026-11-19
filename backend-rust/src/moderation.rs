@@ -462,7 +462,7 @@ pub(crate) fn diagnostics(
         by_mod.insert(m["id"].as_str().unwrap().into(), slopes.clone());
         details.push(json!({"id":m["id"],"source":m["source"],"moderator":m["moderator"],"target":target,"interaction_term":term,"method":m["method"],
             "estimates":{"beta_source":b1,"beta_moderator":bw,"beta_interaction":b3},
-            "f_squared":f2[term],"simple_slopes":slopes["simple_slopes"],"plot_data":{"x_range":slopes["x_range"],"lines":slopes["simple_slopes"]}}));
+            "f_squared":f2.get(term).cloned().unwrap_or(Value::Null),"simple_slopes":slopes["simple_slopes"],"plot_data":{"x_range":slopes["x_range"],"lines":slopes["simple_slopes"]}}));
     }
     let mut conditional = Vec::new();
     let paths: Vec<_> = result["_expanded_spec"]["paths"]
